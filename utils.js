@@ -1,27 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 const crypto = require('crypto');
-const ffmpegPathStatic = require('ffmpeg-static');
 const ffmpeg = require('fluent-ffmpeg');
-const { execSync } = require('child_process');
-
-// Tenta detectar FFmpeg no sistema primeiro, senão usa o estático do npm
-let ffmpegPath = ffmpegPathStatic;
-try {
-    const systemFfmpeg = execSync('which ffmpeg').toString().trim();
-    if (systemFfmpeg) {
-        ffmpegPath = systemFfmpeg;
-        console.log(`🎬 [SISTEMA] Usando FFmpeg do sistema: ${ffmpegPath}`);
-    }
-} catch (e) {
-    console.log('🎬 [SISTEMA] FFmpeg não encontrado no sistema. Usando ffmpeg-static.');
-}
-
-// Configurar caminho do FFmpeg globalmente para fluent-ffmpeg
-ffmpeg.setFfmpegPath(ffmpegPath);
 
 const groupsFilePath = path.join(__dirname, 'groups.json');
 const statsFilePath = path.join(__dirname, 'stats.json');
@@ -133,41 +116,25 @@ function deactivateGroup(jid) {
 
 // --- View Once & Media Helper Functions ---
 
-/**
- * Verifies if the message container is a View Once message.
- */
 function isViewOnce(message) {
     if (!message) return false;
     let m = message;
-    
-    // Desembrulha mensagens efêmeras se necessário
     if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-    
-    // Verifica wrappers explícitos de Visualização Única
     const hasWrapper = !!(m.viewOnceMessage || m.viewOnceMessageV2 || m.viewOnceMessageV2Extension);
     if (hasWrapper) return true;
-    
-    // Verifica se a mídia interna tem a flag viewOnce (comum em mensagens citadas)
     const media = m.imageMessage || m.videoMessage || m.audioMessage;
     if (media && (media.viewOnce === true || media.viewOnce === 1)) return true;
-    
     return false;
 }
 
-/**
- * Unwraps nested message wrappers (ephemeral, view-once, document-with-caption) 
- * to find the raw media message structure (imageMessage, videoMessage, etc.).
- */
 function getMediaMessage(message) {
     if (!message) return null;
     let m = message;
-    
     if (m.ephemeralMessage) m = m.ephemeralMessage.message;
     if (m.viewOnceMessage) m = m.viewOnceMessage.message;
     if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
     if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
     if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-    
     if (m.imageMessage || m.videoMessage || m.stickerMessage || m.audioMessage || m.documentMessage) {
         return m;
     }
@@ -176,53 +143,55 @@ function getMediaMessage(message) {
 
 // --- Media & Sticker Conversion Functions ---
 
-/**
- * Converts an image or video buffer into a WhatsApp WebP sticker.
- */
 async function mediaToSticker(buffer, mimeType) {
     try {
         let inputBuffer = buffer;
-        
         if (mimeType.includes('video')) {
             const tempId = crypto.randomBytes(4).toString('hex');
             const inputPath = path.join(tempDir, `vid_in_${tempId}.mp4`);
             const outputPath = path.join(tempDir, `vid_out_${tempId}.webp`);
 
             fs.writeFileSync(inputPath, buffer);
+            console.log(`🎬 [FFMPEG] Processando vídeo para sticker (${mimeType})...`);
 
-            console.log(`🎬 [FFMPEG] Pré-processando vídeo para sticker (Limite 7s)...`);
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputPath)
+                        .inputOptions(['-t 7'])
+                        .outputOptions([
+                            '-vcodec libwebp', // libwebp é geralmente mais compatível que libwebp_anim para stickers simples
+                            '-vf scale=512:512:force_original_aspect_ratio=decrease,fps=15,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0',
+                            '-lossless 0',
+                            '-compression_level 4',
+                            '-q:v 50',
+                            '-loop 0',
+                            '-an'
+                        ])
+                        .toFormat('webp')
+                        .on('start', (cmd) => console.log('🚀 [FFMPEG] Comando:', cmd))
+                        .on('end', () => resolve())
+                        .on('error', (err, stdout, stderr) => {
+                            console.error('❌ [FFMPEG] Erro:', err.message);
+                            console.error('❌ [FFMPEG] Stderr:', stderr);
+                            reject(err);
+                        })
+                        .save(outputPath);
+                });
 
-            await new Promise((resolve, reject) => {
-                ffmpeg(inputPath)
-                    .inputOptions(['-probesize 500M', '-analyzeduration 500M'])
-                    .outputOptions([
-                        '-vcodec libwebp',
-                        '-vf scale=512:512:force_original_aspect_ratio=increase,fps=15,crop=512:512',
-                        '-lossless 0',
-                        '-compression_level 6',
-                        '-q:v 50',
-                        '-loop 0',
-                        '-preset default',
-                        '-an',
-                        '-vsync 0',
-                        '-t 7' // Limita a 7 segundos para figurinhas
-                    ])
-                    .toFormat('webp')
-                    .on('end', () => resolve())
-                    .save(outputPath);
-            });
-
-            inputBuffer = fs.readFileSync(outputPath);
-
-            try { fs.unlinkSync(inputPath); } catch(_) {}
-            try { fs.unlinkSync(outputPath); } catch(_) {}
+                inputBuffer = fs.readFileSync(outputPath);
+            } catch (ffmpegErr) {
+                console.error('❌ [FFMPEG] Falha no processamento de vídeo:', ffmpegErr.message);
+                throw new Error('Não foi possível processar o vídeo para figurinha.');
+            } finally {
+                try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(_) {}
+                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(_) {}
+            }
         }
-        const type = StickerTypes.CROPPED; 
         const sticker = new Sticker(inputBuffer, {
             pack: 'Antigravity Bot 🌌',
             author: 'Antigravity Bot',
-            type: type,
-            quality: 100 
+            type: StickerTypes.FULL,
+            quality: 80
         });
         return await sticker.toBuffer();
     } catch (error) {
@@ -231,71 +200,74 @@ async function mediaToSticker(buffer, mimeType) {
     }
 }
 
-/**
- * Converts a sticker (WebP) back to regular media (PNG for static, MP4 for animated).
- */
 async function stickerToMedia(buffer, isAnimated = false) {
     if (!isAnimated) {
         try {
-            const pngBuffer = await sharp(buffer).png().toBuffer();
-            return { buffer: pngBuffer, mime: 'image/png', ext: 'png' };
+            return { buffer: await sharp(buffer).png().toBuffer(), mime: 'image/png', ext: 'png' };
         } catch (error) {
-            console.error('Erro ao converter figurinha estática para imagem:', error);
+            console.error('Erro ao converter figurinha estática:', error);
             throw error;
         }
     } else {
         const tempId = crypto.randomBytes(4).toString('hex');
-        const inputPath = path.join(tempDir, `stk_in_${tempId}.webp`);
+        const inputPathWebp = path.join(tempDir, `stk_in_${tempId}.webp`);
+        const inputPathGif = path.join(tempDir, `stk_in_${tempId}.gif`);
         const outputPath = path.join(tempDir, `stk_out_${tempId}.mp4`);
 
-        fs.writeFileSync(inputPath, buffer);
+        console.log(`🔄 [FFMPEG] Convertendo figurinha animada...`);
 
-        console.log(`🔄 [FFMPEG] Convertendo figurinha animada para MP4...`);
+        try {
+            // Tenta converter para GIF usando Sharp primeiro para contornar a limitação do FFmpeg (skipping ANIM chunk)
+            try {
+                const gifBuffer = await sharp(buffer, { animated: true }).gif().toBuffer();
+                fs.writeFileSync(inputPathGif, gifBuffer);
+                console.log('✅ [SHARP] Figurinha convertida para GIF para processamento.');
+            } catch (sharpError) {
+                console.warn('⚠️ [SHARP] Falha ao converter para GIF, tentando WebP direto:', sharpError.message);
+                fs.writeFileSync(inputPathWebp, buffer);
+            }
 
-        return new Promise((resolve, reject) => {
-            ffmpeg(inputPath)
-                .inputOptions(['-probesize 50M', '-analyzeduration 50M'])
-                .outputOptions([
-                    '-pix_fmt yuv420p',
-                    '-c:v libx264',
-                    '-crf 18',
-                    '-preset slow',
-                    '-movflags +faststart'
-                ])
-                .toFormat('mp4')
-                .on('error', (err) => {
-                    console.error('❌ [FFMPEG] Erro ao converter sticker animado:', err);
-                    try { fs.unlinkSync(inputPath); } catch(_) {}
-                    try { fs.unlinkSync(outputPath); } catch(_) {}
-                    reject(err);
-                })
-                .on('end', () => {
-                    try {
-                        const outBuffer = fs.readFileSync(outputPath);
-                        try { fs.unlinkSync(inputPath); } catch(_) {}
-                        try { fs.unlinkSync(outputPath); } catch(_) {}
-                        resolve({ buffer: outBuffer, mime: 'video/mp4', ext: 'mp4' });
-                    } catch (err) {
-                        try { fs.unlinkSync(inputPath); } catch(_) {}
-                        try { fs.unlinkSync(outputPath); } catch(_) {}
+            const inputPath = fs.existsSync(inputPathGif) ? inputPathGif : inputPathWebp;
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .inputOptions([
+                        '-probesize 100M', 
+                        '-analyzeduration 100M'
+                    ])
+                    .outputOptions([
+                        '-pix_fmt yuv420p',
+                        '-c:v libx264',
+                        '-crf 20',
+                        '-preset faster',
+                        '-movflags +faststart',
+                        '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'
+                    ])
+                    .toFormat('mp4')
+                    .on('start', (cmd) => console.log('🚀 [FFMPEG] Comando:', cmd))
+                    .on('end', () => resolve())
+                    .on('error', (err, stdout, stderr) => {
+                        console.error('❌ [FFMPEG] Erro:', err.message);
+                        console.error('❌ [FFMPEG] Stderr:', stderr);
                         reject(err);
-                    }
-                })
-                .save(outputPath);
-        });
+                    })
+                    .save(outputPath);
+            });
+            const outBuffer = fs.readFileSync(outputPath);
+            return { buffer: outBuffer, mime: 'video/mp4', ext: 'mp4' };
+        } catch (err) {
+            console.error('❌ [FFMPEG] Falha na conversão de sticker:', err.message);
+            throw new Error('Erro ao converter figurinha animada para vídeo.');
+        } finally {
+            try { if (fs.existsSync(inputPathWebp)) fs.unlinkSync(inputPathWebp); } catch(_) {}
+            try { if (fs.existsSync(inputPathGif)) fs.unlinkSync(inputPathGif); } catch(_) {}
+            try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(_) {}
+        }
     }
 }
 
 module.exports = {
-    isActiveGroup,
-    activateGroup,
-    deactivateGroup,
-    isViewOnce,
-    getMediaMessage,
-    mediaToSticker,
-    stickerToMedia,
-    readStats,
-    incrementRestart,
-    incrementCommand,
-    formatUptime
+    isActiveGroup, activateGroup, deactivateGroup,
+    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
+    readStats, incrementRestart, incrementCommand, formatUptime
 };

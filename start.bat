@@ -1,4 +1,7 @@
 @echo off
-echo 🚀 Iniciando o Bot...
-npm start
+if not exist node_modules (
+    echo 📦 Instalando dependencias...
+    npm install
+)
+node index.js
 pause

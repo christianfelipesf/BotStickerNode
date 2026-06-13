@@ -1,3 +1,6 @@
 #!/bin/bash
-echo "🚀 Iniciando o Bot..."
-npm start
+if [ ! -d "node_modules" ]; then
+  echo "📦 Instalando dependências..."
+  npm install
+fi
+node index.js
