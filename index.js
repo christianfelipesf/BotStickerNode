@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
@@ -17,6 +16,22 @@ const ffmpeg = require('fluent-ffmpeg');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const readline = require('readline');
+
+// --- Tratamento de Erros Globais (Suprime ruídos do libsignal/Baileys) ---
+process.on('uncaughtException', (err) => {
+    if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) {
+        // Ignora erros de sessão/criptografia que poluem o log
+        return;
+    }
+    console.error('💥 [ERRO FATAL]:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) {
+        return;
+    }
+    console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
+});
 
 // Tenta detectar FFmpeg no sistema
 try {
@@ -75,7 +90,8 @@ async function checkUpdates() {
 }
 
 // --- Configuração Gemini ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const GEMINI_API_KEY = "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g"; // Substitua pela sua chave real
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ 
     model: "gemini-2.5-flash-lite",
     systemInstruction: "Você é o Grok, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária."
@@ -130,18 +146,36 @@ function getMessageText(message) {
 async function revealViewOnce(sock, from, m) {
     const sender = m.key.participant || m.key.remoteJid;
     try {
-        const mediaMsg = getMediaMessage(m.message);
-        if (!mediaMsg) return;
-        const isVideo = !!mediaMsg.videoMessage;
-        const isAudio = !!mediaMsg.audioMessage;
-        const originalCaption = mediaMsg.imageMessage?.caption || mediaMsg.videoMessage?.caption || '';
+        const mediaMessage = getMediaMessage(m.message);
+        if (!mediaMessage) return;
+
+        const isVideo = !!mediaMessage.videoMessage;
+        const isAudio = !!mediaMessage.audioMessage;
+        const originalCaption = mediaMessage.imageMessage?.caption || mediaMessage.videoMessage?.caption || '';
 
         await react(sock, m, '👀');
-        const buffer = await downloadMediaMessage({ key: m.key, message: mediaMsg }, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+
+        // Cria uma promessa com timeout para o download
+        const downloadPromise = downloadMediaMessage(
+            { key: m.key, message: mediaMessage }, 
+            'buffer', 
+            {}, 
+            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        );
+
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout no download')), 15000)
+        );
+
+        const buffer = await Promise.race([downloadPromise, timeoutPromise]).catch(err => {
+            console.error(`❌ [REVELADOR] Erro/Timeout: ${err.message}`);
+            return null;
+        });
+
         if (!buffer) return await react(sock, m, '❌');
 
-        const senderName = (m.pushName && !m.pushName.includes('@')) ? m.pushName : null;
-        let revealCaption = `🔓 *Mídia Revelada!* 🔓${senderName ? `\n👤 *${senderName}*` : ''}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
+        const senderName = m.pushName || 'Usuário';
+        let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
 
         const opts = { mentions: [sender], quoted: m };
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
@@ -165,31 +199,50 @@ async function handleMediaCommand(sock, from, m, action) {
         
         if (quotedMsg) {
             mediaMessage = getMediaMessage(quotedMsg);
-            if (mediaMessage) targetMsg = { key: { remoteJid: from, id: quotedInfo.stanzaId, participant: quotedInfo.participant || from }, message: mediaMessage, pushName: quotedInfo.pushName };
+            if (mediaMessage) {
+                targetMsg = { 
+                    key: { 
+                        remoteJid: from, 
+                        id: quotedInfo.stanzaId, 
+                        participant: quotedInfo.participant || from 
+                    }, 
+                    message: mediaMessage, 
+                    pushName: quotedInfo.pushName 
+                };
+            }
         } else {
             mediaMessage = getMediaMessage(m.message);
-            if (mediaMessage) targetMsg = m;
+            if (mediaMessage) {
+                targetMsg = m;
+            }
         }
         
-        if (!mediaMessage || !targetMsg) return await react(sock, m, '❌');
+        if (!mediaMessage || !targetMsg) {
+            return await react(sock, m, '❌');
+        }
         
         const isSticker = !!mediaMessage.stickerMessage;
         const isViewOnceMsg = isViewOnce(targetMsg.message);
         
         await react(sock, m, '⏳');
-        if (isViewOnceMsg && action !== 'reveal') await revealViewOnce(sock, from, targetMsg);
+        if (isViewOnceMsg && action !== 'reveal') {
+            await revealViewOnce(sock, from, targetMsg);
+        }
 
         if (action === 'reveal' || action === 'toimg') {
-            if (isViewOnceMsg && action === 'reveal') return await react(sock, m, '✅');
-            const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
-            if (!buffer) throw new Error('Falha no download');
-
-            if (isSticker) {
-                const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
-                const cap = `✅ Figurinha convertida!`;
-                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: cap }, { quoted: m });
+            if (isViewOnceMsg && action === 'reveal') {
+                await revealViewOnce(sock, from, targetMsg);
             } else {
-                await sock.sendMessage(from, { [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: '✅ Aqui está sua mídia!' }, { quoted: m });
+                const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+                if (!buffer) throw new Error('Falha no download');
+
+                if (isSticker) {
+                    const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
+                    const cap = `✅ Figurinha convertida!`;
+                    await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: cap }, { quoted: m });
+                } else {
+                    await sock.sendMessage(from, { [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: '✅ Aqui está sua mídia!' }, { quoted: m });
+                }
             }
         } else if (action === 'sticker') {
             const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
@@ -199,7 +252,13 @@ async function handleMediaCommand(sock, from, m, action) {
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
                 await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: '✅ Convertido!' }, { quoted: m });
             } else {
-                const stickerBuffer = await mediaToSticker(buffer, mediaMessage.imageMessage?.mimetype || mediaMessage.videoMessage?.mimetype || '');
+                const requesterName = m.pushName || 'Usuário';
+                const stickerBuffer = await mediaToSticker(
+                    buffer, 
+                    mediaMessage.imageMessage?.mimetype || mediaMessage.videoMessage?.mimetype || '',
+                    requesterName,
+                    'Antigravity Bot 🌌'
+                );
                 await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: m });
             }
         }
@@ -266,21 +325,23 @@ async function startBot() {
             const sender = m.key.participant || m.key.remoteJid;
             const text = (getMessageText(m.message) || '').trim();
             const senderName = m.pushName || 'Desconhecido';
-            
-            if ((AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) await revealViewOnce(sock, from, m);
+
+            // Revelação AUTOMÁTICA
+            if ((AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) {
+                console.log(`🔓 [INTERAÇÃO] Revelando mídia de ${senderName}...`);
+                await revealViewOnce(sock, from, m);
+            }
+
             if (!text.startsWith('!')) return;
             
-            const commandMatch = text.match(/^!\s*([a-zA-Z0-9]+)(?:\s+([\s\S]*))?$/i);
-            if (!commandMatch) return;
-            const command = commandMatch[1].toLowerCase();
-            const fullArgsText = commandMatch[2] || '';
-            
-            const now = Date.now();
-            if (commandCooldowns.get(sender) && (now - commandCooldowns.get(sender)) < MSG_COOLDOWN) return;
-            commandCooldowns.set(sender, now);
+            const args = text.slice(1).trim().split(/ +/);
+            const command = args.shift().toLowerCase();
+            const fullArgsText = args.join(' ');
             
             const validCommands = ['ativar', 'desativar', 'menu', 'status', 'ping', 's', 'toimg', 'r', 'rv', 'i', 'revelar', 'mencionar', 'play', 'perfil', 'ai', 'ia', 'grok', 'gemini', 'gpt', 'chatgpt', 'resumir'];
             if (!validCommands.includes(command)) return;
+
+            console.log(`🤖 [INTERAÇÃO] Comando !${command} por ${senderName}`);
             incrementCommand();
 
             if (command === 'ativar') {
@@ -293,16 +354,20 @@ async function startBot() {
                 else await react(sock, m, '⚠️');
             } else if (command === 'menu') {
                 await react(sock, m, '📖');
-                await sock.sendMessage(from, { text: `🤖 *MENU* 🤖\n\n• !menu\n• !status\n• !resumir\n• !perfil\n• !ai\n• !play\n\n*Grupo:*\n• !ativar\n• !desativar\n• !mencionar\n\n*Stickers:*\n• !s\n• !toimg` }, { quoted: m });
+                await sock.sendMessage(from, { text: `🤖 *MENU* 🤖\n\n• !menu\n• !status\n• !resumir\n• !perfil\n• !ai\n• !play\n\n*Grupo:*\n• !ativar\n• !desativar\n• !mencionar\n\n*Stickers:*\n• !s\n• !toimg\n\n*Mídia:*\n• !revelar (ou !r)` }, { quoted: m });
             } else if (command === 'status' || command === 'ping') {
                 await react(sock, m, 'ℹ️');
                 const stats = readStats();
                 const platform = process.platform === 'win32' ? 'Windows' : (process.env.PREFIX ? 'Termux' : 'Linux');
+                const now = Date.now();
                 await sock.sendMessage(from, { text: `🌌 *Status*\n⏱️ Uptime: ${formatUptime((now - startTime) / 1000)}\n🔄 Reinícios: ${stats.restarts}\n⌨️ Comandos: ${stats.totalCommands}\n💻 Platform: ${platform}` }, { quoted: m });
-            } else if (command === 's') await handleMediaCommand(sock, from, m, 'sticker');
-            else if (command === 'toimg') await handleMediaCommand(sock, from, m, 'toimg');
-            else if (['r', 'rv', 'i', 'revelar'].includes(command)) await handleMediaCommand(sock, from, m, 'reveal');
-            else if (command === 'mencionar') {
+            } else if (command === 's') {
+                await handleMediaCommand(sock, from, m, 'sticker');
+            } else if (command === 'toimg') {
+                await handleMediaCommand(sock, from, m, 'toimg');
+            } else if (['r', 'rv', 'i', 'revelar'].includes(command)) {
+                await handleMediaCommand(sock, from, m, 'reveal');
+            } else if (command === 'mencionar') {
                 if (!isGroup) return await react(sock, m, '❌');
                 const meta = await sock.groupMetadata(from);
                 const isAdmin = meta.participants.find(p => p.id === sender)?.admin;

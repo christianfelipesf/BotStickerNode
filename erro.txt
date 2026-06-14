@@ -1,55 +1,36 @@
+~ $ chmod +x start.sh                                 ~ $ ./start.sh                                        📦 Instalando dependências (Isso pode demorar no Termux)...
+npm error code ENOVERSIONS
+npm error No versions available for wa-sticker-js
+npm notice
+npm notice New minor version of npm available! 11.16.0 -> 11.17.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.17.0
+npm notice To update run: npm install -g npm@11.17.0
+npm notice
+npm error A complete log of this run can be found in: /data/data/com.termux/files/home/.npm/_logs/2026-06-14T14_44_44_111Z-debug-0.log
+⚠️ Alguns pacotes falharam, mas o bot tentará rodar com fallbacks.
+node:internal/modules/cjs/loader:1479
+  throw err;
+  ^
 
-🔄 [FFMPEG] Convertendo figurinha animada...
-🚀 [FFMPEG] Comando: ffmpeg -probesize 100M -analyzeduration 100M -i C:\Users\Christian Felipe\Documents\BotStickerNode\temp\stk_in_073b0bf5.webp -y -pix_fmt yuv420p -c:v libx264 -crf 20 -preset faster -movflags +faststart -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -f mp4 C:\Users\Christian Felipe\Documents\BotStickerNode\temp\stk_out_073b0bf5.mp4
-❌ [FFMPEG] Erro: ffmpeg exited with code 69: frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A
-Conversion failed!
+Error: Cannot find module '@whiskeysockets/baileys'
+Require stack:
+- /data/data/com.termux/files/home/index.js
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1476:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1049:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1073:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1094:12)
+    at Module._load (node:internal/modules/cjs/loader:1262:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1576:12)
+    at require (node:internal/modules/helpers:153:16)
+    at Object.<anonymous> (/data/data/com.termux/files/home/index.js:7:5)
+    at Module._compile (node:internal/modules/cjs/loader:1830:14) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [ '/data/data/com.termux/files/home/index.js' ]
+}
 
-❌ [FFMPEG] Stderr: ffmpeg version 7.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers
-  built with gcc 14.2.0 (Rev1, Built by MSYS2 project)
-  configuration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-fontconfig --enable-iconv --enable-gnutls --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-zlib --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-sdl2 --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libaom --enable-libopenjpeg --enable-libvpx --enable-mediafoundation --enable-libass --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl --enable-nvdec --enable-nvenc --enable-vaapi --enable-libgme --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libtheora --enable-libvo-amrwbenc --enable-libgsm --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-librubberband
-  libavutil      59. 39.100 / 59. 39.100
-  libavcodec     61. 19.101 / 61. 19.101
-  libavformat    61.  7.100 / 61.  7.100
-  libavdevice    61.  3.100 / 61.  3.100
-  libavfilter    10.  4.100 / 10.  4.100
-  libswscale      8.  3.100 /  8.  3.100
-  libswresample   5.  3.100 /  5.  3.100
-  libpostproc    58.  3.100 / 58.  3.100
-[webp @ 00000263cca06e00] skipping unsupported chunk: ANIM
-[webp @ 00000263cca06e00] skipping unsupported chunk: ANMF
-    Last message repeated 49 times
-[webp @ 00000263cca06e00] image data not found
-[webp_pipe @ 00000263cc9f50c0] Could not find codec parameters for stream 0 (Video: webp, none): unspecified size
-Consider increasing the value for the 'analyzeduration' (100000000) and 'probesize' (100000000) options
-Input #0, webp_pipe, from 'C:\Users\Christian Felipe\Documents\BotStickerNode\temp\stk_in_073b0bf5.webp':
-  Duration: N/A, bitrate: N/A
-  Stream #0:0: Video: webp, none, 25 fps, 25 tbr, 25 tbn
-Stream mapping:
-  Stream #0:0 -> #0:0 (webp (native) -> h264 (libx264))
-Press [q] to stop, [?] for help
-[webp @ 00000263cc9fd900] skipping unsupported chunk: ANIM
-[webp @ 00000263cc9fd900] skipping unsupported chunk: ANMF
-    Last message repeated 49 times
-[webp @ 00000263cc9fd900] image data not found
-[vist#0:0/webp @ 00000263cc9fe740] [dec:webp @ 00000263cc9f9b80] Decoding error: Invalid data found when processing input
-[vist#0:0/webp @ 00000263cc9fe740] [dec:webp @ 00000263cc9f9b80] Decode error rate 1 exceeds maximum 0.666667
-[vist#0:0/webp @ 00000263cc9fe740] [dec:webp @ 00000263cc9f9b80] Task finished with error code: -1145393733 (Error number -1145393733 occurred)
-[vist#0:0/webp @ 00000263cc9fe740] [dec:webp @ 00000263cc9f9b80] Terminating thread with return code -1145393733 (Error number -1145393733 occurred)
-Cannot determine format of input 0:0 after EOF
-[vf#0:0 @ 00000263cc9f8f40] Task finished with error code: -1094995529 (Invalid data found when processing input)
-[vf#0:0 @ 00000263cc9f8f40] Terminating thread with return code -1094995529 (Invalid data found when processing input)
-[vost#0:0/libx264 @ 00000263cc9f1240] Could not open encoder before EOF
-[vost#0:0/libx264 @ 00000263cc9f1240] Task finished with error code: -22 (Invalid argument)
-[vost#0:0/libx264 @ 00000263cc9f1240] Terminating thread with return code -22 (Invalid argument)
-[out#0/mp4 @ 00000263cc9ef6c0] Nothing was written into output file, because at least one of its streams received no packets.
-frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A
-Conversion failed!
-
-❌ [FFMPEG] Falha na conversão de sticker: ffmpeg exited with code 69: frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A
-Conversion failed!
-
-❌ [MÍDIA] Erro: Error: Erro ao converter figurinha animada para vídeo.
-    at stickerToMedia (C:\Users\Christian Felipe\Documents\BotStickerNode\utils.js:248:19)
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at async handleMediaCommand (C:\Users\Christian Felipe\Documents\BotStickerNode\index.js:188:35)
-    at async EventEmitter.<anonymous> (C:\Users\Christian Felipe\Documents\BotStickerNode\index.js:303:43)
+Node.js v24.15.0
+~ $ npm install @whiskeysockets/baileys
+npm error code ENOVERSIONS
+npm error No versions available for wa-sticker-js
+npm error A complete log of this run can be found in: /data/data/com.termux/files/home/.npm/_logs/2026-06-14T14_45_21_193Z-debug-0.log
