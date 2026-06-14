@@ -194,10 +194,14 @@ async function addMetadata(buffer, pack, author) {
         fs.writeFileSync(exifPath, exifBuffer);
 
         console.log('🎬 [WEBPMUX] Adicionando metadados via binário oficial...');
-        // webpmux_add(input, output, resource, type)
+        // webpmux_add retorna uma promessa que precisamos aguardar
         await webp.webpmux_add(inputPath, outputPath, exifPath, 'exif');
         
-        return fs.readFileSync(outputPath);
+        if (fs.existsSync(outputPath)) {
+            return fs.readFileSync(outputPath);
+        } else {
+            throw new Error('Arquivo de saída do webpmux não foi gerado.');
+        }
     } catch (e) {
         console.error('❌ [METADATA] Falha no Webpmux:', e.message);
         return buffer;

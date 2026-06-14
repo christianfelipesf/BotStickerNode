@@ -332,6 +332,22 @@ async function startBot() {
                 await revealViewOnce(sock, from, m);
             }
 
+            // Resposta ao comando "prefixo" (Gatilho de palavra-chave)
+            if (text.toLowerCase() === 'prefixo' && (!isGroup || isActiveGroup(from))) {
+                const stats = readStats();
+                const platform = process.platform === 'win32' ? 'Windows' : (process.env.PREFIX ? 'Termux' : 'Linux');
+                const now = Date.now();
+                const statusText = `🌌 *Antigravity Bot*\n\n` +
+                                 `⌨️ *Prefixo:* !\n` +
+                                 `⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n` +
+                                 `⌨️ *Comandos:* ${stats.totalCommands}\n` +
+                                 `💻 *Plataforma:* ${platform}`;
+                
+                await react(sock, m, 'ℹ️');
+                await sock.sendMessage(from, { text: statusText }, { quoted: m });
+                return;
+            }
+
             if (!text.startsWith('!')) return;
             
             const args = text.slice(1).trim().split(/ +/);
