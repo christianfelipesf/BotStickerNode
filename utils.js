@@ -5,54 +5,113 @@ const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const { Jimp } = require('jimp');
 const { Image } = require('node-webpmux');
-const webp = require('webp-converter');
 
-// Configuração de metadados padrão
-const STICKER_PACK = 'BotStickerNode';
-const STICKER_AUTHOR = 'Antigravity';
-
-const groupsFilePath = path.join(__dirname, 'groups.json');
-const statsFilePath = path.join(__dirname, 'stats.json');
+const dbPath = path.join(__dirname, 'database.json');
+const msgsPath = path.join(__dirname, 'messages.json');
 const tempDir = path.join(process.cwd(), 'temp');
 
-// Garante que a pasta temp exista
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
-// --- Stats Management Functions ---
+// --- Database Management ---
 
-function readStats() {
+function readDB() {
     try {
-        if (!fs.existsSync(statsFilePath)) {
-            fs.writeFileSync(statsFilePath, JSON.stringify({ restarts: 0, totalCommands: 0 }, null, 2));
+        if (!fs.existsSync(dbPath)) {
+            const defaultDB = {
+                config: {
+                    botName: "BotSticker",
+                    prefix: "!",
+                    showLogoInMenu: true,
+                    voiceEffects: true,
+                    geminiModel: "gemini-1.5-flash",
+                    summaryLimit: 20,
+                    stickerPack: "BotStickerNode",
+                    stickerAuthor: "Bot",
+                    geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g"
+                },
+                stats: { restarts: 0, totalCommands: 0 },
+                groups: { activeGroups: [] }
+            };
+            fs.writeFileSync(dbPath, JSON.stringify(defaultDB, null, 2));
+            return defaultDB;
         }
-        const data = fs.readFileSync(statsFilePath, 'utf8');
-        return JSON.parse(data);
+        return JSON.parse(fs.readFileSync(dbPath, 'utf8'));
     } catch (error) {
-        console.error('Erro ao ler stats.json:', error);
-        return { restarts: 0, totalCommands: 0 };
+        console.error('Erro ao ler database.json:', error);
+        return {};
     }
 }
 
-function writeStats(data) {
+function writeDB(data) {
     try {
-        fs.writeFileSync(statsFilePath, JSON.stringify(data, null, 2));
+        fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
     } catch (error) {
-        console.error('Erro ao salvar stats.json:', error);
+        console.error('Erro ao salvar database.json:', error);
     }
 }
 
-function incrementRestart() {
-    const stats = readStats();
-    stats.restarts = (stats.restarts || 0) + 1;
-    writeStats(stats);
-    return stats.restarts;
+// --- Message Persistence ---
+
+function saveMessage(jid, pushName, text) {
+    if (!text) return;
+    try {
+        let msgs = {};
+        if (fs.existsSync(msgsPath)) {
+            msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
+        }
+        
+        // Cleanup: remove groups not in database
+        const db = readDB();
+        const activeGroups = db.groups.activeGroups;
+        for (const id in msgs) {
+            if (id.endsWith('@g.us') && !activeGroups.includes(id)) {
+                delete msgs[id];
+            }
+        }
+
+        if (!msgs[jid]) msgs[jid] = [];
+        msgs[jid].push({ pushName, text, time: Date.now() });
+        
+        const limit = db.config.summaryLimit || 20;
+        if (msgs[jid].length > limit) msgs[jid] = msgs[jid].slice(-limit);
+        
+        fs.writeFileSync(msgsPath, JSON.stringify(msgs, null, 2));
+    } catch (e) {
+        console.error('Erro ao salvar mensagem:', e);
+    }
 }
 
+function getChatHistory(jid, limit = 20) {
+    try {
+        if (!fs.existsSync(msgsPath)) return [];
+        const msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
+        return msgs[jid] ? msgs[jid].slice(-limit) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+// --- Config Helpers ---
+function readConfig() { return readDB().config; }
+function writeConfig(newConfig) {
+    const db = readDB();
+    db.config = newConfig;
+    writeDB(db);
+}
+
+// --- Stats Helpers ---
+function readStats() { return readDB().stats; }
+function incrementRestart() {
+    const db = readDB();
+    db.stats.restarts = (db.stats.restarts || 0) + 1;
+    writeDB(db);
+    return db.stats.restarts;
+}
 function incrementCommand() {
-    const stats = readStats();
-    stats.totalCommands = (stats.totalCommands || 0) + 1;
-    writeStats(stats);
-    return stats.totalCommands;
+    const db = readDB();
+    db.stats.totalCommands = (db.stats.totalCommands || 0) + 1;
+    writeDB(db);
+    return db.stats.totalCommands;
 }
 
 function formatUptime(seconds) {
@@ -60,213 +119,116 @@ function formatUptime(seconds) {
     const h = Math.floor((seconds % (3600 * 24)) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
-
     const parts = [];
     if (d > 0) parts.push(`${d}d`);
     if (h > 0) parts.push(`${h}h`);
     if (m > 0) parts.push(`${m}m`);
     if (s > 0 || parts.length === 0) parts.push(`${s}s`);
-
     return parts.join(' ');
 }
 
-// --- Group Management Functions ---
-
-function readGroups() {
-    try {
-        if (!fs.existsSync(groupsFilePath)) {
-            fs.writeFileSync(groupsFilePath, JSON.stringify({ activeGroups: [] }, null, 2));
-        }
-        const data = fs.readFileSync(groupsFilePath, 'utf8');
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('Erro ao ler groups.json:', error);
-        return { activeGroups: [] };
-    }
-}
-
-function writeGroups(data) {
-    try {
-        fs.writeFileSync(groupsFilePath, JSON.stringify(data, null, 2));
-    } catch (error) {
-        console.error('Erro ao salvar groups.json:', error);
-    }
-}
-
+// --- Group Helpers ---
 function isActiveGroup(jid) {
-    const data = readGroups();
-    return data.activeGroups.includes(jid);
+    const db = readDB();
+    return db.groups.activeGroups.includes(jid);
 }
-
 function activateGroup(jid) {
-    const data = readGroups();
-    if (!data.activeGroups.includes(jid)) {
-        data.activeGroups.push(jid);
-        writeGroups(data);
+    const db = readDB();
+    if (!db.groups.activeGroups.includes(jid)) {
+        db.groups.activeGroups.push(jid);
+        writeDB(db);
         return true;
     }
     return false;
 }
-
 function deactivateGroup(jid) {
-    const data = readGroups();
-    const index = data.activeGroups.indexOf(jid);
+    const db = readDB();
+    const index = db.groups.activeGroups.indexOf(jid);
     if (index !== -1) {
-        data.activeGroups.splice(index, 1);
-        writeGroups(data);
+        db.groups.activeGroups.splice(index, 1);
+        writeDB(db);
         return true;
     }
     return false;
 }
 
-// --- View Once & Media Helper Functions ---
-
+// --- View Once & Media Helpers ---
 function isViewOnce(message) {
     if (!message) return false;
     let m = message;
     if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-    
-    // Verifica wrappers explícitos
     if (m.viewOnceMessage || m.viewOnceMessageV2 || m.viewOnceMessageV2Extension) return true;
-    
-    // Verifica flag dentro da mídia
     const media = m.imageMessage || m.videoMessage || m.audioMessage;
-    if (media && (media.viewOnce === true || media.viewOnce === 1)) return true;
-    
-    return false;
+    return !!(media && (media.viewOnce === true || media.viewOnce === 1));
 }
 
 function getMediaMessage(message) {
     if (!message) return null;
     let m = message;
-    
-    // Desenrola wrappers sucessivamente (Recursivo simples)
-    let found = false;
-    for (let i = 0; i < 5; i++) { // Limite de 5 níveis de profundidade
+    for (let i = 0; i < 5; i++) {
         if (m.ephemeralMessage) m = m.ephemeralMessage.message;
         else if (m.viewOnceMessage) m = m.viewOnceMessage.message;
         else if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
         else if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
         else if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-        else {
-            found = true;
-            break;
-        }
+        else break;
     }
-
-    // Retorna o nó que contém a mídia real
-    if (m.imageMessage || m.videoMessage || m.stickerMessage || m.audioMessage || m.documentMessage) {
-        return m;
-    }
-    
-    // Fallback para mensagens que já são o nó da mídia
-    if (m.url && (m.mimetype || m.fileLength)) {
-        return m;
-    }
-
+    if (m.imageMessage || m.videoMessage || m.stickerMessage || m.audioMessage || m.documentMessage) return m;
+    if (m.url && (m.mimetype || m.fileLength)) return m;
     return null;
 }
 
 async function addMetadata(buffer, pack, author) {
-    const tempId = crypto.randomBytes(4).toString('hex');
-    const inputPath = path.join(tempDir, `meta_in_${tempId}.webp`);
-    const exifPath = path.join(tempDir, `meta_${tempId}.exif`);
-    const outputPath = path.join(tempDir, `meta_out_${tempId}.webp`);
-
     try {
-        fs.writeFileSync(inputPath, buffer);
-        
-        const json = {
-            "sticker-pack-id": `bot-${tempId}`,
-            "sticker-pack-name": pack,
-            "sticker-pack-publisher": author,
-            "emojis": ["✅"]
-        };
-
-        const jsonBuffer = Buffer.from(JSON.stringify(json), "utf-8");
-        const exifHeader = Buffer.from([
-            0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 
-            0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 
-            0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00
+        const img = new Image();
+        await img.load(buffer);
+        const exif = Buffer.concat([
+            Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]),
+            Buffer.from(JSON.stringify({
+                "sticker-pack-id": `bot-${crypto.randomBytes(4).toString('hex')}`,
+                "sticker-pack-name": pack,
+                "sticker-pack-publisher": author,
+                "emojis": ["✅"]
+            }), 'utf-8')
         ]);
-        const exifBuffer = Buffer.concat([exifHeader, jsonBuffer]);
-        exifBuffer.writeUInt32LE(jsonBuffer.length, 14);
-        fs.writeFileSync(exifPath, exifBuffer);
-
-        console.log('🎬 [WEBPMUX] Adicionando metadados via binário oficial...');
-        // webpmux_add retorna uma promessa que precisamos aguardar
-        await webp.webpmux_add(inputPath, outputPath, exifPath, 'exif');
-        
-        if (fs.existsSync(outputPath)) {
-            return fs.readFileSync(outputPath);
-        } else {
-            throw new Error('Arquivo de saída do webpmux não foi gerado.');
-        }
+        exif.writeUInt32LE(exif.length - 22, 14);
+        img.exif = exif;
+        return await img.save(null);
     } catch (e) {
-        console.error('❌ [METADATA] Falha no Webpmux:', e.message);
+        console.error('❌ [METADATA] Falha:', e.message);
         return buffer;
-    } finally {
-        try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(_) {}
-        try { if (fs.existsSync(exifPath)) fs.unlinkSync(exifPath); } catch(_) {}
-        try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(_) {}
     }
 }
 
-// --- Media & Sticker Conversion Functions ---
-
-async function mediaToSticker(buffer, mimeType, pack = STICKER_PACK, author = STICKER_AUTHOR) {
+async function mediaToSticker(buffer, mimeType, pack, author) {
+    const config = readConfig();
+    const finalPack = pack || config.botName || 'Bot';
+    const finalAuthor = author || `${config.botName} 🌌` || 'Bot';
     const isVideo = mimeType.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
     let inputBuffer = buffer;
-
     if (!isVideo) {
         try {
             const image = await Jimp.read(buffer);
             image.resize({ w: 512, h: 512 });
             inputBuffer = await image.getBuffer('image/png');
-        } catch (e) {
-            console.error('❌ [JIMP] Erro:', e.message);
-        }
+        } catch (e) {}
     }
-
-    const inputExt = isVideo ? '.mp4' : '.png';
-    const inputPath = path.join(tempDir, `stk_in_${tempId}${inputExt}`);
+    const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
-
     try {
         fs.writeFileSync(inputPath, inputBuffer);
-
         await new Promise((resolve, reject) => {
             let ff = ffmpeg(inputPath);
-            if (isVideo) {
-                // Otimizado para figurinhas animadas (WhatsApp é rigoroso com tamanho/fps)
-                ff = ff.inputOptions(['-t 6']).fps(12);
-            }
-
-            ff.outputOptions([
-                '-vcodec libwebp',
-                '-vf scale=512:512,setsar=1',
-                '-lossless 0',
-                '-compression_level 5',
-                '-q:v 60',
-                '-loop 0',
-                '-preset default',
-                '-an'
-            ])
-            .toFormat('webp')
-            .on('end', resolve)
-            .on('error', reject)
-            .save(outputPath);
+            if (isVideo) ff = ff.inputOptions(['-t 6']).fps(12);
+            ff.outputOptions(['-vcodec libwebp', '-vf scale=512:512,setsar=1', '-lossless 0', '-compression_level 5', '-q:v 60', '-loop 0', '-preset default', '-an']).toFormat('webp').on('end', resolve).on('error', reject).save(outputPath);
         });
-
-        const webpBuffer = fs.readFileSync(outputPath);
-        return await addMetadata(webpBuffer, pack, author);
+        return await addMetadata(fs.readFileSync(outputPath), finalPack, finalAuthor);
     } catch (error) {
         console.error('❌ [CONVERSÃO] Falha:', error.message);
         throw error;
     } finally {
-        try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(_) {}
-        try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(_) {}
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
     }
 }
 
@@ -274,53 +236,77 @@ async function stickerToMedia(buffer, isAnimated = false) {
     const tempId = crypto.randomBytes(4).toString('hex');
     const inputPath = path.join(tempDir, `stk_in_${tempId}.webp`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.${isAnimated ? 'mp4' : 'png'}`);
-
     try {
         fs.writeFileSync(inputPath, buffer);
-        console.log(`🔄 [FFMPEG] Convertendo figurinha para ${isAnimated ? 'vídeo' : 'imagem'} (Alta Resolução)...`);
-
         await new Promise((resolve, reject) => {
             let ff = ffmpeg(inputPath);
-
-            if (isAnimated) {
-                ff.outputOptions([
-                    '-pix_fmt yuv420p',
-                    '-c:v libx264',
-                    '-crf 18', // Qualidade superior (menor é melhor)
-                    '-preset slow',
-                    '-movflags +faststart',
-                    '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2' // Mantém original, apenas garante par para H264
-                ]).toFormat('mp4');
-            } else {
-                ff.outputOptions([
-                    '-vcodec png',
-                    '-compression_level 0', // Sem compressão para manter qualidade máxima
-                    '-f image2'
-                ]);
-            }
-
-            ff.on('end', resolve)
-              .on('error', reject)
-              .save(outputPath);
+            if (isAnimated) ff.outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2']).toFormat('mp4');
+            else ff.outputOptions(['-vcodec png', '-compression_level 0', '-f image2']);
+            ff.on('end', resolve).on('error', reject).save(outputPath);
         });
-
-        const outBuffer = fs.readFileSync(outputPath);
-        return { 
-            buffer: outBuffer, 
-            mime: isAnimated ? 'video/mp4' : 'image/png', 
-            ext: isAnimated ? 'mp4' : 'png' 
-        };
+        return { buffer: fs.readFileSync(outputPath), mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
     } catch (err) {
-        console.error('❌ [FFMPEG] Falha na conversão de sticker:', err.message);
-        throw new Error(`Erro ao converter figurinha ${isAnimated ? 'animada' : 'estática'}.`);
+        console.error('❌ [FFMPEG] Falha:', err.message);
+        throw err;
     } finally {
-        try { if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(_) {}
-        try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(_) {}
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
     }
 }
 
-module.exports = {
-    isActiveGroup, activateGroup, deactivateGroup,
-    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
-    readStats, incrementRestart, incrementCommand, formatUptime
+async function changeSpeed(buffer, mimeType, speed = 1.0) {
+    const config = readConfig();
+    const isVideo = mimeType.includes('video');
+    const tempId = crypto.randomBytes(4).toString('hex');
+    const inputPath = path.join(tempDir, `speed_in_${tempId}${isVideo ? '.mp4' : '.ogg'}`);
+    const outputPath = path.join(tempDir, `speed_out_${tempId}${isVideo ? '.mp4' : '.opus'}`);
+    try {
+        fs.writeFileSync(inputPath, buffer);
+        await new Promise((resolve, reject) => {
+            let ff = ffmpeg(inputPath);
+            
+            // Filtro de áudio (Pitch vs Velocidade Simples)
+            let audioFilter = `atempo=${speed}`;
+            if (config.voiceEffects) {
+                // Efeito "Esquilo" (acelerado) ou "Voz Grossa" (desacelerado)
+                // Aumentamos/diminuímos a taxa de amostragem e depois corrigimos a velocidade
+                const rate = 44100 * speed;
+                audioFilter = `asetrate=${rate},atempo=1.0`;
+            }
+
+            if (isVideo) {
+                const pts = 1 / speed;
+                ff.outputOptions([
+                    `-filter:v setpts=${pts}*PTS`, 
+                    `-filter:a ${audioFilter}`,
+                    '-c:v libx264',
+                    '-preset fast',
+                    '-c:a aac',
+                    '-movflags +faststart'
+                ]);
+            } else {
+                ff.outputOptions([
+                    `-filter:a ${audioFilter}`,
+                    '-c:a libopus',
+                    '-b:a 48k',
+                    '-vbr on',
+                    '-compression_level 10'
+                ]).toFormat('opus');
+            }
+            ff.on('end', resolve).on('error', reject).save(outputPath);
+        });
+        return fs.readFileSync(outputPath);
+    } catch (e) {
+        console.error('❌ [SPEED] Falha:', e.message);
+        throw e;
+    } finally {
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
+    }
+}
+
+module.exports = { 
+    isActiveGroup, activateGroup, deactivateGroup, 
+    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia, 
+    readStats, incrementRestart, incrementCommand, formatUptime, 
+    readConfig, writeConfig, saveMessage, getChatHistory,
+    changeSpeed
 };

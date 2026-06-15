@@ -1,0 +1,25 @@
+{
+  "config": {
+    "botName": "Antigravity Bot",
+    "prefix": "!",
+    "showLogoInMenu": true,
+    "voiceEffects": true,
+    "geminiModel": "gemini-2.5-flash-lite",
+    "stickerPack": "BotStickerNode",
+    "stickerAuthor": "Antigravity",
+    "geminiApiKey": "AIzaSyD2LiTeOjMl1DnbRnvnotqcKGIJootNZ7M"
+  },
+  "stats": {
+    "restarts": 80,
+    "totalCommands": 228
+  },
+  "groups": {
+    "activeGroups": [
+      "120363410551589086@g.us",
+      "553499398657-1588367022@g.us",
+      "120363374777828089@g.us",
+      "120363237297961822@g.us",
+      "120363332324077374@g.us"
+    ]
+  }
+}
