@@ -1,0 +1,12 @@
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-bot-revelar
+    restart: always
+    # Mantém o terminal interativo ativo para você conseguir escanear o QR Code
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    volumes:
+      - ./auth_info_baileys:/usr/src/app/auth_info_baileys

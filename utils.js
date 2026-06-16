@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const { Jimp } = require('jimp');
 const { Image } = require('node-webpmux');
+const webp = require('webp-converter');
 
 const dbPath = path.join(__dirname, 'database.json');
 const msgsPath = path.join(__dirname, 'messages.json');
@@ -25,12 +26,14 @@ function readDB() {
                     voiceEffects: true,
                     geminiModel: "gemini-1.5-flash",
                     summaryLimit: 20,
+                    aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
+                    summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
                     stickerPack: "BotStickerNode",
                     stickerAuthor: "Bot",
                     geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g"
                 },
                 stats: { restarts: 0, totalCommands: 0 },
-                groups: { activeGroups: [] }
+                groups: { activeGroups: [], settings: {} }
             };
             fs.writeFileSync(dbPath, JSON.stringify(defaultDB, null, 2));
             return defaultDB;
@@ -127,7 +130,51 @@ function formatUptime(seconds) {
     return parts.join(' ');
 }
 
+function getBotName(from, config) {
+    if (from.endsWith('@g.us')) {
+        const groupData = getGroupData(from);
+        if (groupData.botName) return groupData.botName;
+    }
+    return config.botName;
+}
+
+async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
+    try {
+        const now = Date.now();
+        if (now - lastBotResponse < GLOBAL_COOLDOWN) return lastBotResponse;
+        await sock.sendMessage(m.key.remoteJid, { react: { text: emoji, key: m.key } });
+        return now;
+    } catch (error) {
+        return lastBotResponse;
+    }
+}
+
+function getMessageText(message) {
+    if (!message) return '';
+    let m = message;
+    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+    if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
+    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+    if (!m) return '';
+    return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '';
+}
+
 // --- Group Helpers ---
+function getGroupData(jid) {
+    const db = readDB();
+    if (!db.groups.settings) db.groups.settings = {};
+    return db.groups.settings[jid] || {};
+}
+
+function setGroupData(jid, data) {
+    const db = readDB();
+    if (!db.groups.settings) db.groups.settings = {};
+    db.groups.settings[jid] = { ...db.groups.settings[jid], ...data };
+    writeDB(db);
+}
+
 function isActiveGroup(jid) {
     const db = readDB();
     return db.groups.activeGroups.includes(jid);
@@ -150,6 +197,21 @@ function deactivateGroup(jid) {
         return true;
     }
     return false;
+}
+
+async function saveGroupMenuImage(jid, buffer) {
+    const hash = crypto.createHash('md5').update(jid).digest('hex');
+    const fileName = `menu_${hash}.png`;
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+    const filePath = path.join(uploadsDir, fileName);
+    
+    // Convert to PNG using Jimp to ensure compatibility
+    const image = await Jimp.read(buffer);
+    await image.write(filePath);
+    
+    setGroupData(jid, { menuImage: filePath });
+    return filePath;
 }
 
 // --- View Once & Media Helpers ---
@@ -203,32 +265,48 @@ async function addMetadata(buffer, pack, author) {
 async function mediaToSticker(buffer, mimeType, pack, author) {
     const config = readConfig();
     const finalPack = pack || config.botName || 'Bot';
-    const finalAuthor = author || `${config.botName} 🌌` || 'Bot';
+    const finalAuthor = author || `${config.botName}` || 'Bot';
     const isVideo = mimeType.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
-    let inputBuffer = buffer;
-    if (!isVideo) {
-        try {
+    
+    const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
+    const intermediatePath = path.join(tempDir, `stk_inter_${tempId}${isVideo ? '.gif' : '.png'}`);
+    const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
+
+    try {
+        if (!isVideo) {
             const image = await Jimp.read(buffer);
             image.resize({ w: 512, h: 512 });
-            inputBuffer = await image.getBuffer('image/png');
-        } catch (e) {}
-    }
-    const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
-    const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
-    try {
-        fs.writeFileSync(inputPath, inputBuffer);
-        await new Promise((resolve, reject) => {
-            let ff = ffmpeg(inputPath);
-            if (isVideo) ff = ff.inputOptions(['-t 6']).fps(12);
-            ff.outputOptions(['-vcodec libwebp', '-vf scale=512:512,setsar=1', '-lossless 0', '-compression_level 5', '-q:v 60', '-loop 0', '-preset default', '-an']).toFormat('webp').on('end', resolve).on('error', reject).save(outputPath);
-        });
+            const pngBuffer = await image.getBuffer('image/png');
+            fs.writeFileSync(inputPath, pngBuffer);
+            await webp.cwebp(inputPath, outputPath, "-q 60");
+        } else {
+            fs.writeFileSync(inputPath, buffer);
+            // Convert to GIF first (fallback for old ffmpeg)
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .inputOptions(['-t 6'])
+                    .outputOptions([
+                        '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
+                        '-r', '12'
+                    ])
+                    .toFormat('gif')
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .save(intermediatePath);
+            });
+            // Convert GIF to WebP
+            await webp.gwebp(intermediatePath, outputPath, "-q 60");
+        }
+        
         return await addMetadata(fs.readFileSync(outputPath), finalPack, finalAuthor);
     } catch (error) {
         console.error('❌ [CONVERSÃO] Falha:', error.message);
         throw error;
     } finally {
-        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
+        [inputPath, intermediatePath, outputPath].forEach(p => { 
+            try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} 
+        });
     }
 }
 
@@ -290,7 +368,7 @@ async function changeSpeed(buffer, mimeType, speed = 1.0) {
                     '-b:a 48k',
                     '-vbr on',
                     '-compression_level 10'
-                ]).toFormat('opus');
+                ]).toFormat('ogg');
             }
             ff.on('end', resolve).on('error', reject).save(outputPath);
         });
@@ -305,8 +383,9 @@ async function changeSpeed(buffer, mimeType, speed = 1.0) {
 
 module.exports = { 
     isActiveGroup, activateGroup, deactivateGroup, 
+    getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia, 
     readStats, incrementRestart, incrementCommand, formatUptime, 
     readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed
+    changeSpeed, getBotName, react, getMessageText
 };
