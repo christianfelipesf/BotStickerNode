@@ -163,9 +163,9 @@ async function sendMedia(sock, from, m, filePath, title) {
 
 module.exports = {
     name: 'download',
-    aliases: ['d', 'dl', 'baixar', 'media', 'social'],
+    aliases: ['d', 'dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt'],
     category: 'mídia',
-    description: 'Baixa mídia de TikTok, Instagram, YouTube, Facebook, Reddit e Google',
+    description: 'Baixa mídia de TikTok, Instagram, YouTube, Facebook e mais',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react } = utils;
         const hd = commandName === 'downloadhd' || commandName === 'dhd';
