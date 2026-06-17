@@ -88,6 +88,12 @@ async function startBot() {
         try {
             const m = messages[0];
             if (!m.message || processedMessages.has(m.key.id)) return;
+            
+            // Ignorar mensagens enviadas enquanto o bot estava offline ou durante a sincronização inicial
+            const messageTime = m.messageTimestamp?.low || m.messageTimestamp || 0;
+            const bootThreshold = Math.floor(startTime / 1000) + 10; // 10 segundos de margem para sincronização
+            if (messageTime < bootThreshold) return;
+
             processedMessages.add(m.key.id);
             setTimeout(() => processedMessages.delete(m.key.id), 300000);
             
@@ -97,12 +103,13 @@ async function startBot() {
             const text = (getMessageText(m.message) || '').trim();
             const senderName = m.pushName || 'Usuário';
 
-            if (text && !text.startsWith(config.prefix) && (!isGroup || isActiveGroup(from))) saveMessage(from, m.pushName || senderName, text);
-            if ((AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) {
+            const isBotActive = !isGroup || isActiveGroup(from);
+            if (text && !text.startsWith(config.prefix) && isBotActive) saveMessage(from, m.pushName || senderName, text);
+            if (isBotActive && (AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) {
                 lastBotResponse = await revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN);
             }
 
-            if (text.toLowerCase() === 'prefixo' && (!isGroup || isActiveGroup(from))) {
+            if (text.toLowerCase() === 'prefixo' && isBotActive) {
                 const stats = readStats();
                 const now = Date.now();
                 const currentBotName = getBotName(from, config);
@@ -118,6 +125,9 @@ async function startBot() {
 
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
+
+            // Bloqueio de comandos em grupos desativados
+            if (isGroup && !isActiveGroup(from) && cmd.name !== 'ativar' && cmd.name !== 'status') return;
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
