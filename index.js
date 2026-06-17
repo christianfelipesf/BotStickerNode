@@ -24,9 +24,14 @@ const {
 
 const { revealViewOnce, handleMediaCommand } = require('./handlers/mediaHandler');
 const { setupAI, getModel } = require('./lib/ai');
+const dashboard = require('./lib/dashboard');
 
 // --- Configuração Global ---
 let config = readConfig();
+
+// Iniciar Dashboard (Modular)
+dashboard.init(config);
+
 let model = setupAI(config);
 const commands = new Map();
 
@@ -44,10 +49,12 @@ loadCommands();
 process.on('uncaughtException', (err) => {
     if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
     console.error('💥 [ERRO FATAL]:', err);
+    dashboard.log('error', 'SISTEMA', `ERRO FATAL: ${err.message}`);
 });
 process.on('unhandledRejection', (reason) => {
     if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
     console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
+    dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
 });
 
 // Detectar FFmpeg
@@ -83,6 +90,26 @@ async function startBot() {
         } else if (u.connection === 'open') {
             const version = require('./utils').getVersion();
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
+            dashboard.log('action', 'SISTEMA', `Bot Conectado (v${version})`);
+        }
+    });
+
+    sock.ev.on('group-participants.update', async (anu) => {
+        if (!isActiveGroup(anu.id)) return;
+        try {
+            const metadata = await sock.groupMetadata(anu.id);
+            for (const num of anu.participants) {
+                const phone = num.split('@')[0];
+                let text = '';
+                if (anu.action === 'add') text = `Entrou no grupo`;
+                else if (anu.action === 'remove') text = `Saiu ou foi removido`;
+                else if (anu.action === 'promote') text = `Promovido a admin`;
+                else if (anu.action === 'demote') text = `Rebaixado de admin`;
+                
+                if (text) dashboard.log('event', metadata.subject, text, null, phone);
+            }
+        } catch (e) {
+            console.error('Erro no group-participants.update:', e);
         }
     });
 
@@ -92,9 +119,8 @@ async function startBot() {
             const m = messages[0];
             if (!m.message || processedMessages.has(m.key.id)) return;
             
-            // Ignorar mensagens enviadas enquanto o bot estava offline ou durante a sincronização inicial
             const messageTime = m.messageTimestamp?.low || m.messageTimestamp || 0;
-            const bootThreshold = Math.floor(startTime / 1000) + 10; // 10 segundos de margem para sincronização
+            const bootThreshold = Math.floor(startTime / 1000) + 10;
             if (messageTime < bootThreshold) return;
 
             processedMessages.add(m.key.id);
@@ -107,6 +133,13 @@ async function startBot() {
             const senderName = m.pushName || 'Usuário';
 
             const isBotActive = !isGroup || isActiveGroup(from);
+            
+            // Log no Dashboard (Apenas Grupos Ativos)
+            if (isGroup && isActiveGroup(from) && text && !m.message.imageMessage && !m.message.videoMessage && !m.message.audioMessage && !m.message.stickerMessage) {
+                const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0]);
+            }
+
             if (text && !text.startsWith(config.prefix) && isBotActive) saveMessage(from, m.pushName || senderName, text);
             if (isBotActive && isGroup) {
                 const { updateMemberActivity } = require('./utils');
@@ -133,14 +166,16 @@ async function startBot() {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            // Bloqueio de comandos em grupos desativados
             if (isGroup && !isActiveGroup(from) && cmd.name !== 'ativar' && cmd.name !== 'status') return;
+
+            const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
+            dashboard.log('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName);
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
 
             const context = {
-                from, isGroup, sender, senderName, fullArgsText, args,
+                from, isGroup, sender, senderName, fullArgsText, args, commandName,
                 config, utils: require('./utils'), model: getModel(), startTime,
                 lastBotResponse, GLOBAL_COOLDOWN,
                 mediaHandler: require('./handlers/mediaHandler'),

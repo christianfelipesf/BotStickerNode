@@ -274,8 +274,8 @@ async function saveGroupMenuImage(jid, buffer) {
     const image = await Jimp.read(buffer);
     await image.write(filePath);
     
-    // Salvar caminho relativo para portabilidade
-    const relativePath = path.join('uploads', fileName);
+    // Salvar caminho relativo para portabilidade (sempre usando /)
+    const relativePath = `uploads/${fileName}`;
     setGroupData(jid, { menuImage: relativePath });
     return filePath;
 }

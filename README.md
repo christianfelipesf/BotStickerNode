@@ -1,32 +1,60 @@
 # BotStickerNode 🌌
-Um bot para WhatsApp com recursos de IA, revelação de mídia única e criação de figurinhas.
+Um bot para WhatsApp potente com IA, bypass de visualização única e downloads de mídias sociais.
 
-## 🚀 Instalação (Termux)
-Para rodar no Termux, siga estes passos para garantir que as dependências do sistema estejam instaladas:
+## 🚀 Funcionalidades Principais
+- **Download de Mídias:** Baixe vídeos e fotos do TikTok, Instagram, YouTube, Facebook, Reddit e Google Imagens.
+- **Inteligência Artificial:** Integrado com Google Gemini para conversas e resumos de chat.
+- **Figurinhas:** Criação de figurinhas estáticas e animadas com metadados personalizados.
+- **Conversão:** Converta figurinhas de volta para imagens/vídeos e vice-versa.
+- **Privacidade:** Bypass automático de mensagens de visualização única (View Once).
+- **TTS Offline:** Sintetizador de voz Piper integrado para mensagens de áudio realistas.
+
+## 💻 Instalação (VPS Linux - Recomendado)
+A melhor forma de rodar é via Docker para garantir que todas as dependências (FFmpeg, Python, yt-dlp) estejam corretas:
 
 ```bash
+git clone https://github.com/christianfelipesf/BotStickerNode
+cd BotStickerNode
+docker-compose up -d
+```
+
+### Instalação Manual (Ubuntu/Debian)
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install nodejs ffmpeg python3 curl -y
+# Instalar yt-dlp mais recente
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+
+npm install
+node index.js
+```
+
+## 📱 Instalação (Termux)
+```bash
 pkg update && pkg upgrade
-pkg install nodejs ffmpeg yt-dlp libwebp libvips -y
+pkg install nodejs ffmpeg python3 curl libwebp libvips -y
+# Instalar yt-dlp via pip para melhor compatibilidade
+pip install yt-dlp
+
 git clone https://github.com/christianfelipesf/BotStickerNode
 cd BotStickerNode
 npm install
 node index.js
 ```
 
-> **Nota:** O bot utiliza `jimp` e `node-webpmux` para geração de figurinhas com metadados, garantindo alta compatibilidade e performance mesmo em ambientes limitados como o Termux.
+## 🤖 Comandos Principais
+- `!menu` - Menu completo de comandos.
+- `!dl` / `!social` / `!media` <link> - Baixa vídeos/fotos de redes sociais.
+- `!play` <nome/link> - Baixa músicas do YouTube.
+- `!s` - Cria figurinha (mande imagem/vídeo ou marque).
+- `!revelar` - Revela mídia de visualização única (ou automático se ativado).
+- `!ai` - Conversa com a IA Gemini.
+- `!resumir` - Resumo sarcástico das últimas mensagens do grupo.
 
-## 💻 Instalação (Windows/Linux)
-1. Instale o Node.js.
-2. Instale o FFmpeg e adicione ao PATH.
-3. Clone o repositório.
-4. Execute `npm install`.
-5. Execute `node index.js`.
+## ⚙️ Configuração
+- Salve seus cookies do navegador como `cookies.txt` na raiz para baixar mídias privadas do Instagram.
+- Use `!config` e `!set` para ajustar o nome do bot, prefixo e prompts da IA.
 
-## 🤖 Comandos
-- `!menu` - Exibe o menu de comandos.
-- `!s` - Cria uma figurinha a partir de imagem/vídeo.
-- `!toimg` - Converte figurinha para imagem/vídeo.
-- `!r` ou `!revelar` - Revela mídias de visualização única.
-- `!ai` - Conversa com a IA (Gemini).
-- `!play` - Baixa e envia música do YouTube.
-- `!ativar` / `!desativar` - Ativa/Desativa o bot no grupo.
+---
+Desenvolvido com 💜 por Christian Felipe.

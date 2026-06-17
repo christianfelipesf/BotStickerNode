@@ -21,7 +21,7 @@ module.exports = {
             }
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
-            else config[p] = (p === 'showLogoInMenu' || p === 'voiceEffects') ? v.toLowerCase() === 'true' : (p === 'summaryLimit' ? parseInt(v) : v);
+            else config[p] = (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled') ? v.toLowerCase() === 'true' : (p === 'summaryLimit' ? parseInt(v) : v);
             
             writeConfig(config);
             // Refresh local config and AI

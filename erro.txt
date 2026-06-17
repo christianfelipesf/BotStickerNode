@@ -1,0 +1,11 @@
+❌ *Falha ao baixar!*
+
+🔗 Link: https://www.instagram.com/p/DZs1neEFOLR/?utm_source=ig_web_copy_link
+🌐 Plataforma: instagram
+💬 Motivo: Instagram exige login desde 2024. Adicione um arquivo "cookies.txt" na raiz do bot (exporte do navegador logado) para baixar.
+
+💡 *Dicas:*
+• Certifique-se que o post é público
+• Tente !dhd para versão HD
+• Para Instagram: salve cookies.txt na raiz do bot
+• Atualize: yt-dlp -U

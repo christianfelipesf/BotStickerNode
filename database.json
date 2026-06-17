@@ -9,12 +9,13 @@
     "aiPrompt": "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     "summaryPrompt": "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
     "stickerPack": "BotStickerNode",
-    "stickerAuthor": "Antigravity",
-    "geminiApiKey": ""
+    "stickerAuthor": "Bot",
+    "geminiApiKey": "",
+    "dashboardEnabled": true
   },
   "stats": {
-    "restarts": 111,
-    "totalCommands": 318
+    "restarts": 123,
+    "totalCommands": 338
   },
   "groups": {
     "activeGroups": [
@@ -27,7 +28,7 @@
     "settings": {
       "120363332324077374@g.us": {
         "botName": "mlk sonhador",
-        "menuImage": "uploads\\menu_3162766caf3f4a467feb7669672fe1a9.png"
+        "menuImage": "uploads/menu_3162766caf3f4a467feb7669672fe1a9.png"
       }
     },
     "activity": {
@@ -36,7 +37,11 @@
         "120363374777828089@g.us": {
           "65030452179067@lid": {
             "name": "Christian Felipe",
-            "count": 2
+            "count": 5
+          },
+          "229119476367595@lid": {
+            "name": "Maxx Internet",
+            "count": 1
           }
         }
       }
