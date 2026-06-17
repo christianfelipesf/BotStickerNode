@@ -11,10 +11,21 @@ module.exports = {
         
         // 1. Tentar pegar o texto dos argumentos diretos
         let text = args.join(' ');
+        let messageToReply = m; // Padrão: responder à mensagem do comando
 
         // 2. Se não houver texto direto, tentar pegar de uma mensagem marcada (quoted)
         if (!text && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
             text = getMessageText(m.message.extendedTextMessage.contextInfo.quotedMessage);
+            // Se estamos lendo de uma mensagem marcada, vamos responder DIRETAMENTE a ela
+            messageToReply = {
+                key: {
+                    remoteJid: from,
+                    fromMe: false,
+                    id: m.message.extendedTextMessage.contextInfo.stanzaId,
+                    participant: m.message.extendedTextMessage.contextInfo.participant
+                },
+                message: m.message.extendedTextMessage.contextInfo.quotedMessage
+            };
         }
 
         // 3. Se ainda não houver texto, tentar pegar da legenda da própria mensagem (se houver mídia)
@@ -43,7 +54,7 @@ module.exports = {
                 audio: audioBuffer, 
                 mimetype: 'audio/ogg; codecs=opus', 
                 ptt: true 
-            }, { quoted: m });
+            }, { quoted: messageToReply }); // Aqui respondemos à mensagem correta
 
             // Deletar arquivo temporário
             fs.unlinkSync(audioPath);

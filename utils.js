@@ -225,7 +225,39 @@ function deactivateGroup(jid) {
     const index = db.groups.activeGroups.indexOf(jid);
     if (index !== -1) {
         db.groups.activeGroups.splice(index, 1);
+        
+        // Purge settings and menu image
+        if (db.groups.settings && db.groups.settings[jid]) {
+            const menuImage = db.groups.settings[jid].menuImage;
+            if (menuImage) {
+                const fullPath = path.join(process.cwd(), menuImage);
+                if (fs.existsSync(fullPath)) {
+                    try { fs.unlinkSync(fullPath); } catch(e) {}
+                }
+            }
+            delete db.groups.settings[jid];
+        }
+
+        // Purge activity data
+        if (db.groups.activity && db.groups.activity.data && db.groups.activity.data[jid]) {
+            delete db.groups.activity.data[jid];
+        }
+
         writeDB(db);
+
+        // Purge from messages.json
+        if (fs.existsSync(msgsPath)) {
+            try {
+                const msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
+                if (msgs[jid]) {
+                    delete msgs[jid];
+                    fs.writeFileSync(msgsPath, JSON.stringify(msgs, null, 2));
+                }
+            } catch (e) {
+                console.error('Erro ao limpar mensagens no deactivate:', e);
+            }
+        }
+
         return true;
     }
     return false;
