@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 
 module.exports = {
     name: 'menu',
@@ -14,9 +15,15 @@ module.exports = {
         
         const menuText = `*${currentBotName}*\n\n╭─── *GERAL* ───\n│ 📂 *${config.prefix}menu*\n│ 📊 *${config.prefix}status*\n│ 👤 *${config.prefix}perfil*\n│ 🤖 *${config.prefix}ia* <texto>\n╰───────────────\n\n╭─── *MÍDIA* ───\n│ 🖼️ *${config.prefix}s* (sticker)\n│ 🔄 *${config.prefix}toimg*\n│ 🔓 *${config.prefix}revelar*\n│ 🎵 *${config.prefix}play* <nome>\n│ ⚡ *${config.prefix}acelerar*\n│ 🐌 *${config.prefix}desacelerar*\n╰───────────────\n\n╭─── *GRUPOS* ───\n│ ✅ *${config.prefix}ativar*\n│ ❌ *${config.prefix}desativar*\n│ 📢 *${config.prefix}mencionar*\n│ 📝 *${config.prefix}resumir*\n│ 🏷️ *${config.prefix}nome* <nome>\n│ 🖼️ *${config.prefix}imagem* (marque)\n╰───────────────`;
         
-        let menuImagePath = './logo.png';
-        if (groupData.menuImage && fs.existsSync(groupData.menuImage)) {
-            menuImagePath = groupData.menuImage;
+        let menuImagePath = path.join(process.cwd(), 'logo.png');
+        if (groupData.menuImage) {
+            const potentialPath = path.isAbsolute(groupData.menuImage) 
+                ? groupData.menuImage 
+                : path.join(process.cwd(), groupData.menuImage);
+            
+            if (fs.existsSync(potentialPath)) {
+                menuImagePath = potentialPath;
+            }
         }
 
         if (config.showLogoInMenu && fs.existsSync(menuImagePath)) {
