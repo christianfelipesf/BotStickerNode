@@ -383,11 +383,19 @@ async function changeSpeed(buffer, mimeType, speed = 1.0) {
     }
 }
 
+function getVersion() {
+    try {
+        return execSync('git log -1 --format=%s').toString().trim();
+    } catch (e) {
+        return 'v1.0.0';
+    }
+}
+
 module.exports = { 
     isActiveGroup, activateGroup, deactivateGroup, 
     getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia, 
     readStats, incrementRestart, incrementCommand, formatUptime, 
     readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed, getBotName, react, getMessageText
+    changeSpeed, getBotName, react, getMessageText, getVersion
 };

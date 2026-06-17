@@ -13,14 +13,13 @@
     "geminiApiKey": ""
   },
   "stats": {
-    "restarts": 100,
-    "totalCommands": 291
+    "restarts": 102,
+    "totalCommands": 295
   },
   "groups": {
     "activeGroups": [
       "120363410551589086@g.us",
       "553499398657-1588367022@g.us",
-      "120363374777828089@g.us",
       "120363237297961822@g.us",
       "120363332324077374@g.us"
     ],

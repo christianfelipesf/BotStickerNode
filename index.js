@@ -80,7 +80,10 @@ async function startBot() {
             const code = (u.lastDisconnect.error instanceof Boom) ? u.lastDisconnect.error.output?.statusCode : u.lastDisconnect.error?.statusCode;
             if (code !== DisconnectReason.loggedOut) setTimeout(startBot, 5000);
             else { fs.rmSync('session', { recursive: true, force: true }); setTimeout(startBot, 5000); }
-        } else if (u.connection === 'open') console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO!\n`);
+        } else if (u.connection === 'open') {
+            const version = require('./utils').getVersion();
+            console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
+        }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
