@@ -483,6 +483,15 @@ function getTopMember(jid) {
     return topSender || 'Nenhum registro hoje';
 }
 
+async function getAdmins(sock, jid) {
+    try {
+        const metadata = await sock.groupMetadata(jid);
+        return metadata.participants.filter(p => p.admin || p.isSuperAdmin).map(p => p.id);
+    } catch (e) {
+        return [];
+    }
+}
+
 module.exports = { 
     readDB, writeDB,
     isActiveGroup, activateGroup, deactivateGroup, 
@@ -491,5 +500,5 @@ module.exports = {
     readStats, incrementRestart, incrementCommand, formatUptime, 
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
-    updateMemberActivity, getTopMember
+    updateMemberActivity, getTopMember, getAdmins
 };

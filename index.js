@@ -134,6 +134,47 @@ async function startBot() {
 
             const isBotActive = !isGroup || isActiveGroup(from);
             
+            // --- Enforce Admin Policies (Mute & Anti-Link) ---
+            if (isGroup && isBotActive) {
+                const groupData = getGroupData(from);
+                const admins = await require('./utils').getAdmins(sock, from);
+                const isSenderAdmin = admins.includes(sender);
+                const isBotAdmin = admins.includes(sock.user.id.split(':')[0] + '@s.whatsapp.net');
+
+                // 1. Mute enforcement
+                if (groupData.muted?.includes(sender) && !isSenderAdmin) {
+                    if (isBotAdmin) {
+                        await sock.sendMessage(from, { delete: m.key });
+                        return; // Stop processing muted messages
+                    }
+                }
+
+                // 2. Anti-link enforcement
+                if (groupData.antilink && !isSenderAdmin && isBotAdmin) {
+                    const groupLinkRegex = /chat\.whatsapp\.com\/[a-zA-Z0-9]/;
+                    if (groupLinkRegex.test(text)) {
+                        // Deleta o link
+                        await sock.sendMessage(from, { delete: m.key });
+                        
+                        // Aplica 2 advertências
+                        if (!groupData.warnings) groupData.warnings = {};
+                        groupData.warnings[sender] = (groupData.warnings[sender] || 0) + 2;
+                        const count = groupData.warnings[sender];
+                        
+                        setGroupData(from, groupData);
+
+                        if (count >= 3) {
+                            await sock.groupParticipantsUpdate(from, [sender], 'remove');
+                            delete groupData.warnings[sender];
+                            setGroupData(from, groupData);
+                            return await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]} enviou link, atingiu ${count}/3 advertências e foi banido.`, mentions: [sender] });
+                        } else {
+                            return await sock.sendMessage(from, { text: `⚠️ @${sender.split('@')[0]} enviou link e recebeu 2 advertências. (${count}/3)`, mentions: [sender] });
+                        }
+                    }
+                }
+            }
+
             // Log no Dashboard (Apenas Grupos Ativos)
             if (isGroup && isActiveGroup(from) && text && !m.message.imageMessage && !m.message.videoMessage && !m.message.audioMessage && !m.message.stickerMessage) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
