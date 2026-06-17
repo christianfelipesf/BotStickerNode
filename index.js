@@ -108,6 +108,10 @@ async function startBot() {
 
             const isBotActive = !isGroup || isActiveGroup(from);
             if (text && !text.startsWith(config.prefix) && isBotActive) saveMessage(from, m.pushName || senderName, text);
+            if (isBotActive && isGroup) {
+                const { updateMemberActivity } = require('./utils');
+                updateMemberActivity(from, sender, senderName);
+            }
             if (isBotActive && (AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) {
                 lastBotResponse = await revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN);
             }

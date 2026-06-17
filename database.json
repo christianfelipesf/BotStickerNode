@@ -13,24 +13,32 @@
     "geminiApiKey": ""
   },
   "stats": {
-    "restarts": 102,
-    "totalCommands": 295
+    "restarts": 111,
+    "totalCommands": 318
   },
   "groups": {
     "activeGroups": [
       "120363410551589086@g.us",
       "553499398657-1588367022@g.us",
       "120363237297961822@g.us",
-      "120363332324077374@g.us"
+      "120363332324077374@g.us",
+      "120363374777828089@g.us"
     ],
     "settings": {
-      "120363374777828089@g.us": {
-        "botName": "peido",
-        "menuImage": "uploads\\menu_13306e24e104bffdf500ce07e83d25ea.png"
-      },
       "120363332324077374@g.us": {
         "botName": "mlk sonhador",
         "menuImage": "uploads\\menu_3162766caf3f4a467feb7669672fe1a9.png"
+      }
+    },
+    "activity": {
+      "date": "17/06/2026",
+      "data": {
+        "120363374777828089@g.us": {
+          "65030452179067@lid": {
+            "name": "Christian Felipe",
+            "count": 2
+          }
+        }
       }
     }
   }

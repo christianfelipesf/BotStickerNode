@@ -14,7 +14,7 @@ module.exports = {
         const version = getVersion();
         
         await sock.sendMessage(from, { 
-            text: `🌌 *${botNameForStatus} - Status*\n\n📢 *Estado:* ${activeStatus}\n🆔 *Versão:* ${version}\n⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n🔄 *Reinícios:* ${stats.restarts}\n⌨️ *Comandos:* ${stats.totalCommands}\n💻 *Plataforma:* ${process.platform === 'win32' ? 'Windows' : 'Linux'}` 
+            text: `🌌 *${botNameForStatus} - Status*\n\n📢 *Estado:* ${activeStatus}\n🆔 *Versão:* ${version}\n👤 *Criador:* 9898913-8217\n⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n🔄 *Reinícios:* ${stats.restarts}\n⌨️ *Comandos:* ${stats.totalCommands}\n💻 *Plataforma:* ${process.platform === 'win32' ? 'Windows' : 'Linux'}` 
         }, { quoted: m });
         
         return currentBotResponse;

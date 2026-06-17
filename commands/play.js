@@ -14,7 +14,7 @@ module.exports = {
         
         if (!q) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         
-        let currentBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
         
         try {
             const searchResults = await yts(q);
@@ -25,6 +25,8 @@ module.exports = {
                 return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
+            currentBotResponse = await react(sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
+
             const tempName = `music_${Date.now()}.mp3`;
             const tempDir = path.join(process.cwd(), 'temp');
             const outPath = path.join(tempDir, tempName);
@@ -33,16 +35,23 @@ module.exports = {
 
             console.log(`🎵 [PLAY] Baixando: ${video.title}`);
             
+            // Usando yt-dlp para baixar e converter. 
+            // Como yt-dlp faz o download e a conversão, usaremos o emoji de conversão logo após o download começar.
             const downloadCmd = `yt-dlp --no-warnings --extract-audio --audio-format mp3 --audio-quality 128K --output "${outPath}" "${video.url}"`;
             
             await new Promise((resolve, reject) => {
-                exec(downloadCmd, (error) => {
+                const process = exec(downloadCmd, (error) => {
                     if (error) {
                         console.error(`❌ [YT-DLP] Erro: ${error.message}`);
                         return reject(error);
                     }
                     resolve();
                 });
+                
+                // Simular mudança para emoji de conversão após alguns segundos (quando o download geralmente termina e a conversão começa)
+                setTimeout(async () => {
+                    currentBotResponse = await react(sock, m, '🔄', currentBotResponse, GLOBAL_COOLDOWN);
+                }, 5000);
             });
 
             if (fs.existsSync(outPath)) { 

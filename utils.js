@@ -33,12 +33,44 @@ function readDB() {
                     geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g"
                 },
                 stats: { restarts: 0, totalCommands: 0 },
-                groups: { activeGroups: [], settings: {} }
+                groups: { activeGroups: [], settings: {}, activity: { date: new Date().toLocaleDateString(), data: {} } }
             };
             fs.writeFileSync(dbPath, JSON.stringify(defaultDB, null, 2));
             return defaultDB;
         }
-        return JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+        const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+        
+        // Ensure activity structure exists
+        if (!db.groups.activity) db.groups.activity = { date: new Date().toLocaleDateString(), data: {} };
+        
+        // Reset activity if it's a new day
+        const today = new Date().toLocaleDateString();
+        if (db.groups.activity.date !== today) {
+            db.groups.activity = { date: today, data: {} };
+            fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+        }
+
+        // Cleanup: remove settings for groups not in activeGroups
+        if (db.groups.settings) {
+            let changed = false;
+            for (const jid in db.groups.settings) {
+                if (!db.groups.activeGroups.includes(jid)) {
+                    // Try to delete menu image if it exists
+                    const menuImage = db.groups.settings[jid].menuImage;
+                    if (menuImage) {
+                        const fullPath = path.join(process.cwd(), menuImage);
+                        if (fs.existsSync(fullPath)) {
+                            try { fs.unlinkSync(fullPath); } catch(e) {}
+                        }
+                    }
+                    delete db.groups.settings[jid];
+                    changed = true;
+                }
+            }
+            if (changed) fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+        }
+
+        return db;
     } catch (error) {
         console.error('Erro ao ler database.json:', error);
         return {};
@@ -391,11 +423,41 @@ function getVersion() {
     }
 }
 
+function updateMemberActivity(jid, sender, senderName) {
+    const db = readDB();
+    if (!db.groups.activity.data[jid]) db.groups.activity.data[jid] = {};
+    if (!db.groups.activity.data[jid][sender]) {
+        db.groups.activity.data[jid][sender] = { name: senderName, count: 0 };
+    }
+    db.groups.activity.data[jid][sender].count += 1;
+    writeDB(db);
+}
+
+function getTopMember(jid) {
+    const db = readDB();
+    const groupActivity = db.groups.activity.data[jid];
+    if (!groupActivity) return 'Nenhum registro hoje';
+    
+    let topSender = null;
+    let maxCount = -1;
+
+    for (const sender in groupActivity) {
+        if (groupActivity[sender].count > maxCount) {
+            maxCount = groupActivity[sender].count;
+            topSender = groupActivity[sender].name;
+        }
+    }
+
+    return topSender || 'Nenhum registro hoje';
+}
+
 module.exports = { 
+    readDB, writeDB,
     isActiveGroup, activateGroup, deactivateGroup, 
     getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia, 
     readStats, incrementRestart, incrementCommand, formatUptime, 
     readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed, getBotName, react, getMessageText, getVersion
+    changeSpeed, getBotName, react, getMessageText, getVersion,
+    updateMemberActivity, getTopMember
 };

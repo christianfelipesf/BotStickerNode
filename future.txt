@@ -1,5 +1,3 @@
-- Adicionar comando !dump que gera um dump de todos os arquivos atualizados no banco de dados, faz upload para um serviço de hospedagem de arquivos e retorna um link para download.
-
 - Adicionar TTS offline em Português (Brasil) utilizando o projeto Piper (https://github.com/OHF-Voice/piper1-gpl), sem dependência de APIs externas.
 
 - Excluir dados de grupos desativados, incluindo nome, foto e demais metadados armazenados em cache.
@@ -7,6 +5,8 @@
 - Remover completamente do database.json os registros de grupos desativados para manter o banco de dados limpo e reduzir o uso de armazenamento.
 
 - Um comandos !Grupos, revela todos os grupos que o bot esta ativo e os nomes personalizados que estão sendo usados
+- Quando usar o !Grupos ira mostrar abaixo de cada grupo o nick do membro mais ativo de cada grupo ( a lista reseta todo dia e apaga tudo da anterior)
 
-- Adicionar criador no !status que é o 9898913-8217 ( Próprio numero do bot)
+- Adicionar comando !dump que gera um dump de todos os arquivos atualizados no banco de dados, faz upload para um serviço de hospedagem gratuito de arquivos e retorna um link para download e o zip pra download no WhatsApp. , envie apenas o zip se ocorrer algum problema ao enviar pro link etc
 
+- Quero todos os chat misturado de todos os grupos que esta ativo em um servidor rodando, com nome e mensagem, mas não quero pra salvar na memoria pois gastaria muita banda, ao reiniciar reseta as mesnagens
