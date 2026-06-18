@@ -29,8 +29,9 @@ async function buildPreview(sock, from, sender) {
     const link = getGroupLink();
     if (!link) return { error: '❌ Nenhum link configurado. Use !setlink <link> primeiro.' };
 
+    const meId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const admins = await getAdmins(sock, from);
-    if (!admins.includes(sender)) return { error: '❌ Apenas admins podem iniciar a divulgação.' };
+    if (!admins.includes(sender) && sender !== meId) return { error: '❌ Apenas admins podem iniciar a divulgação.' };
 
     let metadata;
     try {
@@ -39,13 +40,16 @@ async function buildPreview(sock, from, sender) {
         return { error: '❌ Não consegui ler os membros do grupo.' };
     }
 
-    const meId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const targets = metadata.participants
         .map(p => p.id)
         .filter(id => id && id !== meId && !admins.includes(id));
 
     const sample = targets.slice(0, 3).map(jid => jid.split('@')[0]).join(', ') || '—';
-    const minutos = Math.ceil(targets.length * 75 / 60);
+    const minutos = targets.length === 0 ? 0 : Math.ceil(targets.length * 75 / 60);
+
+    const alvoTexto = targets.length === 0
+        ? '⚠️ *Nenhum membro comum encontrado.* Este grupo só tem admins e/ou bots.'
+        : `${targets.length}`;
 
     const previewText =
 `📋 *Pré-visualização da divulgação*
@@ -57,7 +61,7 @@ ${link}
 📊 *Membros totais:* ${metadata.participants.length}
 🛡️ *Admins:* ${admins.length} (serão *ignorados*)
 🤖 *Bots:* 1 (será ignorado)
-🎯 *Alvos reais (só membros comuns):* ${targets.length}
+🎯 *Alvos reais (só membros comuns):* ${alvoTexto}
 
 ⏱️ *Delay entre envios:* 45s a 105s (randômico)
 ⏰ *Tempo estimado:* ~${minutos} min
@@ -80,8 +84,11 @@ async function runDivulgacao(sock, m, ctx) {
     const link = getGroupLink();
     if (!link) return sock.sendMessage(from, { text: '❌ Nenhum link configurado. Use !setlink <link> primeiro.' }, { quoted: m });
 
+    const meId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const admins = await getAdmins(sock, from);
-    if (!admins.includes(sender)) return sock.sendMessage(from, { text: '❌ Apenas admins podem iniciar a divulgação.' }, { quoted: m });
+    if (!admins.includes(sender) && sender !== meId) {
+        return sock.sendMessage(from, { text: '❌ Apenas admins podem iniciar a divulgação.' }, { quoted: m });
+    }
 
     let metadata;
     try {
@@ -90,10 +97,17 @@ async function runDivulgacao(sock, m, ctx) {
         return sock.sendMessage(from, { text: '❌ Não consegui ler os membros do grupo.' }, { quoted: m });
     }
 
-    const meId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const targets = metadata.participants
         .map(p => p.id)
         .filter(id => id && id !== meId && !admins.includes(id));
+
+    if (targets.length === 0) {
+        warn(`Divulgar cancelado: grupo ${metadata.subject} (${from}) só tem admins/bot. Nenhum alvo.`);
+        try { await sock.sendMessage(from, { react: { text: '🚫', key: m.key } }); } catch (_) {}
+        return sock.sendMessage(from, {
+            text: `🚫 *Nada para divulgar.*\n\nO grupo *${metadata.subject}* só tem admins (e o bot). Não há membros comuns pra receber o link.\n\nAdicione alguém ao grupo ou libere o bot da lista de admins pra ele aparecer como alvo.`
+        }, { quoted: m });
+    }
 
     head(`Divulgação confirmada em ${metadata.subject} (${from})`);
     info(`Total de alvos (sem bots/admins): ${targets.length}`);
