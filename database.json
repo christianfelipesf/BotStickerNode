@@ -15,9 +15,9 @@
     "dashboardPort": 3000
   },
   "stats": {
-    "restarts": 2,
-    "totalCommands": 2,
-    "_activityDate": "18/06/2026"
+    "restarts": 5,
+    "totalCommands": 22,
+    "_activityDate": "6/18/2026"
   },
   "groups": {}
 }

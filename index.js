@@ -60,6 +60,21 @@ process.on('unhandledRejection', (reason) => {
     dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
 });
 
+// Silencia logs feios do libsignal/Baileys (ex.: "Closing session: SessionEntry {...}")
+// O libsignal usa console.log internamente, entao sobrescrevemos para filtrar
+const _originalLog = console.log;
+const _originalInfo = console.info;
+const _originalDebug = console.debug;
+const _originalWarn = console.warn;
+const _silentFilter = (args) => {
+    const msg = args.map(a => (typeof a === 'string' ? a : '')).join(' ');
+    return /Closing (open )?session|Closing session:|SessionEntry\s*\{|chainKey:|ephemeralKeyPair|lastRemoteEphemeralKey|rootKey|remoteIdentityKey|indexInfo|messageKeys|registrationId|currentRatchet|baseKey|^Cl\b|BdadiisrciFj|BaewQUaKi|Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}/i.test(msg);
+};
+console.log = (...args) => { if (!_silentFilter(args)) _originalLog.apply(console, args); };
+console.info = (...args) => { if (!_silentFilter(args)) _originalInfo.apply(console, args); };
+console.debug = (...args) => { if (!_silentFilter(args)) _originalDebug.apply(console, args); };
+console.warn = (...args) => { if (!_silentFilter(args)) _originalWarn.apply(console, args); };
+
 // Detectar FFmpeg
 try {
     const cmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
@@ -82,7 +97,7 @@ async function startBot() {
         if (latest?.version) version = latest.version;
     } catch (err) {}
     
-    const sock = makeWASocket({ version, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: state, browser: [config.botName, 'Chrome', '120.0.0.0'] });
+    const sock = makeWASocket({ version, logger: pino({ level: 'fatal' }), printQRInTerminal: false, auth: state, browser: [config.botName, 'Chrome', '120.0.0.0'] });
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', (u) => {
         if (u.qr) { console.log('\n⚡ --- ESCANEIE O QR CODE --- ⚡'); qrcode.generate(u.qr, { small: true }); }
@@ -187,7 +202,7 @@ async function startBot() {
                 if (mediaMsg) {
                     try {
                         const buffer = await downloadMediaMessage(m, 'buffer', {}, { 
-                            logger: pino({ level: 'silent' }), 
+                            logger: pino({ level: 'fatal' }), 
                             reuploadRequest: sock.updateMediaMessage 
                         }).catch(() => null);
 
