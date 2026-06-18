@@ -140,7 +140,8 @@ module.exports = {
     category: 'utilidades',
     description: 'Envia o link do grupo (config.linkgrupo) por DM para os membros, de forma orgânica e devagar',
     async execute(sock, m, ctx) {
-        const { from, isGroup, sender, lastBotResponse, GLOBAL_COOLDOWN, react } = ctx;
+        const { from, isGroup, sender, lastBotResponse, GLOBAL_COOLDOWN, utils } = ctx;
+        const react = (utils && utils.react) ? utils.react : require('../utils').react;
 
         if (!isGroup) {
             return sock.sendMessage(from, { text: '❌ Use este comando dentro do grupo que você quer divulgar.' }, { quoted: m });
