@@ -400,6 +400,16 @@ function writeConfig(newConfig) {
     scheduleJsonFlush();
 }
 
+function getGroupLink() {
+    return readDB().config?.linkgrupo || null;
+}
+
+function setGroupLink(link) {
+    const j = readDB();
+    j.config.linkgrupo = link;
+    scheduleJsonFlush();
+}
+
 function readStats() { return readDB().stats; }
 
 function incrementRestart() {
@@ -932,5 +942,6 @@ module.exports = {
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
     updateMemberActivity, getTopMember, getAdmins,
+    getGroupLink, setGroupLink,
     flushNow
 };
