@@ -17,6 +17,7 @@
     "@whiskeysockets/baileys": "^6.6.0",
     "adm-zip": "^0.5.17",
     "axios": "^1.6.7",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
     "fluent-ffmpeg": "^2.1.2",
     "jimp": "^1.6.1",

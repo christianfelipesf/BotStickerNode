@@ -19,7 +19,8 @@ const {
     isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed, getBotName, react, getMessageText
+    changeSpeed, getBotName, react, getMessageText,
+    flushNow
 } = require('./utils');
 
 const { revealViewOnce, handleMediaCommand } = require('./handlers/mediaHandler');
@@ -49,11 +50,13 @@ loadCommands();
 process.on('uncaughtException', (err) => {
     if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
     console.error('💥 [ERRO FATAL]:', err);
+    try { flushNow(); } catch (_) {}
     dashboard.log('error', 'SISTEMA', `ERRO FATAL: ${err.message}`);
 });
 process.on('unhandledRejection', (reason) => {
     if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
     console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
+    try { flushNow(); } catch (_) {}
     dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
 });
 
@@ -222,7 +225,7 @@ async function startBot() {
                 lastBotResponse = await revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN);
             }
 
-            if (text.toLowerCase() === 'prefixo' && isBotActive) {
+            if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && isBotActive) {
                 const stats = readStats();
                 const now = Date.now();
                 const currentBotName = getBotName(from, config);

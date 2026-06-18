@@ -4,12 +4,11 @@ module.exports = {
     category: 'admin',
     description: 'Lista todos os grupos ativos e seus membros mais ativos do dia',
     async execute(sock, m, { from, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, readConfig, getTopMember, getGroupData } = utils;
-        
+        const { react, readConfig, getTopMember, getGroupData, listActiveGroups } = utils;
+
         let currentBotResponse = await react(sock, m, '📊', lastBotResponse, GLOBAL_COOLDOWN);
-        
-        const db = require('../utils').readDB();
-        const activeGroups = db.groups.activeGroups || [];
+
+        const activeGroups = listActiveGroups();
 
         if (activeGroups.length === 0) {
             await sock.sendMessage(from, { text: '❌ Não há grupos ativos no momento.' }, { quoted: m });

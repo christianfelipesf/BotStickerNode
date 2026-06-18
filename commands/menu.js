@@ -3,7 +3,7 @@ const path = require('path');
 
 module.exports = {
     name: 'menu',
-    aliases: ['help'],
+    aliases: ['help', 'comandos'],
     category: 'geral',
     description: 'Exibe o menu de comandos',
     async execute(sock, m, { from, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {

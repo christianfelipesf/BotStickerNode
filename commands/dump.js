@@ -7,34 +7,50 @@ module.exports = {
     category: 'admin',
     description: 'Gera um backup dos arquivos do banco de dados e configurações',
     async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react } = utils;
-        
+        const { react, flushNow } = utils;
+
         let currentBotResponse = await react(sock, m, '📦', lastBotResponse, GLOBAL_COOLDOWN);
-        
+
+        // Garante que tudo está persistido antes de copiar
+        try { flushNow(); } catch (_) {}
+
         const zip = new AdmZip();
         const tempDir = path.join(process.cwd(), 'temp');
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-        
+
         const zipName = `dump_${Date.now()}.zip`;
         const zipPath = path.join(tempDir, zipName);
 
         try {
-            // Arquivos para incluir no dump
+            // Arquivos para incluir no dump:
+            //  - database.json: configuração editável (config, stats, botName/menuImage)
+            //  - bot.db:        estado mutável em alto fluxo (active_groups, group_state, messages)
+            //  - bot.db-shm / bot.db-wal: arquivos auxiliares do SQLite em modo WAL
             const filesToInclude = [
                 'database.json',
-                'messages.json',
+                'bot.db',
+                'bot.db-shm',
+                'bot.db-wal',
                 'package.json',
                 '.env'
             ];
+
+            let includedCount = 0;
+            let missingCount = 0;
+            const includedNames = [];
 
             filesToInclude.forEach(file => {
                 const filePath = path.join(process.cwd(), file);
                 if (fs.existsSync(filePath)) {
                     zip.addLocalFile(filePath);
+                    includedNames.push(file);
+                    includedCount++;
+                } else {
+                    missingCount++;
                 }
             });
 
-            // Incluir diretórios importantes se existirem (ex: uploads)
+            // Incluir diretório uploads (imagens de menu por grupo)
             const uploadsDir = path.join(process.cwd(), 'uploads');
             if (fs.existsSync(uploadsDir)) {
                 zip.addLocalFolder(uploadsDir, 'uploads');
@@ -42,11 +58,17 @@ module.exports = {
 
             zip.writeZip(zipPath);
 
-            await sock.sendMessage(from, { 
+            const sizeKb = Math.round(fs.statSync(zipPath).size / 1024);
+            const caption = `📦 *Backup Gerado com Sucesso!*\n\n` +
+                `📁 *Arquivos incluídos:*\n${includedNames.map(n => `• ${n}`).join('\n')}\n` +
+                `📂 *Pasta:* uploads\n\n` +
+                `💾 *Tamanho:* ${sizeKb} KB`;
+
+            await sock.sendMessage(from, {
                 document: fs.readFileSync(zipPath),
                 fileName: zipName,
                 mimetype: 'application/zip',
-                caption: `📦 *Backup Gerado com Sucesso!*\n\nContém:\n- Bancos de dados\n- Configurações\n- Uploads (Imagens de Menu)`
+                caption
             }, { quoted: m });
 
             fs.unlinkSync(zipPath);

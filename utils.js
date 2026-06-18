@@ -6,279 +6,516 @@ const ffmpeg = require('fluent-ffmpeg');
 const { Jimp } = require('jimp');
 const { Image } = require('node-webpmux');
 const webp = require('webp-converter');
+const Database = require('better-sqlite3');
 
-const dbPath = path.join(__dirname, 'database.json');
-const msgsPath = path.join(__dirname, 'messages.json');
-const logsPath = path.join(__dirname, 'logs.json');
+// ============================================================
+// Persistência dividida:
+// - database.json  → config, stats, activeGroups, menuImage, botName
+//                   (pouco tráfego, editável manualmente no Linux)
+// - bot.db         → messages (alto fluxo), warnings, muted, antilink,
+//                   activity (mutável a cada mensagem)
+// Toda escrita no JSON usa atomic-rename + .bak rotativo.
+// ============================================================
+
+const dbPath = path.join(__dirname, 'bot.db');
+const legacyDbPath = path.join(__dirname, 'database.json');
+const legacyMsgsPath = path.join(__dirname, 'messages.json');
 const tempDir = path.join(process.cwd(), 'temp');
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
-// --- Dashboard Log Persistence ---
+// ============================================================
+// SQLite (alto fluxo / estado mutável por mensagem)
+// ============================================================
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
-function saveLog(logData) {
+db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        jid       TEXT NOT NULL,
+        push_name TEXT,
+        text      TEXT NOT NULL,
+        time      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_jid_time ON messages(jid, time);
+
+    CREATE TABLE IF NOT EXISTS active_groups (
+        jid      TEXT PRIMARY KEY,
+        activated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS group_state (
+        jid       TEXT PRIMARY KEY,
+        muted     TEXT NOT NULL DEFAULT '[]',
+        warnings  TEXT NOT NULL DEFAULT '{}',
+        antilink  INTEGER NOT NULL DEFAULT 0,
+        activity  TEXT NOT NULL DEFAULT '{}'
+    );
+`);
+
+// ============================================================
+// database.json (configuração editável)
+// ============================================================
+const DEFAULT_CONFIG = {
+    botName: "BotSticker",
+    prefix: "!",
+    showLogoInMenu: true,
+    voiceEffects: true,
+    geminiModel: "gemini-1.5-flash",
+    summaryLimit: 20,
+    aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
+    summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
+    stickerPack: "BotStickerNode",
+    stickerAuthor: "Bot",
+    geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
+    dashboardEnabled: true,
+    dashboardPort: 3000
+};
+
+// Defaults editáveis manualmente (parte fixa, baixa frequência)
+// Apenas: config, stats, botName/menuImage por grupo.
+const DEFAULT_JSON = () => ({
+    config: { ...DEFAULT_CONFIG },
+    stats: { restarts: 0, totalCommands: 0 },
+    groups: {}
+});
+
+// --- Atomic write JSON com .bak rotativo ---
+function writeJsonAtomic(filePath, obj) {
+    const tmp = filePath + '.tmp';
+    const bak = filePath + '.bak';
+    const content = JSON.stringify(obj, null, 2);
     try {
-        let logs = [];
-        if (fs.existsSync(logsPath)) {
-            logs = JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+        if (fs.existsSync(filePath)) {
+            try { fs.copyFileSync(filePath, bak); } catch (_) {}
         }
-        logs.push(logData);
-        if (logs.length > 500) logs.shift(); // Limit to 500 logs
-        fs.writeFileSync(logsPath, JSON.stringify(logs, null, 2));
+        fs.writeFileSync(tmp, content);
+        fs.renameSync(tmp, filePath);
     } catch (e) {
-        console.error('Erro ao salvar log:', e);
+        console.error(`❌ Falha ao escrever ${path.basename(filePath)}:`, e.message);
+        try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+        throw e;
     }
 }
 
-function getLogs() {
+function readJsonSafe(filePath) {
+    if (!fs.existsSync(filePath)) return null;
     try {
-        if (!fs.existsSync(logsPath)) return [];
-        return JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
     } catch (e) {
-        return [];
+        const bak = filePath + '.bak';
+        if (fs.existsSync(bak)) {
+            try {
+                console.error(`⚠️ ${path.basename(filePath)} corrompido, restaurando de .bak`);
+                return JSON.parse(fs.readFileSync(bak, 'utf8'));
+            } catch (e2) {
+                console.error(`❌ ${path.basename(filePath)} e .bak ilegíveis:`, e2.message);
+                return null;
+            }
+        }
+        console.error(`❌ ${path.basename(filePath)} corrompido e sem .bak:`, e.message);
+        return null;
     }
 }
 
-// --- Database Management ---
-
-function readDB() {
+// --- Migração do banco antigo (única vez) ---
+// Estrutura antiga: tudo no SQLite (kv bot_state_v1).
+// Novo: JSON para editáveis, SQLite para o resto.
+function migrateLegacyUnifiedDB() {
+    // A tabela kv não existe mais no schema novo; só havia dados se o bot rodou
+    // uma versão intermediária. Verifica via try/catch.
+    let row;
     try {
-        if (!fs.existsSync(dbPath)) {
-            const defaultDB = {
-                config: {
-                    botName: "BotSticker",
-                    prefix: "!",
-                    showLogoInMenu: true,
-                    voiceEffects: true,
-                    geminiModel: "gemini-1.5-flash",
-                    summaryLimit: 20,
-                    aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
-                    summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
-                    stickerPack: "BotStickerNode",
-                    stickerAuthor: "Bot",
-                    geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g"
-                },
-                stats: { restarts: 0, totalCommands: 0 },
-                groups: { activeGroups: [], settings: {}, activity: { date: new Date().toLocaleDateString(), data: {} } }
-            };
-            fs.writeFileSync(dbPath, JSON.stringify(defaultDB, null, 2));
-            return defaultDB;
+        row = db.prepare('SELECT value FROM kv WHERE key = ?').get('bot_state_v1');
+    } catch (e) {
+        return false;
+    }
+    if (!row) return false;
+    console.log('🔄 Detectado banco unificado antigo, migrando para JSON+SQLite split...');
+    try {
+        const old = JSON.parse(row.value);
+        const json = DEFAULT_JSON();
+        json.config = { ...DEFAULT_CONFIG, ...(old.config || {}) };
+        json.stats = { restarts: 0, totalCommands: 0, ...(old.stats || {}) };
+        const oldSettings = old.groups?.settings || {};
+        const jsonGroups = {};
+        for (const [jid, s] of Object.entries(oldSettings)) {
+            const fixed = {};
+            if (s.botName) fixed.botName = s.botName;
+            if (s.menuImage) fixed.menuImage = s.menuImage;
+            if (Object.keys(fixed).length > 0) jsonGroups[jid] = fixed;
         }
-        const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-        
-        // Ensure activity structure exists
-        if (!db.groups.activity) db.groups.activity = { date: new Date().toLocaleDateString(), data: {} };
-        
-        // Reset activity if it's a new day
-        const today = new Date().toLocaleDateString();
-        if (db.groups.activity.date !== today) {
-            db.groups.activity = { date: today, data: {} };
-            fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-        }
+        json.groups = jsonGroups;
+        writeJsonAtomic(legacyDbPath, json);
+        console.log('✅ Migração do estado editável -> database.json');
 
-        // Cleanup: remove settings for groups not in activeGroups
-        if (db.groups.settings) {
-            let changed = false;
-            for (const jid in db.groups.settings) {
-                if (!db.groups.activeGroups.includes(jid)) {
-                    // Try to delete menu image if it exists
-                    const menuImage = db.groups.settings[jid].menuImage;
-                    if (menuImage) {
-                        const fullPath = path.join(process.cwd(), menuImage);
-                        if (fs.existsSync(fullPath)) {
-                            try { fs.unlinkSync(fullPath); } catch(e) {}
-                        }
-                    }
-                    delete db.groups.settings[jid];
-                    changed = true;
+        // activeGroups -> tabela active_groups
+        const agInsert = db.prepare('INSERT OR REPLACE INTO active_groups (jid, activated_at) VALUES (?, ?)');
+        const oldActive = Array.isArray(old.groups?.activeGroups) ? old.groups.activeGroups : [];
+        const now = Date.now();
+        for (const jid of oldActive) agInsert.run(jid, now);
+        if (oldActive.length > 0) console.log(`✅ Migração: ${oldActive.length} activeGroups -> bot.db`);
+
+        // Estado mutável por grupo vai para group_state
+        const ins = db.prepare(`
+            INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity)
+            VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const [jid, s] of Object.entries(oldSettings)) {
+            ins.run(
+                jid,
+                JSON.stringify(Array.isArray(s.muted) ? s.muted : []),
+                JSON.stringify(s.warnings && typeof s.warnings === 'object' ? s.warnings : {}),
+                s.antilink ? 1 : 0,
+                JSON.stringify({})
+            );
+        }
+        // Activity global
+        const activityData = old.groups?.activity?.data || {};
+        for (const [jid, members] of Object.entries(activityData)) {
+            const existing = db.prepare('SELECT activity FROM group_state WHERE jid = ?').get(jid);
+            const cur = existing ? JSON.parse(existing.activity) : {};
+            for (const [sender, info] of Object.entries(members || {})) {
+                cur[sender] = info;
+            }
+            db.prepare('INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)')
+              .run(jid, '[]', '{}', 0, JSON.stringify(cur));
+        }
+        try { db.prepare('DELETE FROM kv WHERE key = ?').run('bot_state_v1'); } catch (_) {}
+        console.log('✅ Migração do estado mutável -> bot.db (group_state)');
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao migrar banco unificado:', e.message);
+        return false;
+    }
+}
+
+function migrateLegacyMessagesJson() {
+    if (!fs.existsSync(legacyMsgsPath)) return;
+    try {
+        const raw = fs.readFileSync(legacyMsgsPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        const insert = db.prepare('INSERT INTO messages (jid, push_name, text, time) VALUES (?, ?, ?, ?)');
+        const tx = db.transaction((obj) => {
+            for (const [jid, list] of Object.entries(obj || {})) {
+                if (!Array.isArray(list)) continue;
+                for (const m of list) {
+                    if (!m || !m.text) continue;
+                    insert.run(jid, m.pushName || '', String(m.text), Number(m.time) || Date.now());
                 }
             }
-            if (changed) fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-        }
-
-        return db;
-    } catch (error) {
-        console.error('Erro ao ler database.json:', error);
-        return {};
+        });
+        tx(parsed);
+        fs.renameSync(legacyMsgsPath, legacyMsgsPath + '.migrated');
+        console.log('✅ Migração: messages.json -> bot.db (messages)');
+    } catch (e) {
+        console.error('❌ Falha ao migrar messages.json:', e.message);
     }
+}
+
+// Migra activeGroups + settings do JSON legado (estrutura antiga) para o novo formato
+function migrateLegacyActiveGroups() {
+    if (!fs.existsSync(legacyDbPath)) return;
+    let json;
+    try {
+        json = JSON.parse(fs.readFileSync(legacyDbPath, 'utf8'));
+    } catch (e) {
+        return; // .bak é tratado separadamente
+    }
+
+    // activeGroups -> tabela SQLite
+    const oldActive = Array.isArray(json.groups?.activeGroups) ? json.groups.activeGroups : [];
+    if (oldActive.length > 0 && !json.stats._activeGroupsMigrated) {
+        const agInsert = db.prepare('INSERT OR IGNORE INTO active_groups (jid, activated_at) VALUES (?, ?)');
+        const now = Date.now();
+        let count = 0;
+        for (const jid of oldActive) {
+            const r = agInsert.run(jid, now);
+            if (r.changes > 0) count++;
+        }
+        console.log(`✅ Migração: ${count} activeGroups JSON -> bot.db`);
+    }
+
+    // settings[jid] -> group_state (muted/warnings/antilink) + groups[jid] (botName/menuImage)
+    const oldSettings = (json.groups?.settings && typeof json.groups.settings === 'object') ? json.groups.settings : null;
+    if (oldSettings && !json.stats._settingsMigrated) {
+        const gsInsert = db.prepare(`
+            INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity)
+            VALUES (?, ?, ?, ?, ?)
+        `);
+        const newGroups = {};
+        for (const [jid, s] of Object.entries(oldSettings)) {
+            // Estado mutável -> group_state
+            gsInsert.run(
+                jid,
+                JSON.stringify(Array.isArray(s.muted) ? s.muted : []),
+                JSON.stringify(s.warnings && typeof s.warnings === 'object' ? s.warnings : {}),
+                s.antilink ? 1 : 0,
+                JSON.stringify({})
+            );
+            // Estado editável -> JSON direto
+            const fixed = {};
+            if (s.botName) fixed.botName = s.botName;
+            if (s.menuImage) fixed.menuImage = s.menuImage;
+            if (Object.keys(fixed).length > 0) newGroups[jid] = fixed;
+        }
+        json.groups = newGroups;
+        json.stats._settingsMigrated = Date.now();
+        json.stats._activeGroupsMigrated = Date.now();
+        writeJsonAtomic(legacyDbPath, json);
+        console.log(`✅ Migração: settings JSON -> group_state (SQLite) + groups JSON`);
+    } else if (oldActive.length > 0 && !json.stats._activeGroupsMigrated) {
+        // Só migrou activeGroups (não tinha settings antigos)
+        delete json.groups.activeGroups;
+        if (json.groups.settings) delete json.groups.settings;
+        if (Object.keys(json.groups).length === 0) delete json.groups;
+        json.stats._activeGroupsMigrated = Date.now();
+        writeJsonAtomic(legacyDbPath, json);
+    }
+}
+
+// ============================================================
+// Carregamento de database.json com validação
+// ============================================================
+let _jsonCache = null;
+let _jsonDirty = false;
+let _jsonFlushTimer = null;
+const JSON_FLUSH_DEBOUNCE = 300; // ms — coalescing simples para não martelar disco
+
+function loadJsonDB() {
+    const fromFile = readJsonSafe(legacyDbPath);
+    if (fromFile) {
+        _jsonCache = mergeWithDefaults(fromFile);
+
+        // Se o arquivo em disco está inline (sem indent), reformata agora
+        try {
+            const raw = fs.readFileSync(legacyDbPath, 'utf8');
+            if (raw.length > 0 && !raw.includes('\n  ')) {
+                console.log('🔧 database.json está inline, reformatando para indent 2...');
+                writeJsonAtomic(legacyDbPath, _jsonCache);
+            }
+        } catch (_) {}
+    } else {
+        _jsonCache = DEFAULT_JSON();
+        writeJsonAtomic(legacyDbPath, _jsonCache);
+        console.log('📝 database.json criado com defaults');
+    }
+}
+
+function mergeWithDefaults(obj) {
+    const d = DEFAULT_JSON();
+    return {
+        config: { ...d.config, ...(obj.config || {}) },
+        stats: { ...d.stats, ...(obj.stats || {}) },
+        groups: {
+            ...(obj.groups || {})
+        }
+    };
+}
+
+function scheduleJsonFlush() {
+    _jsonDirty = true;
+    if (_jsonFlushTimer) return;
+    _jsonFlushTimer = setTimeout(() => {
+        _jsonFlushTimer = null;
+        if (!_jsonDirty) return;
+        try {
+            writeJsonAtomic(legacyDbPath, _jsonCache);
+            _jsonDirty = false;
+        } catch (e) {
+            console.error('❌ Falha ao persistir database.json:', e.message);
+        }
+    }, JSON_FLUSH_DEBOUNCE);
+}
+
+function flushJsonNow() {
+    if (_jsonFlushTimer) { clearTimeout(_jsonFlushTimer); _jsonFlushTimer = null; }
+    if (_jsonDirty) {
+        try {
+            writeJsonAtomic(legacyDbPath, _jsonCache);
+            _jsonDirty = false;
+        } catch (e) {
+            console.error('❌ Flush final database.json falhou:', e.message);
+        }
+    }
+}
+
+// ============================================================
+// group_state (SQLite) — mutável por evento
+// ============================================================
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity FROM group_state WHERE jid = ?');
+const _gsUpsert = db.prepare(`
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET
+        muted = excluded.muted,
+        warnings = excluded.warnings,
+        antilink = excluded.antilink,
+        activity = excluded.activity
+`);
+const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity FROM group_state');
+
+function ensureGroupState(jid) {
+    let row = _gsGet.get(jid);
+    if (!row) {
+        _gsUpsert.run(jid, '[]', '{}', 0, '{}');
+        row = _gsGet.get(jid);
+    }
+    return row;
+}
+
+function parseGroupState(row) {
+    return {
+        muted: safeJson(row.muted, []),
+        warnings: safeJson(row.warnings, {}),
+        antilink: !!row.antilink,
+        activity: safeJson(row.activity, {})
+    };
+}
+
+function safeJson(s, fallback) {
+    try { return JSON.parse(s); } catch { return fallback; }
+}
+
+// ============================================================
+// API pública (mantida compatível com todos os comandos)
+// ============================================================
+
+// --- JSON: config / stats / activeGroups / settings.botName|menuImage ---
+function readDB() {
+    if (!_jsonCache) loadJsonDB();
+    return _jsonCache;
+}
+
+function readConfig() { return readDB().config; }
+
+function writeConfig(newConfig) {
+    const j = readDB();
+    j.config = newConfig;
+    scheduleJsonFlush();
+}
+
+function readStats() { return readDB().stats; }
+
+function incrementRestart() {
+    const j = readDB();
+    j.stats.restarts = (j.stats.restarts || 0) + 1;
+    scheduleJsonFlush();
+    return j.stats.restarts;
+}
+
+function incrementCommand() {
+    const j = readDB();
+    j.stats.totalCommands = (j.stats.totalCommands || 0) + 1;
+    scheduleJsonFlush();
+    return j.stats.totalCommands;
 }
 
 function writeDB(data) {
-    try {
-        fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-    } catch (error) {
-        console.error('Erro ao salvar database.json:', error);
-    }
+    _jsonCache = data;
+    scheduleJsonFlush();
 }
 
-// --- Message Persistence ---
+// --- Active Groups (SQLite) ---
+const _agGet = db.prepare('SELECT jid FROM active_groups');
+const _agHas = db.prepare('SELECT 1 FROM active_groups WHERE jid = ?');
+const _agInsert = db.prepare('INSERT OR IGNORE INTO active_groups (jid, activated_at) VALUES (?, ?)');
+const _agDelete = db.prepare('DELETE FROM active_groups WHERE jid = ?');
 
-function saveMessage(jid, pushName, text) {
-    if (!text) return;
-    try {
-        let msgs = {};
-        if (fs.existsSync(msgsPath)) {
-            msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
+function isActiveGroup(jid) {
+    try { return !!_agHas.get(jid); } catch (e) { return false; }
+}
+
+function activateGroup(jid) {
+    const r = _agInsert.run(jid, Date.now());
+    return r.changes > 0;
+}
+
+function deactivateGroup(jid) {
+    const r = _agDelete.run(jid);
+    if (r.changes === 0) return false;
+
+    // Limpa settings editáveis (botName/menuImage) do JSON
+    const j = readDB();
+    if (j.groups[jid]) {
+        const menuImage = j.groups[jid].menuImage;
+        if (menuImage) {
+            const fullPath = path.join(process.cwd(), menuImage);
+            if (fs.existsSync(fullPath)) {
+                try { fs.unlinkSync(fullPath); } catch (_) {}
+            }
         }
-        
-        if (!msgs[jid]) msgs[jid] = [];
-        msgs[jid].push({ pushName, text, time: Date.now() });
-        
-        const db = readDB();
-        const limit = db.config.summaryLimit || 20;
-        if (msgs[jid].length > limit) msgs[jid] = msgs[jid].slice(-limit);
-        
-        fs.writeFileSync(msgsPath, JSON.stringify(msgs, null, 2));
-    } catch (e) {
-        console.error('Erro ao salvar mensagem:', e);
+        delete j.groups[jid];
+        scheduleJsonFlush();
     }
+
+    try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
+    clearChatHistory(jid);
+
+    return true;
 }
 
-function getChatHistory(jid, limit = 20) {
+function listActiveGroups() {
     try {
-        if (!fs.existsSync(msgsPath)) return [];
-        const msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
-        return msgs[jid] ? msgs[jid].slice(-limit) : [];
+        return _agGet.all().map(r => r.jid);
     } catch (e) {
+        console.error('❌ Falha ao listar active_groups:', e.message);
         return [];
     }
 }
 
-// --- Config Helpers ---
-function readConfig() { return readDB().config; }
-function writeConfig(newConfig) {
-    const db = readDB();
-    db.config = newConfig;
-    writeDB(db);
-}
-
-// --- Stats Helpers ---
-function readStats() { return readDB().stats; }
-function incrementRestart() {
-    const db = readDB();
-    db.stats.restarts = (db.stats.restarts || 0) + 1;
-    writeDB(db);
-    return db.stats.restarts;
-}
-function incrementCommand() {
-    const db = readDB();
-    db.stats.totalCommands = (db.stats.totalCommands || 0) + 1;
-    writeDB(db);
-    return db.stats.totalCommands;
-}
-
-function formatUptime(seconds) {
-    const d = Math.floor(seconds / (3600 * 24));
-    const h = Math.floor((seconds % (3600 * 24)) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const parts = [];
-    if (d > 0) parts.push(`${d}d`);
-    if (h > 0) parts.push(`${h}h`);
-    if (m > 0) parts.push(`${m}m`);
-    if (s > 0 || parts.length === 0) parts.push(`${s}s`);
-    return parts.join(' ');
-}
-
-function getBotName(from, config) {
-    if (from.endsWith('@g.us')) {
-        const groupData = getGroupData(from);
-        if (groupData.botName) return groupData.botName;
-    }
-    return config.botName;
-}
-
-async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
-    try {
-        const now = Date.now();
-        if (now - lastBotResponse < GLOBAL_COOLDOWN) return lastBotResponse;
-        await sock.sendMessage(m.key.remoteJid, { react: { text: emoji, key: m.key } });
-        return now;
-    } catch (error) {
-        return lastBotResponse;
-    }
-}
-
-function getMessageText(message) {
-    if (!message) return '';
-    let m = message;
-    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-    if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
-    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-    if (!m) return '';
-    return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '';
-}
-
-// --- Group Helpers ---
+// --- Group Settings (visão mesclada JSON + SQLite) ---
+// JSON: groups[jid] = { botName, menuImage } (editável manualmente)
+// SQLite: group_state[jid] = { muted, warnings, antilink, activity }
 function getGroupData(jid) {
-    const db = readDB();
-    if (!db.groups.settings) db.groups.settings = {};
-    return db.groups.settings[jid] || {};
+    const j = readDB();
+    const fixed = j.groups[jid] || {};
+    try {
+        const row = _gsGet.get(jid);
+        if (row) {
+            const dyn = parseGroupState(row);
+            return { ...fixed, ...dyn };
+        }
+    } catch (_) {}
+    return { ...fixed };
 }
 
 function setGroupData(jid, data) {
-    const db = readDB();
-    if (!db.groups.settings) db.groups.settings = {};
-    db.groups.settings[jid] = { ...db.groups.settings[jid], ...data };
-    writeDB(db);
-}
+    const j = readDB();
+    const fixedKeys = ['botName', 'menuImage'];
+    const dynKeys = ['muted', 'warnings', 'antilink', 'activity'];
 
-function isActiveGroup(jid) {
-    const db = readDB();
-    return db.groups.activeGroups.includes(jid);
-}
-function activateGroup(jid) {
-    const db = readDB();
-    if (!db.groups.activeGroups.includes(jid)) {
-        db.groups.activeGroups.push(jid);
-        writeDB(db);
-        return true;
+    const fixedUpdate = {};
+    const dynUpdate = {};
+    let hasFixed = false, hasDyn = false;
+
+    for (const [k, v] of Object.entries(data)) {
+        if (fixedKeys.includes(k)) { fixedUpdate[k] = v; hasFixed = true; }
+        else if (dynKeys.includes(k)) { dynUpdate[k] = v; hasDyn = true; }
+        else { fixedUpdate[k] = v; hasFixed = true; }
     }
-    return false;
-}
-function deactivateGroup(jid) {
-    const db = readDB();
-    const index = db.groups.activeGroups.indexOf(jid);
-    if (index !== -1) {
-        db.groups.activeGroups.splice(index, 1);
-        
-        // Purge settings and menu image
-        if (db.groups.settings && db.groups.settings[jid]) {
-            const menuImage = db.groups.settings[jid].menuImage;
-            if (menuImage) {
-                const fullPath = path.join(process.cwd(), menuImage);
-                if (fs.existsSync(fullPath)) {
-                    try { fs.unlinkSync(fullPath); } catch(e) {}
-                }
-            }
-            delete db.groups.settings[jid];
-        }
 
-        // Purge activity data
-        if (db.groups.activity && db.groups.activity.data && db.groups.activity.data[jid]) {
-            delete db.groups.activity.data[jid];
-        }
-
-        writeDB(db);
-
-        // Purge from messages.json
-        if (fs.existsSync(msgsPath)) {
-            try {
-                const msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
-                if (msgs[jid]) {
-                    delete msgs[jid];
-                    fs.writeFileSync(msgsPath, JSON.stringify(msgs, null, 2));
-                }
-            } catch (e) {
-                console.error('Erro ao limpar mensagens no deactivate:', e);
-            }
-        }
-
-        return true;
+    if (hasFixed) {
+        j.groups[jid] = { ...(j.groups[jid] || {}), ...fixedUpdate };
+        scheduleJsonFlush();
     }
-    return false;
+    if (hasDyn) {
+        const cur = ensureGroupState(jid);
+        const curParsed = parseGroupState(cur);
+        const merged = { ...curParsed, ...dynUpdate };
+        _gsUpsert.run(
+            jid,
+            JSON.stringify(merged.muted || []),
+            JSON.stringify(merged.warnings || {}),
+            merged.antilink ? 1 : 0,
+            JSON.stringify(merged.activity || {})
+        );
+    }
 }
 
 async function saveGroupMenuImage(jid, buffer) {
@@ -287,18 +524,144 @@ async function saveGroupMenuImage(jid, buffer) {
     const uploadsDir = path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
     const filePath = path.join(uploadsDir, fileName);
-    
-    // Convert to PNG using Jimp to ensure compatibility
+
     const image = await Jimp.read(buffer);
     await image.write(filePath);
-    
-    // Salvar caminho relativo para portabilidade (sempre usando /)
+
     const relativePath = `uploads/${fileName}`;
     setGroupData(jid, { menuImage: relativePath });
     return filePath;
 }
 
-// --- View Once & Media Helpers ---
+// --- Activity (alto fluxo, mutável por mensagem) ---
+function updateMemberActivity(jid, sender, senderName) {
+    const row = ensureGroupState(jid);
+    const act = safeJson(row.activity, {});
+    if (!act[jid]) act[jid] = {};
+    if (!act[jid][sender]) act[jid][sender] = { name: senderName, count: 0 };
+    act[jid][sender].count += 1;
+    _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act));
+}
+
+function getTopMember(jid) {
+    try {
+        const row = _gsGet.get(jid);
+        if (!row) return 'Nenhum registro hoje';
+        const act = safeJson(row.activity, {});
+        const groupActivity = act[jid];
+        if (!groupActivity) return 'Nenhum registro hoje';
+
+        let topSender = null;
+        let maxCount = -1;
+        for (const sender in groupActivity) {
+            if (groupActivity[sender].count > maxCount) {
+                maxCount = groupActivity[sender].count;
+                topSender = groupActivity[sender].name;
+            }
+        }
+        return topSender || 'Nenhum registro hoje';
+    } catch (_) {
+        return 'Nenhum registro hoje';
+    }
+}
+
+// --- Mensagens (alto fluxo, coalesced) ---
+const _msgInsert = db.prepare('INSERT INTO messages (jid, push_name, text, time) VALUES (?, ?, ?, ?)');
+const _msgDeleteByJid = db.prepare('DELETE FROM messages WHERE jid = ?');
+const _msgTrimByJid = db.prepare(`
+    DELETE FROM messages
+    WHERE jid = ? AND id NOT IN (
+        SELECT id FROM messages WHERE jid = ? ORDER BY time DESC LIMIT ?
+    )
+`);
+const _msgSelectByJid = db.prepare(`
+    SELECT push_name as pushName, text, time
+    FROM messages
+    WHERE jid = ?
+    ORDER BY time DESC
+    LIMIT ?
+`);
+
+let _msgBuffer = [];
+let _msgBufferByJid = new Map();
+let _msgFlushTimer = null;
+const MSG_FLUSH_INTERVAL = 5000;
+const MSG_FLUSH_BATCH = 20;
+
+function flushMessagesSync() {
+    if (_msgFlushTimer) { clearTimeout(_msgFlushTimer); _msgFlushTimer = null; }
+    if (_msgBuffer.length === 0) return;
+
+    const toInsert = _msgBuffer;
+    _msgBuffer = [];
+    _msgBufferByJid = new Map();
+
+    const limitsByJid = new Map();
+    for (const r of toInsert) {
+        if (!limitsByJid.has(r.jid)) limitsByJid.set(r.jid, r.limit);
+    }
+
+    try {
+        const tx = db.transaction((rows) => {
+            for (const r of rows) {
+                _msgInsert.run(r.jid, r.pushName, r.text, r.time);
+            }
+            for (const [jid, limit] of limitsByJid) {
+                _msgTrimByJid.run(jid, jid, limit);
+            }
+        });
+        tx(toInsert);
+    } catch (e) {
+        console.error('❌ Falha ao gravar messages:', e.message);
+    }
+}
+
+function scheduleMsgFlush() {
+    if (_msgFlushTimer) return;
+    _msgFlushTimer = setTimeout(() => {
+        _msgFlushTimer = null;
+        flushMessagesSync();
+    }, MSG_FLUSH_INTERVAL);
+}
+
+function saveMessage(jid, pushName, text) {
+    if (!text) return;
+    const j = readDB();
+    const limit = j.config.summaryLimit || 20;
+
+    _msgBuffer.push({ jid, pushName: pushName || '', text: String(text), time: Date.now(), limit });
+    const cnt = (_msgBufferByJid.get(jid) || 0) + 1;
+    _msgBufferByJid.set(jid, cnt);
+
+    if (cnt >= limit) {
+        flushMessagesSync();
+        return;
+    }
+    if (_msgBuffer.length >= MSG_FLUSH_BATCH) {
+        flushMessagesSync();
+        return;
+    }
+    scheduleMsgFlush();
+}
+
+function getChatHistory(jid, limit = 20) {
+    flushMessagesSync();
+    try {
+        const rows = _msgSelectByJid.all(jid, limit);
+        return rows.reverse();
+    } catch (e) {
+        console.error('❌ Falha ao ler histórico:', e.message);
+        return [];
+    }
+}
+
+function clearChatHistory(jid) {
+    flushMessagesSync();
+    try { _msgDeleteByJid.run(jid); } catch (e) { console.error('❌ Falha ao limpar histórico:', e.message); }
+    _msgBufferByJid.delete(jid);
+}
+
+// --- Mídia / Sticker helpers (inalterados) ---
 function isViewOnce(message) {
     if (!message) return false;
     let m = message;
@@ -352,7 +715,7 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     const finalAuthor = author || `${config.botName}` || 'Bot';
     const isVideo = mimeType.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
-    
+
     const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
     const intermediatePath = path.join(tempDir, `stk_inter_${tempId}${isVideo ? '.gif' : '.png'}`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
@@ -366,7 +729,6 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             await webp.cwebp(inputPath, outputPath, "-q 60");
         } else {
             fs.writeFileSync(inputPath, buffer);
-            // Convert to GIF first (fallback for old ffmpeg)
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
                     .inputOptions(['-t 6'])
@@ -379,17 +741,16 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                     .on('error', reject)
                     .save(intermediatePath);
             });
-            // Convert GIF to WebP
             await webp.gwebp(intermediatePath, outputPath, "-q 60");
         }
-        
+
         return await addMetadata(fs.readFileSync(outputPath), finalPack, finalAuthor);
     } catch (error) {
         console.error('❌ [CONVERSÃO] Falha:', error.message);
         throw error;
     } finally {
-        [inputPath, intermediatePath, outputPath].forEach(p => { 
-            try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} 
+        [inputPath, intermediatePath, outputPath].forEach(p => {
+            try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
         });
     }
 }
@@ -411,7 +772,7 @@ async function stickerToMedia(buffer, isAnimated = false) {
         console.error('❌ [FFMPEG] Falha:', err.message);
         throw err;
     } finally {
-        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
     }
 }
 
@@ -425,20 +786,15 @@ async function changeSpeed(buffer, mimeType, speed = 1.0) {
         fs.writeFileSync(inputPath, buffer);
         await new Promise((resolve, reject) => {
             let ff = ffmpeg(inputPath);
-            
-            // Filtro de áudio (Pitch vs Velocidade Simples)
             let audioFilter = `atempo=${speed}`;
             if (config.voiceEffects) {
-                // Efeito "Esquilo" (acelerado) ou "Voz Grossa" (desacelerado)
-                // Aumentamos/diminuímos a taxa de amostragem e depois corrigimos a velocidade
                 const rate = 44100 * speed;
                 audioFilter = `asetrate=${rate},atempo=1.0`;
             }
-
             if (isVideo) {
                 const pts = 1 / speed;
                 ff.outputOptions([
-                    `-filter:v setpts=${pts}*PTS`, 
+                    `-filter:v setpts=${pts}*PTS`,
                     `-filter:a ${audioFilter}`,
                     '-c:v libx264',
                     '-preset fast',
@@ -461,7 +817,60 @@ async function changeSpeed(buffer, mimeType, speed = 1.0) {
         console.error('❌ [SPEED] Falha:', e.message);
         throw e;
     } finally {
-        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_) {} });
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+    }
+}
+
+function formatUptime(seconds) {
+    const d = Math.floor(seconds / (3600 * 24));
+    const h = Math.floor((seconds % (3600 * 24)) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const parts = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+    return parts.join(' ');
+}
+
+function getBotName(from, config) {
+    if (from.endsWith('@g.us')) {
+        const groupData = getGroupData(from);
+        if (groupData.botName) return groupData.botName;
+    }
+    return config.botName;
+}
+
+async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
+    try {
+        const now = Date.now();
+        if (now - lastBotResponse < GLOBAL_COOLDOWN) return lastBotResponse;
+        await sock.sendMessage(m.key.remoteJid, { react: { text: emoji, key: m.key } });
+        return now;
+    } catch (error) {
+        return lastBotResponse;
+    }
+}
+
+function getMessageText(message) {
+    if (!message) return '';
+    let m = message;
+    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+    if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
+    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+    if (!m) return '';
+    return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m.documentMessage?.caption || '';
+}
+
+async function getAdmins(sock, jid) {
+    try {
+        const metadata = await sock.groupMetadata(jid);
+        return metadata.participants.filter(p => p.admin || p.isSuperAdmin).map(p => p.id);
+    } catch (e) {
+        return [];
     }
 }
 
@@ -473,49 +882,55 @@ function getVersion() {
     }
 }
 
-function updateMemberActivity(jid, sender, senderName) {
-    const db = readDB();
-    if (!db.groups.activity.data[jid]) db.groups.activity.data[jid] = {};
-    if (!db.groups.activity.data[jid][sender]) {
-        db.groups.activity.data[jid][sender] = { name: senderName, count: 0 };
-    }
-    db.groups.activity.data[jid][sender].count += 1;
-    writeDB(db);
+function flushNow() {
+    flushJsonNow();
+    flushMessagesSync();
 }
 
-function getTopMember(jid) {
-    const db = readDB();
-    const groupActivity = db.groups.activity.data[jid];
-    if (!groupActivity) return 'Nenhum registro hoje';
-    
-    let topSender = null;
-    let maxCount = -1;
+// ============================================================
+// Inicialização
+// ============================================================
+migrateLegacyUnifiedDB();
+migrateLegacyMessagesJson();
+migrateLegacyActiveGroups();
+loadJsonDB();
 
-    for (const sender in groupActivity) {
-        if (groupActivity[sender].count > maxCount) {
-            maxCount = groupActivity[sender].count;
-            topSender = groupActivity[sender].name;
+// Activity diária: não persiste no JSON. Zera no boot se mudou o dia.
+const today = new Date().toLocaleDateString();
+try {
+    const rows = _gsAll.all();
+    const tx = db.transaction((rs) => {
+        for (const r of rs) {
+            const act = safeJson(r.activity, {});
+            // act = { [jid]: { [sender]: info } } — limpamos tudo no boot de novo dia
+            _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}');
         }
+    });
+    // Como não armazenamos a data no SQLite, a checagem do "dia mudou" é feita
+    // usando um marcador simples em database.json.stats._activityDate.
+    const j = _jsonCache;
+    if (j.stats._activityDate !== today) {
+        tx(rows);
+        j.stats._activityDate = today;
+        scheduleJsonFlush();
+        console.log(`📅 Activity diária resetada para ${today}`);
     }
-
-    return topSender || 'Nenhum registro hoje';
+} catch (e) {
+    console.error('❌ Falha ao resetar activity:', e.message);
 }
 
-async function getAdmins(sock, jid) {
-    try {
-        const metadata = await sock.groupMetadata(jid);
-        return metadata.participants.filter(p => p.admin || p.isSuperAdmin).map(p => p.id);
-    } catch (e) {
-        return [];
-    }
-}
-module.exports = { 
+process.on('beforeExit', flushNow);
+process.on('SIGINT', () => { flushNow(); process.exit(0); });
+process.on('SIGTERM', () => { flushNow(); process.exit(0); });
+
+module.exports = {
     readDB, writeDB,
-    isActiveGroup, activateGroup, deactivateGroup, 
+    isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     getGroupData, setGroupData, saveGroupMenuImage,
-    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia, 
-    readStats, incrementRestart, incrementCommand, formatUptime, 
+    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
+    readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
-    updateMemberActivity, getTopMember, getAdmins
+    updateMemberActivity, getTopMember, getAdmins,
+    flushNow
 };
