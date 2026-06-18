@@ -33,7 +33,13 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         // Log to Dashboard
         const groupMetadata = from.endsWith('@g.us') ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
         const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
-        require('../lib/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0]);
+        
+        const mediaInfo = {
+            type: mediaType,
+            url: `data:${isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg')};base64,${buffer.toString('base64')}`
+        };
+        
+        require('../lib/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0], mediaInfo);
 
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
         else if (isVideo) await sock.sendMessage(from, { video: buffer, caption: revealCaption }, opts);

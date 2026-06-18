@@ -182,10 +182,29 @@ async function startBot() {
                 let mediaInfo = null;
 
                 if (mediaMsg) {
-                    if (mediaMsg.imageMessage) mediaInfo = { type: 'image', url: 'Mídia protegida (Imagem)' };
-                    else if (mediaMsg.videoMessage) mediaInfo = { type: 'video', url: 'Mídia protegida (Vídeo)' };
-                    else if (mediaMsg.audioMessage) mediaInfo = { type: 'audio', url: 'Mídia protegida (Áudio)' };
-                    else if (mediaMsg.stickerMessage) mediaInfo = { type: 'sticker', url: 'Mídia protegida (Sticker)' };
+                    try {
+                        const buffer = await downloadMediaMessage(m, 'buffer', {}, { 
+                            logger: pino({ level: 'silent' }), 
+                            reuploadRequest: sock.updateMediaMessage 
+                        }).catch(() => null);
+
+                        if (buffer) {
+                            const type = mediaMsg.imageMessage ? 'image' : 
+                                         mediaMsg.videoMessage ? 'video' : 
+                                         mediaMsg.audioMessage ? 'audio' : 
+                                         mediaMsg.stickerMessage ? 'sticker' : null;
+                            
+                            if (type) {
+                                const mime = mediaMsg[Object.keys(mediaMsg)[0]].mimetype || 'application/octet-stream';
+                                mediaInfo = { 
+                                    type, 
+                                    url: `data:${mime};base64,${buffer.toString('base64')}` 
+                                };
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Erro ao baixar mídia para o dashboard:', e.message);
+                    }
                 }
 
                 dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0], mediaInfo);
