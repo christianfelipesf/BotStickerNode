@@ -191,7 +191,10 @@ async function startBot() {
                 dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0], mediaInfo);
             }
 
-            if (text && !text.startsWith(config.prefix) && isBotActive) saveMessage(from, m.pushName || senderName, text);
+            if (isGroup && isActiveGroup(from) && text && !text.startsWith(config.prefix)) {
+                saveMessage(from, m.pushName || senderName, text);
+            }
+            
             if (isBotActive && isGroup) {
                 const { updateMemberActivity } = require('./utils');
                 updateMemberActivity(from, sender, senderName);

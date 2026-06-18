@@ -121,18 +121,10 @@ function saveMessage(jid, pushName, text) {
             msgs = JSON.parse(fs.readFileSync(msgsPath, 'utf8'));
         }
         
-        // Cleanup: remove groups not in database
-        const db = readDB();
-        const activeGroups = db.groups.activeGroups;
-        for (const id in msgs) {
-            if (id.endsWith('@g.us') && !activeGroups.includes(id)) {
-                delete msgs[id];
-            }
-        }
-
         if (!msgs[jid]) msgs[jid] = [];
         msgs[jid].push({ pushName, text, time: Date.now() });
         
+        const db = readDB();
         const limit = db.config.summaryLimit || 20;
         if (msgs[jid].length > limit) msgs[jid] = msgs[jid].slice(-limit);
         
