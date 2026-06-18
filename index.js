@@ -67,8 +67,8 @@ const _originalInfo = console.info;
 const _originalDebug = console.debug;
 const _originalWarn = console.warn;
 const _silentFilter = (args) => {
-    const msg = args.map(a => (typeof a === 'string' ? a : '')).join(' ');
-    return /Closing (open )?session|Closing session:|SessionEntry\s*\{|chainKey:|ephemeralKeyPair|lastRemoteEphemeralKey|rootKey|remoteIdentityKey|indexInfo|messageKeys|registrationId|currentRatchet|baseKey|^Cl\b|BdadiisrciFj|BaewQUaKi|Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}/i.test(msg);
+    const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || a?.toString?.() || ''))).join(' ');
+    return /Closing (open )?session|Closing session:|SessionEntry\s*\{|chainKey:|ephemeralKeyPair|lastRemoteEphemeralKey|rootKey|remoteIdentityKey|indexInfo|messageKeys|registrationId|currentRatchet|baseKey|^Cl\b|BdadiisrciFj|BaewQUaKi|Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}|Failed to decrypt message with any known session|Session error:|Bad MAC\s*Error|verifyMAC|session_cipher|doDecryptWhisperMessage|decryptWithSessions|awaitable|queue_job|libsignal|crypto\.js|session_cipher\.js|queue_job\.js|at\s+Object\.|at\s+SessionCipher|at\s+async\s+\d+/i.test(msg);
 };
 console.log = (...args) => { if (!_silentFilter(args)) _originalLog.apply(console, args); };
 console.info = (...args) => { if (!_silentFilter(args)) _originalInfo.apply(console, args); };
