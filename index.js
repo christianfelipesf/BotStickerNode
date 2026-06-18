@@ -60,15 +60,67 @@ process.on('unhandledRejection', (reason) => {
     dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
 });
 
-// Silencia logs feios do libsignal/Baileys (ex.: "Closing session: SessionEntry {...}")
-// O libsignal usa console.log internamente, entao sobrescrevemos para filtrar
+// Silencia logs feios do libsignal/Baileys (ex.: "Closing session: SessionEntry {...}", "Failed to decrypt...", "Bad MAC", etc.)
+// O libsignal usa process.stdout.write e process.stderr.write diretamente,
+// entao precisamos interceptar a escrita em baixo nivel, nao apenas console.*
+const _LIB_PATTERNS = [
+    /Closing (open )?session/i,
+    /Closing session:/i,
+    /SessionEntry\s*\{/i,
+    /chainKey:/i,
+    /ephemeralKeyPair/i,
+    /lastRemoteEphemeralKey/i,
+    /remoteIdentityKey/i,
+    /indexInfo/i,
+    /messageKeys/i,
+    /registrationId/i,
+    /currentRatchet/i,
+    /baseKey/i,
+    /Failed to decrypt message with any known session/i,
+    /Session error:/i,
+    /Bad MAC\s*Error/i,
+    /verifyMAC/i,
+    /doDecryptWhisperMessage/i,
+    /decryptWithSessions/i,
+    /\[as awaitable\]/i,
+    /_asyncQueueExecutor/i,
+    /libsignal/i,
+    /crypto\.js/i,
+    /session_cipher\.js/i,
+    /queue_job\.js/i,
+    /at\s+Object\./i,
+    /at\s+SessionCipher/i,
+    /at\s+async\s+[\d.]+\s*\[as awaitable\]/i,
+    /Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}/i,
+];
+const _isLibsignalNoise = (str) => _LIB_PATTERNS.some(re => re.test(str));
+
+const _wrapStream = (streamName) => {
+    const stream = process[streamName];
+    if (!stream || !stream.write) return;
+    const originalWrite = stream.write.bind(stream);
+    stream.write = function (chunk, encoding, cb) {
+        try {
+            const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+            if (_isLibsignalNoise(text)) {
+                if (typeof cb === 'function') cb();
+                return true;
+            }
+        } catch (_) {}
+        return originalWrite(chunk, encoding, cb);
+    };
+    return stream;
+};
+_wrapStream('stdout');
+_wrapStream('stderr');
+
 const _originalLog = console.log;
 const _originalInfo = console.info;
 const _originalDebug = console.debug;
 const _originalWarn = console.warn;
 const _silentFilter = (args) => {
     const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || a?.toString?.() || ''))).join(' ');
-    return /Closing (open )?session|Closing session:|SessionEntry\s*\{|chainKey:|ephemeralKeyPair|lastRemoteEphemeralKey|rootKey|remoteIdentityKey|indexInfo|messageKeys|registrationId|currentRatchet|baseKey|^Cl\b|BdadiisrciFj|BaewQUaKi|Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}|Failed to decrypt message with any known session|Session error:|Bad MAC\s*Error|verifyMAC|session_cipher|doDecryptWhisperMessage|decryptWithSessions|awaitable|queue_job|libsignal|crypto\.js|session_cipher\.js|queue_job\.js|at\s+Object\.|at\s+SessionCipher|at\s+async\s+\d+/i.test(msg);
+    return _isLibsignalNoise(msg);
 };
 console.log = (...args) => { if (!_silentFilter(args)) _originalLog.apply(console, args); };
 console.info = (...args) => { if (!_silentFilter(args)) _originalInfo.apply(console, args); };
