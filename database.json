@@ -14,8 +14,8 @@
     "dashboardEnabled": true
   },
   "stats": {
-    "restarts": 126,
-    "totalCommands": 340
+    "restarts": 127,
+    "totalCommands": 343
   },
   "groups": {
     "activeGroups": [
@@ -33,7 +33,18 @@
     },
     "activity": {
       "date": "18/06/2026",
-      "data": {}
+      "data": {
+        "120363374777828089@g.us": {
+          "229119476367595@lid": {
+            "name": "Maxx Internet",
+            "count": 2
+          },
+          "65030452179067@lid": {
+            "name": "Christian Felipe",
+            "count": 3
+          }
+        }
+      }
     }
   }
 }
