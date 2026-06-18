@@ -30,6 +30,11 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
         const opts = { mentions: [sender], quoted: m };
         
+        // Log to Dashboard
+        const groupMetadata = from.endsWith('@g.us') ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
+        const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
+        require('../lib/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0]);
+
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
         else if (isVideo) await sock.sendMessage(from, { video: buffer, caption: revealCaption }, opts);
         else await sock.sendMessage(from, { image: buffer, caption: revealCaption }, opts);

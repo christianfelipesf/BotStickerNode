@@ -9,9 +9,35 @@ const webp = require('webp-converter');
 
 const dbPath = path.join(__dirname, 'database.json');
 const msgsPath = path.join(__dirname, 'messages.json');
+const logsPath = path.join(__dirname, 'logs.json');
 const tempDir = path.join(process.cwd(), 'temp');
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+// --- Dashboard Log Persistence ---
+
+function saveLog(logData) {
+    try {
+        let logs = [];
+        if (fs.existsSync(logsPath)) {
+            logs = JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+        }
+        logs.push(logData);
+        if (logs.length > 500) logs.shift(); // Limit to 500 logs
+        fs.writeFileSync(logsPath, JSON.stringify(logs, null, 2));
+    } catch (e) {
+        console.error('Erro ao salvar log:', e);
+    }
+}
+
+function getLogs() {
+    try {
+        if (!fs.existsSync(logsPath)) return [];
+        return JSON.parse(fs.readFileSync(logsPath, 'utf8'));
+    } catch (e) {
+        return [];
+    }
+}
 
 // --- Database Management ---
 
@@ -491,7 +517,6 @@ async function getAdmins(sock, jid) {
         return [];
     }
 }
-
 module.exports = { 
     readDB, writeDB,
     isActiveGroup, activateGroup, deactivateGroup, 

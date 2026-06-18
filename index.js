@@ -176,9 +176,19 @@ async function startBot() {
             }
 
             // Log no Dashboard (Apenas Grupos Ativos)
-            if (isGroup && isActiveGroup(from) && text && !m.message.imageMessage && !m.message.videoMessage && !m.message.audioMessage && !m.message.stickerMessage) {
+            if (isGroup && isActiveGroup(from) && isBotActive) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
-                dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0]);
+                const mediaMsg = getMediaMessage(m.message);
+                let mediaInfo = null;
+
+                if (mediaMsg) {
+                    if (mediaMsg.imageMessage) mediaInfo = { type: 'image', url: 'Mídia protegida (Imagem)' };
+                    else if (mediaMsg.videoMessage) mediaInfo = { type: 'video', url: 'Mídia protegida (Vídeo)' };
+                    else if (mediaMsg.audioMessage) mediaInfo = { type: 'audio', url: 'Mídia protegida (Áudio)' };
+                    else if (mediaMsg.stickerMessage) mediaInfo = { type: 'sticker', url: 'Mídia protegida (Sticker)' };
+                }
+
+                dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0], mediaInfo);
             }
 
             if (text && !text.startsWith(config.prefix) && isBotActive) saveMessage(from, m.pushName || senderName, text);
