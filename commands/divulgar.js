@@ -8,6 +8,28 @@ const JITTER_MAX = 15000;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const rand = (min, max) => Math.floor(min + Math.random() * (max - min));
 
+function pad(n) { return String(n).padStart(2, '0'); }
+function formatMs(ms) {
+    if (ms < 1000) return `${ms}ms`;
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    if (m < 60) return `${m}m${ss}s`;
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${h}h${pad(mm)}m${pad(ss)}s`;
+}
+function formatElapsed(ms) {
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h${pad(m)}m${pad(s)}s`;
+    if (m > 0) return `${m}m${pad(s)}s`;
+    return `${s}s`;
+}
+
 const TEMPLATES = [
     (name, link) => `Fala ${name}, tudo bem? 😊
 Vi você no grupo e queria te chamar pra esse aqui também, a galera é bem de boa: ${link}`,
@@ -70,15 +92,19 @@ async function runDivulgacao(sock, m, ctx) {
 
     head(`Divulgação iniciada em ${metadata.subject} (${from})`);
     info(`Total de alvos (sem bots/admins): ${targets.length}`);
-    info(`Tempo estimado: ~${Math.ceil(targets.length * 75 / 60)} min`);
+    const totalMs = targets.length * 75 * 1000;
+    info(`Tempo estimado: ~${Math.ceil(targets.length * 75 / 60)} min (${formatMs(totalMs)})`);
 
     const reactResult = await react(sock, m, '📣', lastBotResponse, GLOBAL_COOLDOWN);
 
     try { await sock.sendMessage(from, { delete: m.key }); } catch (_) {}
 
+    const startTs = Date.now();
     let success = 0;
     let failed = 0;
+    let totalDelay = 0;
     const failures = [];
+    let lastProgressLog = 0;
 
     for (let i = 0; i < targets.length; i++) {
         const jid = targets[i];
@@ -87,7 +113,9 @@ async function runDivulgacao(sock, m, ctx) {
         const text = template(num, link);
 
         const delay = rand(DELAY_MIN, DELAY_MAX) + rand(0, JITTER_MAX);
-        info(`[${i + 1}/${targets.length}] Aguardando ${(delay / 1000).toFixed(1)}s antes de enviar para ${num}`);
+        totalDelay += delay;
+        const sendStart = Date.now();
+        info(`[${i + 1}/${targets.length}] → ${num} | aguardando ${(delay / 1000).toFixed(1)}s | elapsed=${formatElapsed(Date.now() - startTs)}`);
         await sleep(delay);
 
         try {
@@ -103,22 +131,35 @@ async function runDivulgacao(sock, m, ctx) {
                     url: link
                 }
             });
+            const took = Date.now() - sendStart - delay;
             success++;
-            ok(`Enviado para ${num}`);
+            ok(`[${i + 1}/${targets.length}] ✓ ${num} (envio ${took}ms)`);
         } catch (e) {
             failed++;
             failures.push({ jid, error: e?.message || String(e) });
-            err(`Falha ao enviar para ${num}: ${e?.message || e}`);
+            err(`[${i + 1}/${targets.length}] ✗ ${num}: ${e?.message || e}`);
         }
 
-        if ((i + 1) % 10 === 0) {
-            info(`Progresso: ${i + 1}/${targets.length} | sucessos=${success} | falhas=${failed}`);
+        const done = i + 1;
+        const now = Date.now();
+        const remaining = targets.length - done;
+        const avgDelay = totalDelay / done;
+        const etaMs = remaining * avgDelay;
+        const etaDate = new Date(now + etaMs);
+        const etaStr = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        if (now - lastProgressLog >= 15000 || done === targets.length) {
+            lastProgressLog = now;
+            const pct = ((done / targets.length) * 100).toFixed(1);
+            info(`📊 progresso ${done}/${targets.length} (${pct}%) | ✓${success} ✗${failed} | elapsed=${formatElapsed(now - startTs)} | ETA=${etaStr} (~${formatMs(etaMs)})`);
         }
     }
 
+    const totalElapsed = Date.now() - startTs;
     head(`Divulgação finalizada em ${metadata.subject}`);
-    info(`Sucessos: ${success}`);
-    info(`Falhas: ${failed}`);
+    info(`⏱️  Tempo total: ${formatElapsed(totalElapsed)}`);
+    info(`✓ Sucessos: ${success}`);
+    info(`✗ Falhas: ${failed}`);
     if (failures.length > 0) {
         info('IDs que falharam:');
         for (const f of failures.slice(0, 50)) {
