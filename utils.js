@@ -884,6 +884,15 @@ async function getAdmins(sock, jid) {
     }
 }
 
+function normalizeJid(jid) {
+    if (!jid) return jid;
+    const [user, ...rest] = jid.split(':');
+    const after = rest.length > 0 ? rest.join(':') : jid;
+    const atIdx = after.indexOf('@');
+    const domain = atIdx >= 0 ? after.slice(atIdx + 1) : 's.whatsapp.net';
+    return `${user}@${domain}`;
+}
+
 function getVersion() {
     try {
         return execSync('git log -1 --format=%s').toString().trim();
@@ -942,6 +951,6 @@ module.exports = {
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
     updateMemberActivity, getTopMember, getAdmins,
-    getGroupLink, setGroupLink,
+    getGroupLink, setGroupLink, normalizeJid,
     flushNow
 };

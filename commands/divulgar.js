@@ -1,5 +1,5 @@
-const { getGroupLink, getAdmins } = require('../utils');
-const { info, ok, err, head } = require('../lib/divulgarLog');
+const { getGroupLink, getAdmins, normalizeJid } = require('../utils');
+const { info, ok, err, head, warn } = require('../lib/divulgarLog');
 
 const DELAY_MIN = 45000;
 const DELAY_MAX = 90000;
@@ -31,12 +31,19 @@ async function runDivulgacao(sock, m, ctx) {
     const link = getGroupLink();
     if (!link) return sock.sendMessage(from, { text: '❌ Nenhum link configurado. Use !setlink <link> primeiro.' }, { quoted: m });
 
-    const meId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-    const admins = await getAdmins(sock, from);
-    const isOwner = sender === meId;
-    if (!admins.includes(sender) && !isOwner) {
-        return sock.sendMessage(from, { text: '❌ Apenas admins (ou o próprio bot) podem iniciar a divulgação.' }, { quoted: m });
+    const meId = normalizeJid(sock.user.id);
+    const senderNorm = normalizeJid(sender);
+    const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+
+    info(`[divulgar] sender=${sender} | senderNorm=${senderNorm} | fromMe=${m.key.fromMe} | meId=${meId} | isBotOwner=${isBotOwner}`);
+
+    if (!isBotOwner) {
+        return sock.sendMessage(from, { text: '❌ Apenas quem está conectado no bot (celular que escaneou o QR) pode usar este comando.' }, { quoted: m });
     }
+
+    const adminsRaw = await getAdmins(sock, from);
+    const admins = adminsRaw.map(normalizeJid);
+    info(`[divulgar] admins (${admins.length}): ${admins.join(', ')}`);
 
     let metadata;
     try {
@@ -47,7 +54,11 @@ async function runDivulgacao(sock, m, ctx) {
 
     const targets = metadata.participants
         .map(p => p.id)
-        .filter(id => id && id !== meId && !admins.includes(id));
+        .filter(id => {
+            if (!id) return false;
+            const norm = normalizeJid(id);
+            return norm !== meId && !admins.includes(norm);
+        });
 
     if (targets.length === 0) {
         warn(`Divulgar cancelado: grupo ${metadata.subject} (${from}) só tem admins/bot. Nenhum alvo.`);
