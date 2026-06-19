@@ -898,6 +898,16 @@ async function getAdmins(sock, jid) {
     }
 }
 
+function isUserAdmin(sender, adminsRaw) {
+    if (!adminsRaw || !Array.isArray(adminsRaw)) return false;
+    const senderNorm = normalizeJid(sender);
+    const senderUser = senderNorm.split('@')[0];
+    return adminsRaw.some(p => {
+        const candidates = [p.id, p.jid, p.lid].filter(Boolean).map(normalizeJid);
+        return candidates.some(c => c.split('@')[0] === senderUser);
+    });
+}
+
 function getBotJid(sock) {
     try {
         const raw = sock?.user?.id || sock?.user?.jid || '';
@@ -1123,7 +1133,7 @@ module.exports = {
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
-    updateMemberActivity, getTopMember, getAdmins, botIsAdmin, getBotJid,
+    updateMemberActivity, getTopMember, getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     flushNow

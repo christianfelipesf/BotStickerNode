@@ -6,8 +6,8 @@ module.exports = {
         if (!isGroup) return;
 
         const admins = await utils.getAdmins(sock, from);
-        const isSenderAdmin = admins.includes(sender);
-        const isBotAdmin = admins.includes(sock.user.id.split(':')[0] + '@s.whatsapp.net');
+        const isSenderAdmin = utils.isUserAdmin(sender, admins);
+        const isBotAdmin = utils.isUserAdmin(sock.user.id, admins);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });
@@ -28,7 +28,7 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Você precisa marcar ou citar alguém para banir.' }, { quoted: m });
         }
 
-        if (admins.includes(participant)) {
+        if (utils.isUserAdmin(participant, admins)) {
             return await sock.sendMessage(from, { text: '❌ Eu não posso banir um administrador.' }, { quoted: m });
         }
 

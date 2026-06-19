@@ -7,10 +7,7 @@ module.exports = {
         if (!isGroup) return;
 
         const adminsRaw = await utils.getAdmins(sock, from);
-        const admins = adminsRaw.map(p => p.id);
-
-        const senderNorm = utils.normalizeJid(sender);
-        const isSenderAdmin = admins.some(id => utils.normalizeJid(id) === senderNorm);
+        const isSenderAdmin = utils.isUserAdmin(sender, adminsRaw);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });

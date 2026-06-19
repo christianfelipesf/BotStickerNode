@@ -3,8 +3,15 @@ module.exports = {
     aliases: ['groups', 'listagrupos'],
     category: 'admin',
     description: 'Lista todos os grupos ativos e seus membros mais ativos do dia',
-    async execute(sock, m, { from, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, readConfig, getTopMember, getGroupData, listActiveGroups } = utils;
+
+        const meId = utils.normalizeJid(sock.user.id);
+        const senderNorm = utils.normalizeJid(sender);
+        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+        if (!isBotOwner) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        }
 
         let currentBotResponse = await react(sock, m, '📊', lastBotResponse, GLOBAL_COOLDOWN);
 

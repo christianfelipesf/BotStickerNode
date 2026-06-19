@@ -8,7 +8,12 @@ module.exports = {
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         
         const meta = await sock.groupMetadata(from);
-        if (!meta.participants.find(p => p.id === sender)?.admin && !m.key.fromMe) {
+        const adminsRaw = meta.participants
+            .filter(p => p.admin === 'admin' || p.admin === 'superadmin' || p.isAdmin || p.isSuperAdmin)
+            .map(p => ({ id: p.id, jid: p.jid, lid: p.lid, name: p.name }));
+        const isSenderAdmin = utils.isUserAdmin(sender, adminsRaw);
+
+        if (!isSenderAdmin && !m.key.fromMe) {
             return await react(sock, m, '🚫', lastBotResponse, GLOBAL_COOLDOWN);
         }
         

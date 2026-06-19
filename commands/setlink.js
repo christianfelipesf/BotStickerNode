@@ -1,4 +1,4 @@
-const { getGroupLink, setGroupLink, getAdmins } = require('../utils');
+const { getGroupLink, setGroupLink, getAdmins, isUserAdmin } = require('../utils');
 
 module.exports = {
     name: 'setlink',
@@ -11,7 +11,7 @@ module.exports = {
         }
 
         const admins = await getAdmins(sock, from);
-        if (!admins.includes(sender)) {
+        if (!isUserAdmin(sender, admins)) {
             return sock.sendMessage(from, { text: '❌ Apenas admins podem definir o link.' }, { quoted: m });
         }
 

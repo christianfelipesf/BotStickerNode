@@ -6,8 +6,15 @@ module.exports = {
     name: 'dump',
     category: 'admin',
     description: 'Gera um backup dos arquivos do banco de dados e configurações',
-    async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, flushNow } = utils;
+
+        const meId = utils.normalizeJid(sock.user.id);
+        const senderNorm = utils.normalizeJid(sender);
+        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+        if (!isBotOwner) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        }
 
         let currentBotResponse = await react(sock, m, '📦', lastBotResponse, GLOBAL_COOLDOWN);
 

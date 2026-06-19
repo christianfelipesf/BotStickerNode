@@ -6,7 +6,7 @@ module.exports = {
         if (!isGroup) return;
 
         const admins = await utils.getAdmins(sock, from);
-        const isSenderAdmin = admins.includes(sender);
+        const isSenderAdmin = utils.isUserAdmin(sender, admins);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });

@@ -7,7 +7,7 @@ module.exports = {
         if (!isGroup) return;
 
         const admins = await utils.getAdmins(sock, from);
-        const isSenderAdmin = admins.includes(sender);
+        const isSenderAdmin = utils.isUserAdmin(sender, admins);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });
@@ -24,7 +24,7 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Você precisa marcar ou citar alguém para dar uma advertência.' }, { quoted: m });
         }
 
-        if (admins.includes(participant)) {
+        if (utils.isUserAdmin(participant, admins)) {
             return await sock.sendMessage(from, { text: '❌ Eu não posso advertir um administrador.' }, { quoted: m });
         }
 
@@ -35,7 +35,7 @@ module.exports = {
         const count = groupData.warnings[participant];
 
         if (count >= 3) {
-            const isBotAdmin = admins.includes(sock.user.id.split(':')[0] + '@s.whatsapp.net');
+            const isBotAdmin = utils.isUserAdmin(sock.user.id, admins);
             if (isBotAdmin) {
                 await sock.groupParticipantsUpdate(from, [participant], 'remove');
                 delete groupData.warnings[participant];

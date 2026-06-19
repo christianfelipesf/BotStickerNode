@@ -2,9 +2,16 @@ module.exports = {
     name: 'set',
     category: 'config',
     description: 'Altera uma configuração do bot',
-    async execute(sock, m, { from, args, config, utils, ai, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, args, config, utils, ai, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, writeConfig, readConfig } = utils;
         const { setupAI } = ai;
+        
+        const meId = utils.normalizeJid(sock.user.id);
+        const senderNorm = utils.normalizeJid(sender);
+        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+        if (!isBotOwner) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        }
         
         const p = args[0]; 
         const v = args.slice(1).join(' ');

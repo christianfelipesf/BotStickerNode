@@ -7,10 +7,7 @@ module.exports = {
         if (!isGroup) return;
 
         const adminsRaw = await utils.getAdmins(sock, from);
-        const admins = adminsRaw.map(p => p.id);
-
-        const senderNorm = utils.normalizeJid(sender);
-        const isSenderAdmin = admins.some(id => utils.normalizeJid(id) === senderNorm);
+        const isSenderAdmin = utils.isUserAdmin(sender, adminsRaw);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });
@@ -27,12 +24,7 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Você precisa marcar ou citar alguém para mutar.' }, { quoted: m });
         }
 
-        const participantNorm = utils.normalizeJid(participant);
-        const participantUser = participantNorm.split('@')[0];
-        const isTargetAdmin = adminsRaw.some(p => {
-            const candidates = [p.id, p.jid, p.lid].filter(Boolean).map(j => utils.normalizeJid(j));
-            return candidates.some(c => c.split('@')[0] === participantUser);
-        });
+        const isTargetAdmin = utils.isUserAdmin(participant, adminsRaw);
         if (isTargetAdmin) {
             return await sock.sendMessage(from, { text: '❌ Eu não posso mutar um administrador.' }, { quoted: m });
         }

@@ -64,7 +64,7 @@ async function runDivulgacao(sock, m, ctx) {
     }
 
     const adminsRaw = await getAdmins(sock, from);
-    const admins = adminsRaw.map(normalizeJid);
+    const admins = adminsRaw.map(p => normalizeJid(p.id || p.jid));
     info(`[divulgar] admins (${admins.length}): ${admins.join(', ')}`);
 
     let metadata;
