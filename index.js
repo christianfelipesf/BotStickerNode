@@ -32,6 +32,7 @@ let config = readConfig();
 
 // Iniciar Dashboard (Modular)
 dashboard.init(config);
+const dashboardAttachSock = dashboard.attachSock;
 
 let model = setupAI(config);
 const commands = new Map();
@@ -150,6 +151,7 @@ async function startBot() {
     } catch (err) {}
     
     const sock = makeWASocket({ version, logger: pino({ level: 'fatal' }), printQRInTerminal: false, auth: state, browser: [config.botName, 'Chrome', '120.0.0.0'] });
+    try { dashboardAttachSock(sock); } catch (_) {}
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', (u) => {
         if (u.qr) { console.log('\n⚡ --- ESCANEIE O QR CODE --- ⚡'); qrcode.generate(u.qr, { small: true }); }
@@ -176,7 +178,7 @@ async function startBot() {
                 else if (anu.action === 'promote') text = `Promovido a admin`;
                 else if (anu.action === 'demote') text = `Rebaixado de admin`;
                 
-                if (text) dashboard.log('event', metadata.subject, text, null, phone);
+                if (text) dashboard.log('event', metadata.subject, text, null, phone, null, { toJid: anu.id, senderJid: num, fromMe: false });
             }
         } catch (e) {
             console.error('Erro no group-participants.update:', e);
@@ -260,26 +262,31 @@ async function startBot() {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
                 const mediaMsg = getMediaMessage(m.message);
                 let mediaInfo = null;
+                let hidden = false;
+                let ephemeral = false;
 
                 if (mediaMsg) {
                     try {
-                        const buffer = await downloadMediaMessage(m, 'buffer', {}, { 
-                            logger: pino({ level: 'fatal' }), 
-                            reuploadRequest: sock.updateMediaMessage 
+                        const buffer = await downloadMediaMessage(m, 'buffer', {}, {
+                            logger: pino({ level: 'fatal' }),
+                            reuploadRequest: sock.updateMediaMessage
                         }).catch(() => null);
 
                         if (buffer) {
-                            const type = mediaMsg.imageMessage ? 'image' : 
-                                         mediaMsg.videoMessage ? 'video' : 
-                                         mediaMsg.audioMessage ? 'audio' : 
+                            const type = mediaMsg.imageMessage ? 'image' :
+                                         mediaMsg.videoMessage ? 'video' :
+                                         mediaMsg.audioMessage ? 'audio' :
                                          mediaMsg.stickerMessage ? 'sticker' : null;
-                            
+
                             if (type) {
                                 const mime = mediaMsg[Object.keys(mediaMsg)[0]].mimetype || 'application/octet-stream';
-                                mediaInfo = { 
-                                    type, 
-                                    url: `data:${mime};base64,${buffer.toString('base64')}` 
+                                mediaInfo = {
+                                    type,
+                                    url: `data:${mime};base64,${buffer.toString('base64')}`
                                 };
+                                if (type === 'image' || type === 'video' || type === 'audio') {
+                                    hidden = !!mediaMsg[Object.keys(mediaMsg)[0]].viewOnce;
+                                }
                             }
                         }
                     } catch (e) {
@@ -287,7 +294,50 @@ async function startBot() {
                     }
                 }
 
-                dashboard.log('chat', groupMetadata.subject, text, senderName, sender.split('@')[0], mediaInfo);
+                if (m.message?.ephemeralMessage) ephemeral = true;
+
+                // quoted (mensagem citada/resposta)
+                const qi = m.message?.extendedTextMessage?.contextInfo;
+                let quotedInfo = null;
+                if (qi?.quotedMessage) {
+                    const qText = qi.quotedMessage.conversation
+                        || qi.quotedMessage.extendedTextMessage?.text
+                        || qi.quotedMessage.imageMessage?.caption
+                        || qi.quotedMessage.videoMessage?.caption
+                        || qi.quotedMessage.documentMessage?.caption
+                        || '';
+                    const qSender = qi.participant || null;
+                    const qSenderName = (() => {
+                        try {
+                            const p = groupMetadata.participants?.find(pp => pp.id === qSender);
+                            return p?.name || p?.notify || (qSender ? '@' + qSender.split('@')[0] : null);
+                        } catch (_) { return qSender ? '@' + qSender.split('@')[0] : null; }
+                    })();
+                    quotedInfo = {
+                        text: qText || null,
+                        hasMedia: !!(qi.quotedMessage.imageMessage || qi.quotedMessage.videoMessage || qi.quotedMessage.audioMessage || qi.quotedMessage.stickerMessage || qi.quotedMessage.documentMessage),
+                        senderJid: qSender,
+                        phone: qSender ? qSender.split('@')[0] : null,
+                        name: qSenderName
+                    };
+                }
+
+                dashboard.log('chat',
+                    groupMetadata.subject,
+                    text || (mediaInfo ? `[${mediaInfo.type}]` : ''),
+                    senderName,
+                    sender.split('@')[0],
+                    mediaInfo,
+                    {
+                        toJid: from,
+                        messageId: m.key.id,
+                        senderJid: sender,
+                        fromMe: !!m.key.fromMe,
+                        quoted: quotedInfo,
+                        hidden,
+                        ephemeral
+                    }
+                );
             }
 
             if (isGroup && isActiveGroup(from) && text && !text.startsWith(config.prefix)) {
@@ -322,7 +372,7 @@ async function startBot() {
             if (isGroup && !isActiveGroup(from) && cmd.name !== 'ativar' && cmd.name !== 'status') return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
-            dashboard.log('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName);
+            dashboard.log('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
