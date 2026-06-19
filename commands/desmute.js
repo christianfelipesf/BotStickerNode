@@ -6,8 +6,11 @@ module.exports = {
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         if (!isGroup) return;
 
-        const admins = await utils.getAdmins(sock, from);
-        const isSenderAdmin = admins.includes(sender);
+        const adminsRaw = await utils.getAdmins(sock, from);
+        const admins = adminsRaw.map(p => p.id);
+
+        const senderNorm = utils.normalizeJid(sender);
+        const isSenderAdmin = admins.some(id => utils.normalizeJid(id) === senderNorm);
 
         if (!isSenderAdmin) {
             return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });

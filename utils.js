@@ -890,7 +890,9 @@ function getMessageText(message) {
 async function getAdmins(sock, jid) {
     try {
         const metadata = await sock.groupMetadata(jid);
-        return metadata.participants.filter(p => p.admin || p.isSuperAdmin).map(p => p.id);
+        return metadata.participants
+            .filter(p => p.admin === 'admin' || p.admin === 'superadmin' || p.isAdmin || p.isSuperAdmin)
+            .map(p => ({ id: p.id, jid: p.jid, lid: p.lid, name: p.name }));
     } catch (e) {
         return [];
     }
@@ -906,11 +908,23 @@ function getBotJid(sock) {
 }
 
 async function botIsAdmin(sock, jid) {
-    const botJid = getBotJid(sock);
-    if (!botJid) return false;
+    const botRaw = getBotJid(sock);
+    if (!botRaw) return false;
+    const botUser = botRaw.split('@')[0];
     const admins = await getAdmins(sock, jid);
-    const adminsNorm = admins.map(normalizeJid);
-    return adminsNorm.includes(botJid);
+
+    const matched = admins.some(p => {
+        const ids = [p.id, p.jid, p.lid].filter(Boolean).map(normalizeJid);
+        const users = new Set(ids.map(s => s.split('@')[0]));
+        return users.has(botUser);
+    });
+
+    if (process.env.MUTE_DEBUG) {
+        console.log('[MUTE_DEBUG] botRaw=', botRaw, 'botUser=', botUser);
+        console.log('[MUTE_DEBUG] admins=', admins.map(p => ({ id: p.id, jid: p.jid, lid: p.lid })));
+        console.log('[MUTE_DEBUG] matched=', matched);
+    }
+    return matched;
 }
 
 // ============================================================

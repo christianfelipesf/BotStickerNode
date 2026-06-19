@@ -208,8 +208,13 @@ async function startBot() {
             if (isGroup && isBotActive) {
                 const groupData = getGroupData(from);
                 const utilsRef = require('./utils');
-                const admins = await utilsRef.getAdmins(sock, from);
-                const isSenderAdmin = admins.map(utilsRef.normalizeJid).includes(utilsRef.normalizeJid(sender));
+                const adminsRaw = await utilsRef.getAdmins(sock, from);
+                const senderNorm = utilsRef.normalizeJid(sender);
+                const senderUser = senderNorm.split('@')[0];
+                const isSenderAdmin = adminsRaw.some(p => {
+                    const candidates = [p.id, p.jid, p.lid].filter(Boolean).map(j => utilsRef.normalizeJid(j));
+                    return candidates.some(c => c.split('@')[0] === senderUser);
+                });
                 const isBotAdmin = await utilsRef.botIsAdmin(sock, from);
 
                 // 1. Mute enforcement (lista persistida em SQLite, expira em 12h)
