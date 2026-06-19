@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { exec, execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const { Jimp } = require('jimp');
@@ -1063,7 +1063,7 @@ function normalizeJid(jid) {
 
 function getVersion() {
     try {
-        return execSync('git log -1 --format=%s').toString().trim();
+        return execFileSync('git', ['log', '-1', '--format=%s'], { windowsHide: true }).toString().trim();
     } catch (e) {
         return 'v1.0.0';
     }

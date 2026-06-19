@@ -10,7 +10,7 @@ const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const { Boom } = require('@hapi/boom');
-const { execSync, exec } = require('child_process');
+const { execFileSync } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 
 const {
@@ -131,8 +131,8 @@ console.warn = (...args) => { if (!_silentFilter(args)) _originalWarn.apply(cons
 
 // Detectar FFmpeg
 try {
-    const cmd = process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
-    const systemFfmpeg = execSync(cmd).toString().split('\r\n')[0].split('\n')[0].trim();
+    const finder = process.platform === 'win32' ? 'where' : 'which';
+    const systemFfmpeg = execFileSync(finder, ['ffmpeg'], { windowsHide: true }).toString().split(/\r?\n/)[0].trim();
     if (systemFfmpeg) ffmpeg.setFfmpegPath(systemFfmpeg);
 } catch (e) {}
 
