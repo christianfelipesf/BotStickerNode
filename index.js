@@ -207,12 +207,13 @@ async function startBot() {
             // --- Enforce Admin Policies (Mute & Anti-Link) ---
             if (isGroup && isBotActive) {
                 const groupData = getGroupData(from);
-                const admins = await require('./utils').getAdmins(sock, from);
-                const isSenderAdmin = admins.includes(sender);
-                const isBotAdmin = admins.includes(sock.user.id.split(':')[0] + '@s.whatsapp.net');
+                const utilsRef = require('./utils');
+                const admins = await utilsRef.getAdmins(sock, from);
+                const isSenderAdmin = admins.map(utilsRef.normalizeJid).includes(utilsRef.normalizeJid(sender));
+                const isBotAdmin = await utilsRef.botIsAdmin(sock, from);
 
-                // 1. Mute enforcement (lista em RAM, não persiste em disco)
-                if (!isSenderAdmin && require('./utils').isMuted(from, sender)) {
+                // 1. Mute enforcement (lista persistida em SQLite, expira em 12h)
+                if (!isSenderAdmin && utilsRef.isMuted(from, sender)) {
                     if (isBotAdmin) {
                         try {
                             await sock.sendMessage(from, { delete: m.key });

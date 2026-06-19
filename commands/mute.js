@@ -28,8 +28,7 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Eu não posso mutar um administrador.' }, { quoted: m });
         }
 
-        const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-        const isBotAdmin = admins.includes(botId);
+        const isBotAdmin = await utils.botIsAdmin(sock, from);
 
         const added = utils.addMuted(from, participant);
 

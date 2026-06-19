@@ -896,6 +896,23 @@ async function getAdmins(sock, jid) {
     }
 }
 
+function getBotJid(sock) {
+    try {
+        const raw = sock?.user?.id || sock?.user?.jid || '';
+        return normalizeJid(raw);
+    } catch (_) {
+        return '';
+    }
+}
+
+async function botIsAdmin(sock, jid) {
+    const botJid = getBotJid(sock);
+    if (!botJid) return false;
+    const admins = await getAdmins(sock, jid);
+    const adminsNorm = admins.map(normalizeJid);
+    return adminsNorm.includes(botJid);
+}
+
 // ============================================================
 // Mute persistido em SQLite (group_state.muted)
 // Estrutura armazenada: { "<participantJid>": <timestampMs>, ... }
@@ -1092,7 +1109,7 @@ module.exports = {
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,
-    updateMemberActivity, getTopMember, getAdmins,
+    updateMemberActivity, getTopMember, getAdmins, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     flushNow
