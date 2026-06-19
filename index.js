@@ -211,10 +211,14 @@ async function startBot() {
                 const isSenderAdmin = admins.includes(sender);
                 const isBotAdmin = admins.includes(sock.user.id.split(':')[0] + '@s.whatsapp.net');
 
-                // 1. Mute enforcement
-                if (groupData.muted?.includes(sender) && !isSenderAdmin) {
+                // 1. Mute enforcement (lista em RAM, não persiste em disco)
+                if (!isSenderAdmin && require('./utils').isMuted(from, sender)) {
                     if (isBotAdmin) {
-                        await sock.sendMessage(from, { delete: m.key });
+                        try {
+                            await sock.sendMessage(from, { delete: m.key });
+                        } catch (delErr) {
+                            console.error('❌ Falha ao apagar mensagem de mutado:', delErr.message);
+                        }
                         return; // Stop processing muted messages
                     }
                 }

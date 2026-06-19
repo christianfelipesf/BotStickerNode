@@ -13,11 +13,11 @@
     "geminiApiKey": "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
     "dashboardEnabled": true,
     "dashboardPort": 3000,
-    "linkgrupo":"https://chat.whatsapp.com/LbAzWNIRifxJCwaUjMNyNm?s=cl&p=a&mlu=0"
+    "linkgrupo": "https://chat.whatsapp.com/LbAzWNIRifxJCwaUjMNyNm?s=cl&p=a&mlu=0"
   },
   "stats": {
-    "restarts": 5,
-    "totalCommands": 22,
+    "restarts": 13,
+    "totalCommands": 84,
     "_activityDate": "6/18/2026"
   },
   "groups": {}

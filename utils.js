@@ -370,8 +370,10 @@ function ensureGroupState(jid) {
 }
 
 function parseGroupState(row) {
+    const mutedRaw = safeJson(row.muted, {});
+    const muted = (mutedRaw && typeof mutedRaw === 'object' && !Array.isArray(mutedRaw)) ? mutedRaw : {};
     return {
-        muted: safeJson(row.muted, []),
+        muted,
         warnings: safeJson(row.warnings, {}),
         antilink: !!row.antilink,
         activity: safeJson(row.activity, {})
@@ -466,6 +468,7 @@ function deactivateGroup(jid) {
 
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
     clearChatHistory(jid);
+    clearMuted(jid);
 
     return true;
 }
@@ -518,9 +521,18 @@ function setGroupData(jid, data) {
         const cur = ensureGroupState(jid);
         const curParsed = parseGroupState(cur);
         const merged = { ...curParsed, ...dynUpdate };
+        let mutedObj = merged.muted;
+        if (Array.isArray(mutedObj)) {
+            const converted = {};
+            const ts = Date.now();
+            for (const p of mutedObj) if (p) converted[p] = ts;
+            mutedObj = converted;
+        } else if (!mutedObj || typeof mutedObj !== 'object') {
+            mutedObj = {};
+        }
         _gsUpsert.run(
             jid,
-            JSON.stringify(merged.muted || []),
+            JSON.stringify(mutedObj),
             JSON.stringify(merged.warnings || {}),
             merged.antilink ? 1 : 0,
             JSON.stringify(merged.activity || {})
@@ -884,6 +896,106 @@ async function getAdmins(sock, jid) {
     }
 }
 
+// ============================================================
+// Mute persistido em SQLite (group_state.muted)
+// Estrutura armazenada: { "<participantJid>": <timestampMs>, ... }
+// Auto-expira após MUTE_TTL_MS (12h). Ao expirar, a entrada é removida.
+// ============================================================
+const MUTE_TTL_MS = 12 * 60 * 60 * 1000;
+
+function _readMutedObj(jid) {
+    try {
+        const row = _gsGet.get(jid);
+        if (!row) return {};
+        const v = safeJson(row.muted, {});
+        return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function _writeMutedObj(jid, obj) {
+    const cur = ensureGroupState(jid);
+    const curParsed = parseGroupState(cur);
+    _gsUpsert.run(
+        jid,
+        JSON.stringify(obj || {}),
+        cur.warnings || '{}',
+        curParsed.antilink ? 1 : 0,
+        cur.activity || '{}'
+    );
+}
+
+function cleanupMuted(jid, now = Date.now()) {
+    const obj = _readMutedObj(jid);
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return false;
+    let changed = false;
+    for (const k of keys) {
+        const ts = Number(obj[k]);
+        if (!ts || now - ts >= MUTE_TTL_MS) {
+            delete obj[k];
+            changed = true;
+        }
+    }
+    if (changed) _writeMutedObj(jid, obj);
+    return changed;
+}
+
+function cleanupAllMuted(now = Date.now()) {
+    try {
+        const rows = _gsAll.all();
+        for (const r of rows) cleanupMuted(r.jid, now);
+    } catch (e) {
+        console.error('❌ Falha no cleanup geral de muted:', e.message);
+    }
+}
+
+function isMuted(jid, participant) {
+    if (!jid || !participant) return false;
+    const obj = _readMutedObj(jid);
+    const ts = Number(obj[participant]);
+    if (!ts) return false;
+    if (Date.now() - ts >= MUTE_TTL_MS) {
+        delete obj[participant];
+        _writeMutedObj(jid, obj);
+        return false;
+    }
+    return true;
+}
+
+function addMuted(jid, participant) {
+    if (!jid || !participant) return false;
+    const obj = _readMutedObj(jid);
+    const ts = Number(obj[participant]);
+    const now = Date.now();
+    if (ts && (now - ts) < MUTE_TTL_MS) return false;
+    obj[participant] = now;
+    _writeMutedObj(jid, obj);
+    return true;
+}
+
+function removeMuted(jid, participant) {
+    if (!jid || !participant) return false;
+    const obj = _readMutedObj(jid);
+    if (!(participant in obj)) return false;
+    delete obj[participant];
+    _writeMutedObj(jid, obj);
+    return true;
+}
+
+function listMuted(jid) {
+    cleanupMuted(jid);
+    return Object.keys(_readMutedObj(jid));
+}
+
+function clearMuted(jid) {
+    if (!jid) return;
+    const cur = ensureGroupState(jid);
+    const curParsed = parseGroupState(cur);
+    _gsUpsert.run(jid, '{}', cur.warnings || '{}', curParsed.antilink ? 1 : 0, cur.activity || '{}');
+}
+
 function normalizeJid(jid) {
     if (!jid) return jid;
     const [user, ...rest] = jid.split(':');
@@ -938,6 +1050,36 @@ try {
     console.error('❌ Falha ao resetar activity:', e.message);
 }
 
+// Migração do formato antigo de muted (array) -> objeto com timestamp,
+// e limpeza de mutes expirados (>12h) no boot.
+try {
+    const rows = _gsAll.all();
+    let converted = 0, expired = 0;
+    const now = Date.now();
+    for (const r of rows) {
+        let raw;
+        try { raw = JSON.parse(r.muted); } catch (_) { raw = []; }
+        if (Array.isArray(raw)) {
+            const obj = {};
+            for (const p of raw) if (p) obj[p] = now;
+            _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity);
+            converted++;
+        } else if (raw && typeof raw === 'object') {
+            let changed = false;
+            for (const k of Object.keys(raw)) {
+                const ts = Number(raw[k]);
+                if (!ts || now - ts >= MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
+            }
+            if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity);
+        }
+    }
+    if (converted > 0 || expired > 0) {
+        console.log(`🧹 Mute: ${converted} grupo(s) migrados para formato novo, ${expired} mute(s) expirado(s) removido(s).`);
+    }
+} catch (e) {
+    console.error('❌ Falha ao migrar/limpar muted:', e.message);
+}
+
 process.on('beforeExit', flushNow);
 process.on('SIGINT', () => { flushNow(); process.exit(0); });
 process.on('SIGTERM', () => { flushNow(); process.exit(0); });
@@ -952,5 +1094,6 @@ module.exports = {
     changeSpeed, getBotName, react, getMessageText, getVersion,
     updateMemberActivity, getTopMember, getAdmins,
     getGroupLink, setGroupLink, normalizeJid,
+    isMuted, addMuted, removeMuted, listMuted, clearMuted,
     flushNow
 };

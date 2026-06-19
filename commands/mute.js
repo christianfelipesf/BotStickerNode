@@ -1,7 +1,7 @@
 module.exports = {
     name: 'mute',
     aliases: ['mutar'],
-    description: 'Muta um membro no grupo (suas mensagens serão apagadas).',
+    description: 'Muta um membro no grupo (suas mensagens serão apagadas). Funciona apenas enquanto o bot estiver ligado (em RAM).',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         if (!isGroup) return;
@@ -28,15 +28,25 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Eu não posso mutar um administrador.' }, { quoted: m });
         }
 
-        const groupData = utils.getGroupData(from);
-        if (!groupData.muted) groupData.muted = [];
-        
-        if (!groupData.muted.includes(participant)) {
-            groupData.muted.push(participant);
-            utils.setGroupData(from, groupData);
-        }
+        const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        const isBotAdmin = admins.includes(botId);
+
+        const added = utils.addMuted(from, participant);
 
         await utils.react(sock, m, '🔇', lastBotResponse, GLOBAL_COOLDOWN);
-        return await sock.sendMessage(from, { text: `🔇 @${participant.split('@')[0]} foi mutado. Suas mensagens serão apagadas.`, mentions: [participant] }, { quoted: m });
+
+        if (!isBotAdmin) {
+            return await sock.sendMessage(from, {
+                text: `⚠️ @${participant.split('@')[0]} foi adicionado à lista de mute, mas *eu não sou administrador* deste grupo, portanto não consigo apagar as mensagens dele. Promova o bot a admin para que o mute funcione.`,
+                mentions: [participant]
+            }, { quoted: m });
+        }
+
+        return await sock.sendMessage(from, {
+            text: added
+                ? `🔇 @${participant.split('@')[0]} foi mutado. As mensagens dele serão apagadas enquanto o bot estiver ligado.`
+                : `ℹ️ @${participant.split('@')[0]} já estava mutado.`,
+            mentions: [participant]
+        }, { quoted: m });
     }
 };

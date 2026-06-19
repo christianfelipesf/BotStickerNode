@@ -1,6 +1,7 @@
 module.exports = {
     name: 'desmute',
-    description: 'Desmuta um membro no grupo.',
+    aliases: ['desmutar'],
+    description: 'Desmuta um membro no grupo (remove da lista em RAM).',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         if (!isGroup) return;
@@ -23,13 +24,15 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Você precisa marcar ou citar alguém para desmutar.' }, { quoted: m });
         }
 
-        const groupData = utils.getGroupData(from);
-        if (groupData.muted && groupData.muted.includes(participant)) {
-            groupData.muted = groupData.muted.filter(p => p !== participant);
-            utils.setGroupData(from, groupData);
-        }
+        const wasMuted = utils.isMuted(from, participant);
+        utils.removeMuted(from, participant);
 
         await utils.react(sock, m, '🔊', lastBotResponse, GLOBAL_COOLDOWN);
-        return await sock.sendMessage(from, { text: `🔊 @${participant.split('@')[0]} foi desmutado.`, mentions: [participant] }, { quoted: m });
+        return await sock.sendMessage(from, {
+            text: wasMuted
+                ? `🔊 @${participant.split('@')[0]} foi desmutado.`
+                : `ℹ️ @${participant.split('@')[0]} não estava na lista de mute.`,
+            mentions: [participant]
+        }, { quoted: m });
     }
 };
