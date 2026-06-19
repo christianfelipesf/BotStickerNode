@@ -187,7 +187,7 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
+        if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
         try {
             const m = messages[0];
             if (!m.message || processedMessages.has(m.key.id)) return;
@@ -201,9 +201,13 @@ async function startBot() {
             
             const from = m.key.remoteJid;
             const isGroup = from.endsWith('@g.us');
-            const sender = m.key.participant || m.key.remoteJid;
+            const sender = m.key.fromMe
+                ? (sock.user?.id || m.key.participant || m.key.remoteJid)
+                : (m.key.participant || m.key.remoteJid);
             const text = (getMessageText(m.message) || '').trim();
-            const senderName = m.pushName || 'Usuário';
+            const senderName = m.key.fromMe
+                ? config.botName
+                : (m.pushName || 'Usuário');
 
             const isBotActive = !isGroup || isActiveGroup(from);
             
@@ -302,6 +306,17 @@ async function startBot() {
                                         fromJid: from
                                     });
                                 } catch (_) {}
+                            }
+                        } else {
+                            const type = mediaMsg.imageMessage ? 'image' :
+                                         mediaMsg.videoMessage ? 'video' :
+                                         mediaMsg.audioMessage ? 'audio' :
+                                         mediaMsg.stickerMessage ? 'sticker' : null;
+                            if (type) {
+                                mediaInfo = {
+                                    type,
+                                    url: null
+                                };
                             }
                         }
                     } catch (e) {
