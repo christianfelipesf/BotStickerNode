@@ -709,6 +709,21 @@ function getMediaMessage(message) {
     return null;
 }
 
+function getContextInfo(message) {
+    if (!message) return null;
+    let m = message;
+    for (let i = 0; i < 5; i++) {
+        if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+        else if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+        else if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+        else if (m.viewOnceMessageV2Extension) m = m.viewOnceMessageV2Extension.message;
+        else if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+        else break;
+    }
+    const type = Object.keys(m)[0];
+    return m[type]?.contextInfo || null;
+}
+
 async function addMetadata(buffer, pack, author) {
     try {
         const img = new Image();
@@ -1129,7 +1144,7 @@ module.exports = {
     readDB, writeDB,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     getGroupData, setGroupData, saveGroupMenuImage,
-    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
+    isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText, getVersion,

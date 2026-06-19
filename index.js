@@ -312,7 +312,7 @@ async function startBot() {
                 if (m.message?.ephemeralMessage) ephemeral = true;
 
                 // quoted (mensagem citada/resposta)
-                const qi = m.message?.extendedTextMessage?.contextInfo;
+                const qi = utilsRef.getContextInfo(m.message);
                 let quotedInfo = null;
                 if (qi?.quotedMessage) {
                     const qText = qi.quotedMessage.conversation
