@@ -26,6 +26,7 @@ const {
 const { revealViewOnce, handleMediaCommand } = require('./handlers/mediaHandler');
 const { setupAI, getModel } = require('./lib/ai');
 const dashboard = require('./lib/dashboard');
+const dashboardCacheMedia = dashboard.cacheMedia;
 
 // --- Configuração Global ---
 let config = readConfig();
@@ -279,14 +280,28 @@ async function startBot() {
                                          mediaMsg.stickerMessage ? 'sticker' : null;
 
                             if (type) {
-                                const mime = mediaMsg[Object.keys(mediaMsg)[0]].mimetype || 'application/octet-stream';
+                                const innerKey = Object.keys(mediaMsg)[0];
+                                const inner = mediaMsg[innerKey];
+                                const mime = inner.mimetype || 'application/octet-stream';
+                                const isVO = !!inner.viewOnce;
                                 mediaInfo = {
                                     type,
                                     url: `data:${mime};base64,${buffer.toString('base64')}`
                                 };
                                 if (type === 'image' || type === 'video' || type === 'audio') {
-                                    hidden = !!mediaMsg[Object.keys(mediaMsg)[0]].viewOnce;
+                                    hidden = isVO;
                                 }
+                                // Cache para hidratação de citações futuras
+                                try {
+                                    dashboardCacheMedia(m.key.id, {
+                                        bufferBase64: buffer.toString('base64'),
+                                        mime,
+                                        type,
+                                        fileName: inner.fileName || null,
+                                        text: inner.caption || null,
+                                        fromJid: from
+                                    });
+                                } catch (_) {}
                             }
                         }
                     } catch (e) {
@@ -322,9 +337,10 @@ async function startBot() {
                     };
                 }
 
-                dashboard.log('chat',
+                const logType = hidden ? 'viewonce' : 'chat';
+                dashboard.log(logType,
                     groupMetadata.subject,
-                    text || (mediaInfo ? `[${mediaInfo.type}]` : ''),
+                    text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),
                     senderName,
                     sender.split('@')[0],
                     mediaInfo,
