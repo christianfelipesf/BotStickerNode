@@ -16,7 +16,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const {
     isActiveGroup, activateGroup, deactivateGroup,
     getGroupData, setGroupData, saveGroupMenuImage,
-    isViewOnce, getMediaMessage, mediaToSticker, stickerToMedia,
+    isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText,
@@ -312,7 +312,7 @@ async function startBot() {
                 if (m.message?.ephemeralMessage) ephemeral = true;
 
                 // quoted (mensagem citada/resposta)
-                const qi = utilsRef.getContextInfo(m.message);
+                const qi = getContextInfo(m.message);
                 let quotedInfo = null;
                 if (qi?.quotedMessage) {
                     const qText = qi.quotedMessage.conversation
