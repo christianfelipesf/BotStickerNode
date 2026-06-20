@@ -29,9 +29,11 @@ const { setupAI, getModel } = require('./lib/ai');
 const dashboard = require('./lib/dashboard');
 const dashboardCacheMedia = dashboard.cacheMedia;
 const dashboardPushGroups = dashboard.pushGroupsSnapshot;
+const dashboardRememberGroup = dashboard.rememberGroupInfo;
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
 const safeDashboardCache = (...args) => { try { dashboardCacheMedia(...args); } catch (_) {} };
+const safeDashboardRememberGroup = (...args) => { try { dashboardRememberGroup(...args); } catch (_) {} };
 
 // --- Configuração Global ---
 let config = readConfig();
@@ -282,6 +284,7 @@ async function startBot() {
             // Log no Dashboard (Apenas Grupos Ativos E com dashboard opt-in)
             if (isGroup && isActiveGroup(from) && isBotActive && isDashboardEnabled(from)) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
                 const mediaMsg = getMediaMessage(m.message);
                 let mediaInfo = null;
                 let hidden = false;
@@ -420,6 +423,7 @@ async function startBot() {
             if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard'].includes(cmd.name)) return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
+            if (isGroup) safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
             safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
