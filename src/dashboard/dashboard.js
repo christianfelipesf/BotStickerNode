@@ -173,8 +173,8 @@ function init(config) {
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => res.type('javascript').sendFile(path.join(__dirname, 'dashboard-client.js')));
     app.get('/favicon.ico', (req, res) => {
-        console.log('[FAVICON] Requisição recebida em /favicon.ico');
-        const ico = path.join(__dirname, 'src', 'media', 'favcon.png');
+        console.log('[FAVICON] Requisição recebida em /favicon.ico', __dirname);
+        const ico = path.join(__dirname, '..', 'media', 'favcon.png');
         if (fs.existsSync(ico)) return res.sendFile(ico);
         res.status(204).end();
     });
