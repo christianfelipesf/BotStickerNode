@@ -4,3 +4,7 @@
 
 
 - arruma o dashboard, tinha pedido pra IA fazer um framework pra deixar o html menor e ele parou no meio, e tambem arruma o comando setprefix qualquer pessoa pode mudar o prefixo
+
+- Você pode usar o NES.css apenas pelos componentes pixelados (bordas, botões, inputs e janelas), mas mantendo um visual profissional parecido com o WhatsApp Web, sem personagens ou elementos de videogame.
+
+- no dashboard que que use o favcon chamado favcon.jpg e tambem quero pra mudar o nome da pagina Para Antigravity Bot ajeitar certos nomes que estao como botstickernode pelos codigos
