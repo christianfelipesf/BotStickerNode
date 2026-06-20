@@ -382,16 +382,7 @@ socket.on('groups', (list) => {
         if (!knownGroupJids.has(jid)) delete messagesByGroup[jid];
     }
     if (activeJid && activeJid !== ALL_CHAT_ID && !knownGroupJids.has(activeJid)) {
-        activeJid = null;
-        chatName.textContent = 'Selecione um grupo';
-        chatSub.textContent = '---';
-        chatAvatar.textContent = '?';
-        chat.innerHTML = '';
-        clearReply();
-        composerEl.classList.add('disabled');
-        messageInput.disabled = true;
-        sendBtn.disabled = true;
-        document.getElementById('attachBtn').disabled = true;
+        selectAllChat();
     }
     renderGroups();
 });
@@ -424,3 +415,6 @@ socket.on('msg', (data) => {
 });
 socket.on('connect', () => { statusEl.innerText = 'online'; statusEl.style.color = 'var(--wa-green)'; });
 socket.on('disconnect', () => { statusEl.innerText = 'reconectando…'; statusEl.style.color = '#ff8182'; });
+
+// Abrir direto no chat "Todos" ao carregar a página
+selectAllChat();

@@ -40,7 +40,6 @@ try {
     dashboard.setGroupsApi(() => {
         try {
             return listDashboardGroups()
-                .filter(jid => isActiveGroup(jid))
                 .map(jid => ({ jid }));
         } catch (_) { return []; }
     });

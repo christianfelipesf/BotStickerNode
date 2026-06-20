@@ -1,11 +1,11 @@
-const { isActiveGroup } = require('../database/utils');
+const { isDashboardEnabled } = require('../database/utils');
 const dashboard = require('../dashboard/dashboard');
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
 
 module.exports = {
     handleGroupParticipantsUpdate: async (sock, anu) => {
-        if (!isActiveGroup(anu.id)) return;
+        if (!isDashboardEnabled(anu.id)) return;
         try {
             const metadata = await sock.groupMetadata(anu.id);
             for (const num of anu.participants) {

@@ -108,8 +108,8 @@ module.exports = {
                 }
             }
 
-            // Log no Dashboard (Apenas Grupos Ativos E com dashboard opt-in)
-            if (isGroup && isActiveGroup(from) && isBotActive && isDashboardEnabled(from)) {
+            // Log no Dashboard (Apenas com dashboard opt-in - independente de o bot estar ativo ou não no grupo)
+            if (isGroup && isDashboardEnabled(from)) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
                 safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
                 const mediaMsg = getMediaMessage(m.message);

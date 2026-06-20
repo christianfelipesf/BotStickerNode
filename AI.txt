@@ -3,3 +3,7 @@
 -- POUCA LINHA
 
 -- FOCO EM MODULACAO
+
+arrume o !ativar do bot está mistura com o !dash ou dashboard, os dois nao tem nada haver ativar bot com ativar
+  dashboard ambos tem funcoes diferentes e no dashboard, quando uso !desativar desativa o dashboard tambem e para ser
+  completamente separadas e no dashboard da web faça quando abrir abrir direto no chat "todos"
