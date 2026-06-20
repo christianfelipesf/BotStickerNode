@@ -5,3 +5,7 @@ git reset --hard origin/main
 git clean -fd
 pm2 restart all
 pm2 logs
+
+git pull
+pm2 restart all
+pm2 logs

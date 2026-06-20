@@ -1054,11 +1054,9 @@ function clearMuted(jid) {
 
 function normalizeJid(jid) {
     if (!jid) return jid;
-    const [user, ...rest] = jid.split(':');
-    const after = rest.length > 0 ? rest.join(':') : jid;
-    const atIdx = after.indexOf('@');
-    const domain = atIdx >= 0 ? after.slice(atIdx + 1) : 's.whatsapp.net';
-    return `${user}@${domain}`;
+    const [rawUser, domain] = jid.split('@');
+    const [user] = rawUser.split(':');
+    return `${user}@${domain || 's.whatsapp.net'}`;
 }
 
 function getVersion() {

@@ -1,3 +1,6 @@
-
+- No dashboard eu quero, tambem mostrar caso usuario tenha mencionado alguma mensagem, mostrar mensagens ocultas, e tambem no dashboard caso eu marque uma mensagem da de mandar uma mensagem e responder, o bot ira responder a mensagem no grupo que a mensagem foi marcado e marcando a mensagem que foi enviada, ajuste para mobile
 
 - Quero todos os chat misturado de todos os grupos que esta ativo em um servidor rodando, com nome e mensagem, mas não quero pra salvar na memoria pois gastaria muita banda, ao reiniciar reseta as mesnagens
+
+
+- arruma o dashboard, tinha pedido pra IA fazer um framework pra deixar o html menor e ele parou no meio, e tambem arruma o comando setprefix qualquer pessoa pode mudar o prefixo
