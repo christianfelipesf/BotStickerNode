@@ -55,6 +55,12 @@ db.exec(`
         antilink  INTEGER NOT NULL DEFAULT 0,
         activity  TEXT NOT NULL DEFAULT '{}'
     );
+
+    CREATE TABLE IF NOT EXISTS dashboard_groups (
+        jid        TEXT PRIMARY KEY,
+        enabled    INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+    );
 `);
 
 // ============================================================
@@ -480,6 +486,49 @@ function listActiveGroups() {
         console.error('❌ Falha ao listar active_groups:', e.message);
         return [];
     }
+}
+
+// --- Dashboard Opt-in (per group) ---
+const _dgHas = db.prepare('SELECT 1 FROM dashboard_groups WHERE jid = ? AND enabled = 1');
+const _dgSet = db.prepare(`
+    INSERT INTO dashboard_groups (jid, enabled, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
+`);
+const _dgListAll = db.prepare('SELECT jid FROM dashboard_groups WHERE enabled = 1');
+const _dgListAllEver = db.prepare('SELECT jid, enabled FROM dashboard_groups');
+const _dgDelete = db.prepare('DELETE FROM dashboard_groups WHERE jid = ?');
+
+function isDashboardEnabled(jid) {
+    if (!jid) return false;
+    try { return !!_dgHas.get(jid); } catch (_) { return false; }
+}
+
+function setDashboardEnabled(jid, enabled) {
+    if (!jid) return false;
+    try {
+        _dgSet.run(jid, enabled ? 1 : 0, Date.now());
+        if (!enabled) {
+            try { _dgDelete.run(jid); } catch (_) {}
+        }
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao salvar dashboard_groups:', e.message);
+        return false;
+    }
+}
+
+function listDashboardGroups() {
+    try { return _dgListAll.all().map(r => r.jid); }
+    catch (e) { console.error('❌ Falha ao listar dashboard_groups:', e.message); return []; }
+}
+
+function getDashboardPreference(jid) {
+    if (!jid) return false;
+    try {
+        const row = _dgListAllEver.get(jid);
+        return !!(row && row.enabled);
+    } catch (_) { return false; }
 }
 
 // --- Group Settings (visão mesclada JSON + SQLite) ---
@@ -1149,5 +1198,6 @@ module.exports = {
     updateMemberActivity, getTopMember, getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
+    isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     flushNow
 };

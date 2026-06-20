@@ -20,6 +20,7 @@ const {
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText,
+    isDashboardEnabled, listDashboardGroups, setDashboardEnabled,
     flushNow
 } = require('./utils');
 
@@ -27,12 +28,25 @@ const { revealViewOnce, handleMediaCommand } = require('./handlers/mediaHandler'
 const { setupAI, getModel } = require('./lib/ai');
 const dashboard = require('./lib/dashboard');
 const dashboardCacheMedia = dashboard.cacheMedia;
+const dashboardPushGroups = dashboard.pushGroupsSnapshot;
+
+const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
+const safeDashboardCache = (...args) => { try { dashboardCacheMedia(...args); } catch (_) {} };
 
 // --- Configuração Global ---
 let config = readConfig();
 
-// Iniciar Dashboard (Modular)
-dashboard.init(config);
+// Iniciar Dashboard (Modular) - totalmente isolado: qualquer erro NÃO afeta o bot
+try {
+    dashboard.init(config);
+    dashboard.setGroupsApi(() => {
+        try {
+            return listDashboardGroups().map(jid => ({ jid, subject: jid.split('@')[0] }));
+        } catch (_) { return []; }
+    });
+} catch (e) {
+    console.error('⚠️ [dashboard] falha ao iniciar (bot segue normal):', e.message);
+}
 const dashboardAttachSock = dashboard.attachSock;
 
 let model = setupAI(config);
@@ -53,13 +67,13 @@ process.on('uncaughtException', (err) => {
     if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
     console.error('💥 [ERRO FATAL]:', err);
     try { flushNow(); } catch (_) {}
-    dashboard.log('error', 'SISTEMA', `ERRO FATAL: ${err.message}`);
+    safeDashboardLog('error', 'SISTEMA', `ERRO FATAL: ${err.message}`);
 });
 process.on('unhandledRejection', (reason) => {
     if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
     console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
     try { flushNow(); } catch (_) {}
-    dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
+    safeDashboardLog('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`);
 });
 
 // Silencia logs feios do libsignal/Baileys (ex.: "Closing session: SessionEntry {...}", "Failed to decrypt...", "Bad MAC", etc.)
@@ -153,6 +167,7 @@ async function startBot() {
     
     const sock = makeWASocket({ version, logger: pino({ level: 'fatal' }), printQRInTerminal: false, auth: state, browser: [config.botName, 'Chrome', '120.0.0.0'] });
     try { dashboardAttachSock(sock); } catch (_) {}
+    try { dashboardPushGroups(); } catch (_) {}
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', (u) => {
         if (u.qr) { console.log('\n⚡ --- ESCANEIE O QR CODE --- ⚡'); qrcode.generate(u.qr, { small: true }); }
@@ -163,7 +178,7 @@ async function startBot() {
         } else if (u.connection === 'open') {
             const version = require('./utils').getVersion();
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
-            dashboard.log('action', 'SISTEMA', `Bot Conectado (v${version})`);
+            safeDashboardLog('action', 'SISTEMA', `Bot Conectado (v${version})`);
         }
     });
 
@@ -179,7 +194,7 @@ async function startBot() {
                 else if (anu.action === 'promote') text = `Promovido a admin`;
                 else if (anu.action === 'demote') text = `Rebaixado de admin`;
                 
-                if (text) dashboard.log('event', metadata.subject, text, null, phone, null, { toJid: anu.id, senderJid: num, fromMe: false });
+                if (text) safeDashboardLog('event', metadata.subject, text, null, phone, null, { toJid: anu.id, senderJid: num, fromMe: false });
             }
         } catch (e) {
             console.error('Erro no group-participants.update:', e);
@@ -262,8 +277,8 @@ async function startBot() {
                 }
             }
 
-            // Log no Dashboard (Apenas Grupos Ativos)
-            if (isGroup && isActiveGroup(from) && isBotActive) {
+            // Log no Dashboard (Apenas Grupos Ativos E com dashboard opt-in)
+            if (isGroup && isActiveGroup(from) && isBotActive && isDashboardEnabled(from)) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
                 const mediaMsg = getMediaMessage(m.message);
                 let mediaInfo = null;
@@ -297,7 +312,7 @@ async function startBot() {
                                 }
                                 // Cache para hidratação de citações futuras
                                 try {
-                                    dashboardCacheMedia(m.key.id, {
+                                    safeDashboardCache(m.key.id, {
                                         bufferBase64: buffer.toString('base64'),
                                         mime,
                                         type,
@@ -353,7 +368,7 @@ async function startBot() {
                 }
 
                 const logType = hidden ? 'viewonce' : 'chat';
-                dashboard.log(logType,
+                safeDashboardLog(logType,
                     groupMetadata.subject,
                     text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),
                     senderName,
@@ -400,10 +415,10 @@ async function startBot() {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            if (isGroup && !isActiveGroup(from) && cmd.name !== 'ativar' && cmd.name !== 'status') return;
+            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard'].includes(cmd.name)) return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
-            dashboard.log('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+            safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();

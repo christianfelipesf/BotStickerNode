@@ -1,58 +1,70 @@
 <!DOCTYPE html>
 <html lang="pt-br">
-<!-- ATENÇÃO PROGRAMADORES: Por favor, mantenha este dashboard neste formato leve, simples e modular. Evite inchar o HTML; use sempre os arquivos externos dashboard.css e dashboard-client.js para manter as coisas limpas. -->
 <head>
-    <title>{{BOT_NAME}} Monitor</title>
+    <title>{{BOT_NAME}}</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#0b141a">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="icon" type="image/jpeg" href="/favicon.ico">
     <link rel="stylesheet" href="/dashboard.css">
 </head>
-<body class="dark">
-    <div class="wallpaper"></div>
-    <div id="header">
-        <img src="https://ui-avatars.com/api/?name={{BOT_NAME_ENCODED}}&background=128c7e&color=fff" id="bot-logo">
-        <div id="header-info">
-            <div>{{BOT_NAME}}</div>
-            <div id="status">Conectando...</div>
-        </div>
-        <div class="theme-selector">
-            <button id="notif-btn" class="theme-btn" style="background: var(--wa-green-light); color: white;" onclick="toggleSound()">SOM</button>
-            <button id="push-btn" class="theme-btn" style="background: #3498db; color: white;" onclick="togglePush()">PUSH</button>
-            <button class="theme-btn btn-light" onclick="setTheme('light')">☀</button>
-            <button class="theme-btn btn-dark" onclick="setTheme('dark')">🌙</button>
-            <button class="theme-btn btn-oled" onclick="setTheme('oled')">⬛</button>
-        </div>
-    </div>
-    <div id="chat"></div>
-
-    <div id="composer">
-        <div class="reply-bar" id="replyBar">
-            <div class="rb-info">
-                <div class="rb-name" id="replyName"></div>
-                <div class="rb-text" id="replyText"></div>
+<body>
+    <aside id="sidebar">
+        <header class="sb-header">
+            <img src="https://ui-avatars.com/api/?name={{BOT_NAME_ENCODED}}&background=128c7e&color=fff&size=64" alt="">
+            <div class="sb-title">{{BOT_NAME}}</div>
+            <div class="sb-status" id="status">conectando…</div>
+        </header>
+        <div class="sb-actions">
+            <input id="groupSearch" type="search" placeholder="🔎 Buscar grupo" autocomplete="off">
+            <div class="sb-buttons">
+                <button id="push-btn" class="sb-btn" onclick="togglePush()">PUSH</button>
+                <button id="notif-btn" class="sb-btn" onclick="toggleSound()">SOM</button>
+                <button class="sb-btn" onclick="setTheme('light')" title="Claro">☀</button>
+                <button class="sb-btn" onclick="setTheme('dark')" title="Escuro">🌙</button>
+                <button class="sb-btn" onclick="setTheme('oled')" title="OLED">⬛</button>
             </div>
-            <button class="rb-close" onclick="clearReply()">✕</button>
         </div>
-        <div class="attachments" id="attachments"></div>
-        <div class="input-row">
-            <button class="icon-btn" id="attachBtn" title="Anexar mídia">＋</button>
-            <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,audio/*,application/*">
-            <div class="input-wrap">
-                <textarea id="messageInput" placeholder="Mensagem" rows="1"></textarea>
+        <ul id="groupList" class="group-list">
+            <li class="empty">Nenhum grupo com dashboard ativa ainda.<br><small>Use <code>!dashboard</code> em um grupo para ativá-lo.</small></li>
+        </ul>
+    </aside>
+    <main id="main">
+        <header id="chatHeader">
+            <div class="ch-left">
+                <button class="ch-back" id="backBtn" title="Voltar">‹</button>
+                <div class="ch-avatar" id="chatAvatar">?</div>
+                <div class="ch-info">
+                    <div class="ch-name" id="chatName">Selecione um grupo</div>
+                    <div class="ch-sub" id="chatSub">—</div>
+                </div>
             </div>
-            <button class="send-btn" id="sendBtn" onclick="sendCurrent()">➤</button>
+        </header>
+        <div id="chat"></div>
+        <div id="composer">
+            <div class="reply-bar" id="replyBar">
+                <div class="rb-info">
+                    <div class="rb-name" id="replyName"></div>
+                    <div class="rb-text" id="replyText"></div>
+                </div>
+                <button class="rb-close" onclick="clearReply()">✕</button>
+            </div>
+            <div class="attachments" id="attachments"></div>
+            <div class="input-row">
+                <button class="icon-btn" id="attachBtn" title="Anexar mídia">＋</button>
+                <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,audio/*,application/*">
+                <div class="input-wrap">
+                    <textarea id="messageInput" placeholder="Mensagem" rows="1" disabled></textarea>
+                </div>
+                <button class="send-btn" id="sendBtn" onclick="sendCurrent()" disabled>➤</button>
+            </div>
         </div>
-    </div>
-
+    </main>
     <div class="toast" id="toast"></div>
-
     <audio id="sound-chat" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" preload="auto"></audio>
     <audio id="sound-action" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
     <audio id="sound-error" src="https://assets.mixkit.co/active_storage/sfx/2955/2955-preview.mp3" preload="auto"></audio>
-
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/dashboard.js"></script>
+    <script src="/dashboard-client.js"></script>
 </body>
 </html>
