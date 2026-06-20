@@ -41,7 +41,9 @@ try {
     dashboard.init(config);
     dashboard.setGroupsApi(() => {
         try {
-            return listDashboardGroups().map(jid => ({ jid, subject: jid.split('@')[0] }));
+            return listDashboardGroups()
+                .filter(jid => isActiveGroup(jid))
+                .map(jid => ({ jid }));
         } catch (_) { return []; }
     });
 } catch (e) {

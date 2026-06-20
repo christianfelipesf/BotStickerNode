@@ -88,6 +88,7 @@ body {
 .group-list li:hover { background: var(--hover); }
 .group-list li.active { background: var(--hover); border-left: 3px solid var(--wa-green); padding-left: 9px; }
 .group-list .gl-avatar { width: 42px; height: 42px; border-radius: 50%; background: var(--wa-green-dark); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+img.gl-avatar { object-fit: cover; border: 1px solid var(--border); }
 .group-list .gl-info { flex: 1; min-width: 0; }
 .group-list .gl-name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-list .gl-sub { font-size: 11px; color: var(--text-sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
@@ -111,6 +112,7 @@ body.oled #main::before { opacity: 0.02; }
 .ch-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 .ch-back { display: none; background: transparent; border: none; color: var(--text); font-size: 26px; padding: 0 6px; cursor: pointer; margin: 0; height: auto; width: auto; line-height: 1; }
 .ch-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--wa-green-dark); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.ch-avatar-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: flex; align-items: center; justify-content: center; background: var(--wa-green-dark); color: #fff; }
 .ch-info { min-width: 0; flex: 1; }
 .ch-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ch-sub { font-size: 11px; color: var(--text-sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
