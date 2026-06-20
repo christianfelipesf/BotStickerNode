@@ -55,6 +55,57 @@ module.exports = {
                 ? config.botName
                 : (m.pushName || 'Usuário');
 
+            // Tratamento especial para Reações (para evitar bolhas vazias no dashboard)
+            const reactionMsg = m.message?.reactionMessage || m.message?.ephemeralMessage?.message?.reactionMessage;
+            if (reactionMsg) {
+                if (isGroup && isDashboardEnabled(from)) {
+                    const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                    safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
+                    const reactionText = reactionMsg.text ? `[Reagiu com ${reactionMsg.text}]` : `[Reação removida]`;
+                    
+                    safeDashboardLog('chat',
+                        groupMetadata.subject,
+                        reactionText,
+                        senderName,
+                        sender.split('@')[0],
+                        null,
+                        {
+                            toJid: from,
+                            messageId: m.key.id,
+                            senderJid: sender,
+                            fromMe: !!m.key.fromMe,
+                            ephemeral: !!m.message?.ephemeralMessage
+                        }
+                    );
+                }
+                return;
+            }
+
+            // Tratamento especial para Protocolos (como mensagens apagadas)
+            const protocolMsg = m.message?.protocolMessage || m.message?.ephemeralMessage?.message?.protocolMessage;
+            if (protocolMsg) {
+                if (protocolMsg.type === 3 && isGroup && isDashboardEnabled(from)) {
+                    const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                    safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
+                    
+                    safeDashboardLog('chat',
+                        groupMetadata.subject,
+                        '📑 [Apagou uma mensagem]',
+                        senderName,
+                        sender.split('@')[0],
+                        null,
+                        {
+                            toJid: from,
+                            messageId: m.key.id,
+                            senderJid: sender,
+                            fromMe: !!m.key.fromMe,
+                            ephemeral: !!m.message?.ephemeralMessage
+                        }
+                    );
+                }
+                return;
+            }
+
             const isBotActive = !isGroup || isActiveGroup(from);
             
             // --- Enforce Admin Policies (Mute & Anti-Link) ---
