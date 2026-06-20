@@ -23,7 +23,7 @@ module.exports = {
 
         const zip = new AdmZip();
         const tempDir = path.join(process.cwd(), 'temp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
         const zipName = `dump_${Date.now()}.zip`;
         const zipPath = path.join(tempDir, zipName);

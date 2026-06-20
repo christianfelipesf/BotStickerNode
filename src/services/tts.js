@@ -34,7 +34,7 @@ async function synthesize(text, modelPath = defaultModel) {
     }
 
     const tempDir = path.join(process.cwd(), 'temp');
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
     
     const wavPath = path.join(tempDir, `tts_${Date.now()}.wav`);
     const opusPath = path.join(tempDir, `tts_${Date.now()}.opus`);

@@ -1,4 +1,4 @@
-const dashboard = require('../lib/dashboard');
+const dashboard = require('../dashboard/dashboard');
 
 module.exports = {
     name: 'dashboard',

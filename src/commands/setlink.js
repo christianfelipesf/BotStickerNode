@@ -1,4 +1,4 @@
-const { getGroupLink, setGroupLink, getAdmins, isUserAdmin } = require('../utils');
+const { getGroupLink, setGroupLink, getAdmins, isUserAdmin } = require('../database/utils');
 
 module.exports = {
     name: 'setlink',

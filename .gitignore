@@ -139,3 +139,9 @@ temp/
 .yarn/install-state.gz
 .pnp.*
 .aider*
+
+# Databases
+bot.db*
+database.json
+database.json.bak
+

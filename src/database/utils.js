@@ -17,12 +17,12 @@ const Database = require('better-sqlite3');
 // Toda escrita no JSON usa atomic-rename + .bak rotativo.
 // ============================================================
 
-const dbPath = path.join(__dirname, 'bot.db');
-const legacyDbPath = path.join(__dirname, 'database.json');
-const legacyMsgsPath = path.join(__dirname, 'messages.json');
+const dbPath = path.join(__dirname, '../../bot.db');
+const legacyDbPath = path.join(__dirname, '../../database.json');
+const legacyMsgsPath = path.join(__dirname, '../../messages.json');
 const tempDir = path.join(process.cwd(), 'temp');
 
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 // ============================================================
 // SQLite (alto fluxo / estado mutável por mensagem)
@@ -593,7 +593,7 @@ async function saveGroupMenuImage(jid, buffer) {
     const hash = crypto.createHash('md5').update(jid).digest('hex');
     const fileName = `menu_${hash}.png`;
     const uploadsDir = path.join(process.cwd(), 'uploads');
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, fileName);
 
     const image = await Jimp.read(buffer);

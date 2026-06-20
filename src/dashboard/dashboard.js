@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { Server } = require('socket.io');
-const { mediaToSticker } = require('../utils');
+const { mediaToSticker } = require('../database/utils');
 
 let ioServer = null;
 let sockRef = null;
@@ -173,7 +173,7 @@ function init(config) {
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => res.type('javascript').sendFile(path.join(__dirname, 'dashboard-client.js')));
     app.get('/favicon.ico', (req, res) => {
-        const ico = path.join(__dirname, '..', 'favcon.jpg');
+        const ico = path.join(__dirname, '..', '..', 'favcon.jpg');
         if (fs.existsSync(ico)) return res.sendFile(ico);
         res.status(204).end();
     });

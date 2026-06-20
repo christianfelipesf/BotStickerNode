@@ -1,4 +1,4 @@
-const { synthesize } = require('../lib/tts');
+const { synthesize } = require('../services/tts');
 const fs = require('fs');
 
 module.exports = {

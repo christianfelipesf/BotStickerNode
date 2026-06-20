@@ -1,5 +1,5 @@
-const { getGroupLink, getAdmins, normalizeJid } = require('../utils');
-const { info, ok, err, head, warn } = require('../lib/divulgarLog');
+const { getGroupLink, getAdmins, normalizeJid } = require('../database/utils');
+const { info, ok, err, head, warn } = require('../services/divulgarLog');
 
 const DELAY_MIN = 45000;
 const DELAY_MAX = 90000;
@@ -182,7 +182,7 @@ module.exports = {
     description: 'Envia o link do grupo (config.linkgrupo) por DM para os membros, de forma orgânica e devagar',
     async execute(sock, m, ctx) {
         const { from, isGroup, sender, lastBotResponse, GLOBAL_COOLDOWN, utils } = ctx;
-        const react = (utils && utils.react) ? utils.react : require('../utils').react;
+        const react = (utils && utils.react) ? utils.react : require('../database/utils').react;
 
         if (!isGroup) {
             return sock.sendMessage(from, { text: '❌ Use este comando dentro do grupo que você quer divulgar.' }, { quoted: m });

@@ -31,7 +31,7 @@ module.exports = {
             const tempDir = path.join(process.cwd(), 'temp');
             const outPath = path.join(tempDir, tempName);
             
-            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
             console.log(`🎵 [PLAY] Baixando: ${video.title}`);
             
