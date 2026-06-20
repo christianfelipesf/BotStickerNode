@@ -431,6 +431,25 @@ async function pushGroupsSnapshot(options = {}) {
     }
 }
 
+function handleReaction(targetId, emoji, senderJid, senderName) {
+    try {
+        const msg = dashboardLogs.find(item => item.messageId === targetId);
+        if (msg) {
+            if (!msg.reactions) msg.reactions = {};
+            if (emoji) {
+                msg.reactions[senderJid] = emoji;
+            } else {
+                delete msg.reactions[senderJid];
+            }
+        }
+        if (ioServer) {
+            ioServer.emit('reaction', { targetId, emoji, senderJid, senderName });
+        }
+    } catch (e) {
+        console.error('[dashboard] handleReaction:', e.message);
+    }
+}
+
 let htmlTemplate = null;
 function getHtml(botName) {
     if (!htmlTemplate) {
@@ -448,5 +467,6 @@ function getHtml(botName) {
 
 module.exports = {
     init, log, attachSock, cacheMedia,
-    setGroupsApi, pushGroupsSnapshot, rememberGroupInfo
+    setGroupsApi, pushGroupsSnapshot, rememberGroupInfo,
+    handleReaction
 };

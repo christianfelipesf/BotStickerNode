@@ -55,28 +55,14 @@ module.exports = {
                 ? config.botName
                 : (m.pushName || 'Usuário');
 
-            // Tratamento especial para Reações (para evitar bolhas vazias no dashboard)
+            // Tratamento especial para Reações (para evitar bolhas vazias e poluição no chat do dashboard)
             const reactionMsg = m.message?.reactionMessage || m.message?.ephemeralMessage?.message?.reactionMessage;
             if (reactionMsg) {
                 if (isGroup && isDashboardEnabled(from)) {
-                    const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
-                    safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
-                    const reactionText = reactionMsg.text ? `[Reagiu com ${reactionMsg.text}]` : `[Reação removida]`;
-                    
-                    safeDashboardLog('chat',
-                        groupMetadata.subject,
-                        reactionText,
-                        senderName,
-                        sender.split('@')[0],
-                        null,
-                        {
-                            toJid: from,
-                            messageId: m.key.id,
-                            senderJid: sender,
-                            fromMe: !!m.key.fromMe,
-                            ephemeral: !!m.message?.ephemeralMessage
-                        }
-                    );
+                    const targetId = reactionMsg.key.id;
+                    const emoji = reactionMsg.text || '';
+                    const { handleReaction } = require('../dashboard/dashboard');
+                    handleReaction(targetId, emoji, sender, senderName);
                 }
                 return;
             }

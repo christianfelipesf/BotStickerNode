@@ -243,6 +243,13 @@ function allMessages() {
         .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
+function renderReactions(reactions) {
+    if (!reactions || Object.keys(reactions).length === 0) return '';
+    const emojis = Array.from(new Set(Object.values(reactions)));
+    const count = Object.keys(reactions).length;
+    return `<div class="msg-reactions">${emojis.join('')}${count > 1 ? ` <span class="reactions-count">${count}</span>` : ''}</div>`;
+}
+
 function appendMessage(data) {
     const dateStr = new Date(data.timestamp || Date.now()).toLocaleDateString();
     if (dateStr !== lastDate) {
@@ -257,6 +264,9 @@ function appendMessage(data) {
     const tag = data.type === 'error' ? '<span class="type-tag">ERRO</span>' :
                 data.type === 'action' ? '<span class="type-tag">AÇÃO</span>' :
                 data.type === 'viewonce' ? '<span class="type-tag" style="background:rgba(255,165,0,0.25);color:#ff9f43;">VIEWONCE</span>' : '';
+    
+    const reactionsHtml = renderReactions(data.reactions);
+    
     chat.insertAdjacentHTML('beforeend', `
         <div class="msg-wrapper">
             <div class="${finalClass} ${data.hidden ? 'hidden' : ''}"
@@ -278,6 +288,7 @@ function appendMessage(data) {
                 ${mediaHtml(data.media)}
                 ${data.text ? `<div class="text">${escapeHtml(data.text)}</div>` : ''}
                 <div class="time-wrapper"><div class="time">${escapeHtml(data.time || new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}</div></div>
+                ${reactionsHtml}
             </div>
         </div>
     `);
@@ -412,6 +423,42 @@ socket.on('msg', (data) => {
         scrollToBottom();
     }
     renderGroups();
+});
+socket.on('reaction', ({ targetId, emoji, senderJid, senderName }) => {
+    // 1. Atualiza na estrutura de dados local
+    for (const groupJid of Object.keys(messagesByGroup)) {
+        const msg = messagesByGroup[groupJid].find(m => m.messageId === targetId);
+        if (msg) {
+            if (!msg.reactions) msg.reactions = {};
+            if (emoji) msg.reactions[senderJid] = emoji;
+            else delete msg.reactions[senderJid];
+            break;
+        }
+    }
+
+    // 2. Atualiza em tempo real na interface se o elemento do balão existir
+    const msgEl = document.querySelector(`[data-message-id="${targetId}"]`);
+    if (msgEl) {
+        let reactionsEl = msgEl.querySelector('.msg-reactions');
+        let reactions = null;
+        for (const groupJid of Object.keys(messagesByGroup)) {
+            const msg = messagesByGroup[groupJid].find(m => m.messageId === targetId);
+            if (msg) {
+                reactions = msg.reactions;
+                break;
+            }
+        }
+        if (reactions && Object.keys(reactions).length > 0) {
+            const html = renderReactions(reactions);
+            if (reactionsEl) {
+                reactionsEl.outerHTML = html;
+            } else {
+                msgEl.insertAdjacentHTML('beforeend', html);
+            }
+        } else if (reactionsEl) {
+            reactionsEl.remove();
+        }
+    }
 });
 socket.on('connect', () => { statusEl.innerText = 'online'; statusEl.style.color = 'var(--wa-green)'; });
 socket.on('disconnect', () => { statusEl.innerText = 'reconectando…'; statusEl.style.color = '#ff8182'; });
