@@ -473,13 +473,20 @@ async function pollOnce() {
     }
 }
 
+function parseIntervalMs(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return 5 * 60 * 1000;
+    if (n < 1000) return n * 1000;
+    return n;
+}
+
 function start() {
     stop();
     isShuttingDown = false;
     sendQueue.length = 0;
     isProcessing = false;
     const cfg = readConfig();
-    const ms = Math.max(60 * 1000, Number(cfg.newsPollIntervalMs) || 5 * 60 * 1000);
+    const ms = Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMs));
     pollTimer = setInterval(() => {
         pollOnce().catch(err => console.error('📰 [news] poll:', err?.message || err));
     }, ms);

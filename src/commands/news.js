@@ -1,6 +1,13 @@
+function parseIntervalMs(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return 5 * 60 * 1000;
+    if (n < 1000) return n * 1000;
+    return n;
+}
+
 function formatInterval(ms) {
-    const total = Math.max(1000, Number(ms) || 300000);
-    if (total < 60 * 1000) return `${Math.round(total / 1000)}s`;
+    const total = parseIntervalMs(ms);
+    if (total < 60 * 1000) return `${Math.max(1, Math.round(total / 1000))}s`;
     return `${Math.round(total / 60000)} min`;
 }
 
