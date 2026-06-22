@@ -61,6 +61,31 @@ db.exec(`
         enabled    INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS dashboard_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        type        TEXT NOT NULL,
+        grp         TEXT,
+        text        TEXT,
+        name        TEXT,
+        phone       TEXT,
+        media_json  TEXT,
+        to_jid      TEXT,
+        message_id  TEXT,
+        sender_jid  TEXT,
+        from_me     INTEGER NOT NULL DEFAULT 0,
+        hidden      INTEGER NOT NULL DEFAULT 0,
+        ephemeral   INTEGER NOT NULL DEFAULT 0,
+        quoted_json TEXT,
+        reactions   TEXT,
+        time_label  TEXT,
+        timestamp   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dashboard_logs_ts ON dashboard_logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_dashboard_logs_to_jid ON dashboard_logs(to_jid, timestamp);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_logs_msgid
+        ON dashboard_logs(to_jid, message_id, type)
+        WHERE message_id IS NOT NULL AND message_id != '';
 `);
 
 // ============================================================
@@ -80,6 +105,8 @@ const DEFAULT_CONFIG = {
     geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
     dashboardEnabled: true,
     dashboardPort: 3000,
+    dashboardMaxLogs: 5000,
+    dashboardHistoryHours: 72,
     adminCanControl: false
 };
 
@@ -530,6 +557,156 @@ function getDashboardPreference(jid) {
         const row = _dgListAllEver.get(jid);
         return !!(row && row.enabled);
     } catch (_) { return false; }
+}
+
+// ============================================================
+// Dashboard Logs (persistente em SQLite)
+// Esquema:
+//   dashboard_logs(id, type, grp, text, name, phone, media_json,
+//                  to_jid, message_id, sender_jid, from_me, hidden,
+//                  ephemeral, quoted_json, reactions, time_label, timestamp)
+// - message_id único por (to_jid, message_id, type) para evitar dup.
+// - trimDashboardLogs(maxRows) faz trim por id.
+// ============================================================
+const _dlInsert = db.prepare(`
+    INSERT OR IGNORE INTO dashboard_logs
+        (type, grp, text, name, phone, media_json, to_jid, message_id,
+         sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+         time_label, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const _dlSelectAll = db.prepare(`
+    SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+           sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+           time_label, timestamp
+    FROM dashboard_logs
+    ORDER BY timestamp ASC
+`);
+const _dlSelectRecent = db.prepare(`
+    SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+           sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+           time_label, timestamp
+    FROM dashboard_logs
+    WHERE timestamp >= ?
+    ORDER BY timestamp ASC
+`);
+const _dlTrimByAge = db.prepare(`DELETE FROM dashboard_logs WHERE timestamp < ?`);
+const _dlTrimByCount = db.prepare(`
+    DELETE FROM dashboard_logs WHERE id NOT IN (
+        SELECT id FROM dashboard_logs ORDER BY timestamp DESC LIMIT ?
+    )
+`);
+const _dlCount = db.prepare(`SELECT COUNT(*) as c FROM dashboard_logs`);
+const _dlUpdateReactions = db.prepare(`UPDATE dashboard_logs SET reactions = ? WHERE to_jid = ? AND message_id = ? AND type = ?`);
+const _dlClear = db.prepare(`DELETE FROM dashboard_logs`);
+
+function insertDashboardLog(data) {
+    if (!data) return false;
+    try {
+        const r = _dlInsert.run(
+            String(data.type || 'chat'),
+            data.group || data.grp || null,
+            data.text == null ? null : String(data.text),
+            data.name || null,
+            data.phone || null,
+            data.media ? JSON.stringify(data.media) : null,
+            data.toJid || data.to_jid || null,
+            data.messageId || data.message_id || null,
+            data.senderJid || data.sender_jid || null,
+            data.fromMe ? 1 : 0,
+            data.hidden ? 1 : 0,
+            data.ephemeral ? 1 : 0,
+            data.quoted ? JSON.stringify(data.quoted) : null,
+            data.reactions ? JSON.stringify(data.reactions) : null,
+            data.time || null,
+            Number(data.timestamp) || Date.now()
+        );
+        return r.changes > 0;
+    } catch (e) {
+        console.error('❌ [dashboard_logs] insert:', e.message);
+        return false;
+    }
+}
+
+function _rowToLog(row) {
+    if (!row) return null;
+    let media = null, quoted = null, reactions = null;
+    try { media = row.media_json ? JSON.parse(row.media_json) : null; } catch (_) { media = null; }
+    try { quoted = row.quoted_json ? JSON.parse(row.quoted_json) : null; } catch (_) { quoted = null; }
+    try { reactions = row.reactions ? JSON.parse(row.reactions) : null; } catch (_) { reactions = null; }
+    return {
+        type: row.type,
+        group: row.grp,
+        text: row.text,
+        name: row.name,
+        phone: row.phone,
+        media,
+        toJid: row.to_jid,
+        messageId: row.message_id,
+        senderJid: row.sender_jid,
+        fromMe: !!row.from_me,
+        hidden: !!row.hidden,
+        ephemeral: !!row.ephemeral,
+        quoted,
+        reactions: reactions || undefined,
+        time: row.time_label,
+        timestamp: row.timestamp
+    };
+}
+
+function loadDashboardHistory({ since = 0, limit = 500 } = {}) {
+    try {
+        const rows = since > 0
+            ? _dlSelectRecent.all(since)
+            : _dlSelectAll.all();
+        const out = [];
+        for (const r of rows) out.push(_rowToLog(r));
+        if (limit > 0 && out.length > limit) return out.slice(out.length - limit);
+        return out;
+    } catch (e) {
+        console.error('❌ [dashboard_logs] load:', e.message);
+        return [];
+    }
+}
+
+function trimDashboardLogs({ maxAgeMs = 0, maxRows = 5000 } = {}) {
+    try {
+        if (maxAgeMs > 0) {
+            const cutoff = Date.now() - maxAgeMs;
+            _dlTrimByAge.run(cutoff);
+        }
+        if (maxRows > 0) {
+            _dlTrimByCount.run(maxRows);
+        }
+    } catch (e) {
+        console.error('❌ [dashboard_logs] trim:', e.message);
+    }
+}
+
+function countDashboardLogs() {
+    try { return _dlCount.get().c; } catch (_) { return 0; }
+}
+
+function updateDashboardLogReactions(toJid, messageId, type, reactions) {
+    if (!toJid || !messageId) return false;
+    try {
+        const r = _dlUpdateReactions.run(JSON.stringify(reactions || {}), toJid, messageId, type || 'chat');
+        return r.changes > 0;
+    } catch (e) {
+        console.error('❌ [dashboard_logs] reactions:', e.message);
+        return false;
+    }
+}
+
+function clearDashboardLogs() {
+    try {
+        const before = _dlCount.get().c;
+        _dlClear.run();
+        return before;
+    } catch (e) {
+        console.error('❌ [dashboard_logs] clear:', e.message);
+        return 0;
+    }
 }
 
 // --- Group Settings (visão mesclada JSON + SQLite) ---
@@ -1210,5 +1387,7 @@ module.exports = {
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     canAdminControl,
+    insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
+    updateDashboardLogReactions, clearDashboardLogs,
     flushNow
 };

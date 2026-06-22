@@ -3,7 +3,15 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { Server } = require('socket.io');
-const { mediaToSticker } = require('../database/utils');
+const {
+    mediaToSticker,
+    insertDashboardLog,
+    loadDashboardHistory,
+    trimDashboardLogs,
+    countDashboardLogs,
+    updateDashboardLogReactions,
+    clearDashboardLogs
+} = require('../database/utils');
 
 let ioServer = null;
 let sockRef = null;
@@ -13,6 +21,7 @@ const MAX_LOGS = 500;
 const groupInfoCache = new Map();
 const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
+let logsTrimTimer = null;
 
 const mediaCache = new Map();
 const MAX_CACHE = 60;
@@ -186,7 +195,10 @@ function init(config) {
 
     ioServer = new Server(server);
     ioServer.on('connection', async (socket) => {
-        try { socket.emit('history', dashboardLogs.slice()); } catch (_) {}
+        try {
+            const history = loadDashboardHistory({ limit: 1000 });
+            socket.emit('history', history);
+        } catch (_) {}
         try { socket.emit('groups', await getGroupsSnapshot()); } catch (_) {}
     });
 
@@ -196,6 +208,24 @@ function init(config) {
             pushGroupsSnapshot({ force: true }).catch(() => {});
         }, 60000);
         if (groupsRefreshTimer.unref) groupsRefreshTimer.unref();
+
+        const maxRows = Number(config?.dashboardMaxLogs) || 5000;
+        const maxAgeMs = (Number(config?.dashboardHistoryHours) || 72) * 3600 * 1000;
+        logsTrimTimer = setInterval(() => {
+            try { trimDashboardLogs({ maxAgeMs, maxRows }); } catch (_) {}
+        }, 10 * 60 * 1000);
+        if (logsTrimTimer.unref) logsTrimTimer.unref();
+
+        try {
+            const before = countDashboardLogs();
+            if (before > maxRows || (maxAgeMs > 0 && before > 0)) {
+                trimDashboardLogs({ maxAgeMs, maxRows });
+                const after = countDashboardLogs();
+                if (after !== before) {
+                    console.log(`🧹 [dashboard] logs: ${before} → ${after} (maxRows=${maxRows}, maxAgeHours=${maxAgeMs/3600000})`);
+                }
+            }
+        } catch (_) {}
     } catch (e) {
         console.error('[dashboard] falha ao iniciar HTTP:', e.message);
     }
@@ -398,7 +428,8 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
             hidden: !!extra.hidden,
             ephemeral: !!extra.ephemeral,
             senderJid: extra.senderJid || null,
-            fromMe: !!extra.fromMe
+            fromMe: !!extra.fromMe,
+            reactions: extra.reactions || undefined
         };
 
         if (logData.fromMe && logData.messageId && (type === 'chat' || type === 'viewonce')) {
@@ -410,6 +441,8 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
             );
             if (existing >= 0) return;
         }
+
+        try { insertDashboardLog(logData); } catch (_) {}
 
         dashboardLogs.push(logData);
         if (dashboardLogs.length > MAX_LOGS) dashboardLogs.shift();
@@ -434,6 +467,8 @@ async function pushGroupsSnapshot(options = {}) {
 function handleReaction(targetId, emoji, senderJid, senderName) {
     try {
         const msg = dashboardLogs.find(item => item.messageId === targetId);
+        let targetJid = null;
+        let targetType = null;
         if (msg) {
             if (!msg.reactions) msg.reactions = {};
             if (emoji) {
@@ -441,6 +476,9 @@ function handleReaction(targetId, emoji, senderJid, senderName) {
             } else {
                 delete msg.reactions[senderJid];
             }
+            targetJid = msg.toJid;
+            targetType = msg.type;
+            try { updateDashboardLogReactions(targetJid, targetId, targetType, msg.reactions); } catch (_) {}
         }
         if (ioServer) {
             ioServer.emit('reaction', { targetId, emoji, senderJid, senderName });
@@ -465,8 +503,27 @@ function getHtml(botName) {
         .replaceAll('{{BOT_NAME_ENCODED}}', encodeURIComponent(safeName));
 }
 
+let currentMaxLogs = 500;
+function setMaxLogs(n) {
+    const v = Number(n);
+    if (Number.isFinite(v) && v > 0) currentMaxLogs = v;
+}
+
+function resetDashboard() {
+    let removedLogs = 0;
+    try { removedLogs = clearDashboardLogs(); } catch (e) { console.error('[dashboard] reset clearLogs:', e.message); }
+    try { dashboardLogs.length = 0; } catch (_) {}
+    try { mediaCache.clear(); } catch (_) {}
+    setMaxLogs(500);
+    if (ioServer) {
+        try { ioServer.emit('reset', { ts: Date.now() }); } catch (_) {}
+    }
+    return { removedLogs, newLimit: currentMaxLogs };
+}
+
 module.exports = {
     init, log, attachSock, cacheMedia,
     setGroupsApi, pushGroupsSnapshot, rememberGroupInfo,
-    handleReaction
+    handleReaction,
+    resetDashboard, setMaxLogs
 };

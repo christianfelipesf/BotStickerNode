@@ -478,6 +478,14 @@ socket.on('reaction', ({ targetId, emoji, senderJid, senderName }) => {
 });
 socket.on('connect', () => { statusEl.innerText = 'online'; statusEl.style.color = 'var(--wa-green)'; });
 socket.on('disconnect', () => { statusEl.innerText = 'reconectando…'; statusEl.style.color = '#ff8182'; });
+socket.on('reset', () => {
+    messagesByGroup = {};
+    lastDate = '';
+    chat.innerHTML = '';
+    if (activeJid) rerenderActiveChat();
+    renderGroups();
+    showToast('🧹 Dashboard resetado pelo dono');
+});
 
 // Abrir direto no chat "Todos" ao carregar a página
 selectAllChat();
