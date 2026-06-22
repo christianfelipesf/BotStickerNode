@@ -112,9 +112,16 @@ async function startBot() {
                 setTimeout(startBot, 5000); 
             }
         } else if (u.connection === 'open') {
-            const version = require('./src/database/utils').getVersion();
+            const utils = require('./src/database/utils');
+            const version = utils.getVersion();
+            const stats = utils.readStats();
+            const ts = new Date().toLocaleString('pt-BR');
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
-            try { dashboard.log('action', 'SISTEMA', `Bot Conectado (v${version})`); } catch (_) {}
+            try {
+                dashboard.log('action', 'SISTEMA',
+                    `🟢 Bot Conectado — v${version} • ${ts} • Reinício #${stats.restarts || 1} • Comandos: ${stats.totalCommands || 0}`,
+                    'Sistema', '—');
+            } catch (_) {}
         }
     });
 

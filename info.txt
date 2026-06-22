@@ -5,4 +5,6 @@
 -- FOCO EM MODULACAO
 
 
-analisar se algum comando como por exemplo !ban está sendo executado em algum grupo desativado / que nunca foi ativado
+[INFO] SOMENTE DONO DO BOT PODE ATIVAR / DESATIVAR BOT & DASHBOARD
+
+[FIX] PESSOAS PODEM USAR ALGUNS COMANDOS PRIVADOS COMO !PLAY

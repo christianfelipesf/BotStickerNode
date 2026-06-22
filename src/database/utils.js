@@ -79,7 +79,8 @@ const DEFAULT_CONFIG = {
     stickerAuthor: "Bot",
     geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
     dashboardEnabled: true,
-    dashboardPort: 3000
+    dashboardPort: 3000,
+    adminCanControl: false
 };
 
 // Defaults editáveis manualmente (parte fixa, baixa frequência)
@@ -1108,6 +1109,15 @@ function normalizeJid(jid) {
     return `${user}@${domain || 's.whatsapp.net'}`;
 }
 
+function canAdminControl() {
+    try {
+        const cfg = readConfig();
+        return cfg && cfg.adminCanControl === true;
+    } catch (_) {
+        return false;
+    }
+}
+
 function getVersion() {
     try {
         return execFileSync('git', ['log', '-1', '--format=%s'], { windowsHide: true }).toString().trim();
@@ -1199,5 +1209,6 @@ module.exports = {
     getGroupLink, setGroupLink, normalizeJid,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
+    canAdminControl,
     flushNow
 };

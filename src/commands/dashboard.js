@@ -6,7 +6,7 @@ module.exports = {
     category: 'admin',
     description: 'Ativa/desativa o painel de monitoramento (dashboard) deste grupo',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN, config }) {
-        const { react, getAdmins, isDashboardEnabled, setDashboardEnabled } = utils;
+        const { react, isDashboardEnabled, setDashboardEnabled, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
 
         if (!isGroup) {
             return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
@@ -16,20 +16,19 @@ module.exports = {
         const senderNorm = utils.normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
-        if (!isBotOwner) {
+        let allowed = isBotOwner;
+        if (!allowed && canAdminControl()) {
             try {
                 const adminsRaw = await getAdmins(sock, from);
-                const senderUser = senderNorm.split('@')[0];
-                const isSenderAdmin = adminsRaw.some(p => {
-                    const candidates = [p.id, p.jid, p.lid].filter(Boolean).map(j => utils.normalizeJid(j));
-                    return candidates.some(c => c.split('@')[0] === senderUser);
-                });
-                if (!isSenderAdmin) {
-                    return await sock.sendMessage(from, { text: '❌ Apenas admins ou o dono do bot podem usar este comando.' }, { quoted: m });
-                }
-            } catch (e) {
-                return await sock.sendMessage(from, { text: '❌ Não foi possível verificar admins. Tente novamente.' }, { quoted: m });
-            }
+                allowed = isUserAdmin(sender, adminsRaw);
+            } catch (_) {}
+        }
+
+        if (!allowed) {
+            const msg = canAdminControl()
+                ? '❌ Apenas o dono do bot ou admins do grupo podem ativar/desativar o dashboard.'
+                : '❌ Apenas o dono do bot pode ativar/desativar o dashboard.';
+            return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 
         const current = isDashboardEnabled(from);
@@ -42,13 +41,19 @@ module.exports = {
 
         try { dashboard.pushGroupsSnapshot(); } catch (_) {}
 
-        const statusText = next
-            ? '🟢 *Dashboard ATIVADA* para este grupo.\nMensagens daqui aparecerão no painel.'
-            : '🔴 *Dashboard DESATIVADA* para este grupo.\nMensagens daqui não aparecerão mais no painel.';
+        let subject = 'grupo';
+        try {
+            const meta = await sock.groupMetadata(from);
+            if (meta?.subject) subject = meta.subject;
+        } catch (_) {}
 
-        let resp = await react(sock, m, next ? '🟢' : '🔴', lastBotResponse, GLOBAL_COOLDOWN);
-        await sock.sendMessage(from, { text: statusText }, { quoted: m });
-        return resp;
+        const ts = new Date().toLocaleString('pt-BR');
+        if (next) {
+            console.log(`📊 [DASHBOARD] ATIVADA em "${subject}" (${from}) por @${senderNorm.split('@')[0]} às ${ts}`);
+        } else {
+            console.log(`📊 [DASHBOARD] DESATIVADA em "${subject}" (${from}) por @${senderNorm.split('@')[0]} às ${ts}`);
+        }
+
+        return await react(sock, m, next ? '🟢' : '🔴', lastBotResponse, GLOBAL_COOLDOWN);
     }
 };
-

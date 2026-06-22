@@ -288,7 +288,10 @@ module.exports = {
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
-            safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+            const botActiveInGroup = isGroup && isActiveGroup(from);
+            if (botActiveInGroup || !isGroup) {
+                safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+            }
 
             console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
@@ -301,8 +304,24 @@ module.exports = {
                 ai: require('../services/ai')
             };
 
-            const result = await cmd.execute(sock, m, context);
+            const t0 = Date.now();
+            let result;
+            try {
+                result = await cmd.execute(sock, m, context);
+            } catch (cmdErr) {
+                const elapsed = Date.now() - t0;
+                const errText = `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`;
+                console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
+                if (botActiveInGroup || !isGroup) {
+                    safeDashboardLog('error', groupMetadata.subject, errText, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                }
+                throw cmdErr;
+            }
             if (result !== undefined) lastBotResponse = result;
+            const elapsed = Date.now() - t0;
+            if (botActiveInGroup && elapsed >= 800) {
+                safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+            }
 
         } catch (e) {
             console.error('Erro ao processar mensagem:', e);
