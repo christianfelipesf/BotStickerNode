@@ -20,15 +20,15 @@ const {
 let ioServer = null;
 let sockRef = null;
 let groupsApi = null;
-const dashboardLogs = []; // RAM
-const MAX_LOGS = 500;
+const MAX_LOGS = 200;
+const HISTORY_SEND_LIMIT = 200;
 const groupInfoCache = new Map();
 const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
 let logsTrimTimer = null;
 
 const mediaCache = new Map();
-const MAX_CACHE = 60;
+const MAX_CACHE = 30;
 
 function safe(fn, fallback) {
     try { return fn(); } catch (e) { console.error('[dashboard]', e?.message || e); return fallback; }
@@ -258,7 +258,7 @@ function init(config) {
     ioServer = new Server(server);
     ioServer.on('connection', async (socket) => {
         try {
-            const history = loadDashboardHistory({ limit: 1000 });
+            const history = loadDashboardHistory({ limit: HISTORY_SEND_LIMIT });
             socket.emit('history', history);
         } catch (_) {}
         try { socket.emit('groups', await getGroupsSnapshot()); } catch (_) {}
@@ -267,15 +267,15 @@ function init(config) {
     try {
         server.listen(port, '0.0.0.0', () => console.log(`[dashboard] ativo em http://localhost:${port}`));
         groupsRefreshTimer = setInterval(() => {
-            pushGroupsSnapshot({ force: true }).catch(() => {});
-        }, 60000);
+            pushGroupsSnapshot({ force: false }).catch(() => {});
+        }, 5 * 60 * 1000);
         if (groupsRefreshTimer.unref) groupsRefreshTimer.unref();
 
-        const maxRows = Number(config?.dashboardMaxLogs) || 5000;
-        const maxAgeMs = (Number(config?.dashboardHistoryHours) || 72) * 3600 * 1000;
+        const maxRows = Number(config?.dashboardMaxLogs) || MAX_LOGS;
+        const maxAgeMs = (Number(config?.dashboardHistoryHours) || 12) * 3600 * 1000;
         logsTrimTimer = setInterval(() => {
             try { trimDashboardLogs({ maxAgeMs, maxRows }); } catch (_) {}
-        }, 10 * 60 * 1000);
+        }, 60 * 1000);
         if (logsTrimTimer.unref) logsTrimTimer.unref();
 
         try {
@@ -494,20 +494,8 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
             reactions: extra.reactions || undefined
         };
 
-        if (logData.fromMe && logData.messageId && (type === 'chat' || type === 'viewonce')) {
-            const existing = dashboardLogs.findIndex(item =>
-                item.fromMe &&
-                item.messageId === logData.messageId &&
-                item.toJid === logData.toJid &&
-                item.type === logData.type
-            );
-            if (existing >= 0) return;
-        }
-
         try { insertDashboardLog(logData); } catch (_) {}
 
-        dashboardLogs.push(logData);
-        if (dashboardLogs.length > MAX_LOGS) dashboardLogs.shift();
         if (ioServer && shouldEmit(logData)) {
             ioServer.emit('msg', logData);
         }
@@ -528,7 +516,8 @@ async function pushGroupsSnapshot(options = {}) {
 
 function handleReaction(targetId, emoji, senderJid, senderName) {
     try {
-        const msg = dashboardLogs.find(item => item.messageId === targetId);
+        const recent = loadDashboardHistory({ limit: 50 });
+        const msg = recent.find(item => item.messageId === targetId);
         let targetJid = null;
         let targetType = null;
         if (msg) {
@@ -565,7 +554,7 @@ function getHtml(botName) {
         .replaceAll('{{BOT_NAME_ENCODED}}', encodeURIComponent(safeName));
 }
 
-let currentMaxLogs = 500;
+let currentMaxLogs = 200;
 function setMaxLogs(n) {
     const v = Number(n);
     if (Number.isFinite(v) && v > 0) currentMaxLogs = v;
@@ -574,9 +563,8 @@ function setMaxLogs(n) {
 function resetDashboard() {
     let removedLogs = 0;
     try { removedLogs = clearDashboardLogs(); } catch (e) { console.error('[dashboard] reset clearLogs:', e.message); }
-    try { dashboardLogs.length = 0; } catch (_) {}
     try { mediaCache.clear(); } catch (_) {}
-    setMaxLogs(500);
+    setMaxLogs(200);
     if (ioServer) {
         try { ioServer.emit('reset', { ts: Date.now() }); } catch (_) {}
     }
