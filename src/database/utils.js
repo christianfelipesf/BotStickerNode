@@ -72,6 +72,18 @@ db.exec(`
         updated_at   INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS news_groups (
+        jid          TEXT PRIMARY KEY,
+        enabled      INTEGER NOT NULL DEFAULT 1,
+        activated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS news_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS dashboard_logs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         type        TEXT NOT NULL,
@@ -117,7 +129,10 @@ const DEFAULT_CONFIG = {
     dashboardPort: 3000,
     dashboardMaxLogs: 5000,
     dashboardHistoryHours: 72,
-    adminCanControl: false
+    adminCanControl: false,
+    newsSubreddits: ['ShitpostBR'],
+    newsPollIntervalMs: 5 * 60 * 1000,
+    newsUserAgent: 'BotStickerNode/1.0 (by /u/BotStickerNode)'
 };
 
 // Defaults editáveis manualmente (parte fixa, baixa frequência)
@@ -567,6 +582,67 @@ function getDashboardPreference(jid) {
         const row = _dgListAllEver.get(jid);
         return !!(row && row.enabled);
     } catch (_) { return false; }
+}
+
+// --- News (per group opt-in) ---
+const _ngHas = db.prepare('SELECT 1 FROM news_groups WHERE jid = ? AND enabled = 1');
+const _ngGet = db.prepare('SELECT jid, enabled, activated_at FROM news_groups WHERE jid = ?');
+const _ngUpsert = db.prepare(`
+    INSERT INTO news_groups (jid, enabled, activated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET enabled = excluded.enabled, activated_at = excluded.activated_at
+`);
+const _ngList = db.prepare('SELECT jid, activated_at FROM news_groups WHERE enabled = 1');
+const _ngDelete = db.prepare('DELETE FROM news_groups WHERE jid = ?');
+
+function isNewsEnabled(jid) {
+    if (!jid) return false;
+    try { return !!_ngHas.get(jid); } catch (_) { return false; }
+}
+
+function setNewsEnabled(jid, enabled) {
+    if (!jid) return false;
+    try {
+        _ngUpsert.run(jid, enabled ? 1 : 0, Date.now());
+        if (!enabled) {
+            try { _ngDelete.run(jid); } catch (_) {}
+        }
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao salvar news_groups:', e.message);
+        return false;
+    }
+}
+
+function listNewsGroups() {
+    try { return _ngList.all().map(r => r.jid); }
+    catch (e) { console.error('❌ Falha ao listar news_groups:', e.message); return []; }
+}
+
+// --- News state (chave/valor para "último post visto" por subreddit) ---
+const _nsGet = db.prepare('SELECT value FROM news_state WHERE key = ?');
+const _nsUpsert = db.prepare(`
+    INSERT INTO news_state (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`);
+
+function getNewsState(key, fallback = null) {
+    try {
+        const row = _nsGet.get(key);
+        if (!row) return fallback;
+        return JSON.parse(row.value);
+    } catch (_) { return fallback; }
+}
+
+function setNewsState(key, value) {
+    try {
+        _nsUpsert.run(key, JSON.stringify(value), Date.now());
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao salvar news_state:', e.message);
+        return false;
+    }
 }
 
 // ============================================================
@@ -1479,6 +1555,8 @@ module.exports = {
     getGroupLink, setGroupLink, normalizeJid,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
+    isNewsEnabled, setNewsEnabled, listNewsGroups,
+    getNewsState, setNewsState,
     canAdminControl,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
     updateDashboardLogReactions, clearDashboardLogs,

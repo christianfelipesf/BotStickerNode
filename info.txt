@@ -4,7 +4,10 @@
 
 -- FOCO EM MODULACAO
 
+[fix] ao revelar ou mexer em media oculta de outro grupo que o dashboard nao esteja ativado o bot nao ira mandar a media no chat todo do dashboard pois se tratam de imagens sensiveis
 
-[INFO] SOMENTE DONO DO BOT PODE ATIVAR / DESATIVAR BOT & DASHBOARD
+[fix] mostrar reinicios no dashboard com hora
 
-[FIX] PESSOAS PODEM USAR ALGUNS COMANDOS PRIVADOS COMO !PLAY
+[update] o !menu agora esacolhera uma imagem aleatoria do src/media/menus
+
+[update] tera o comando !news, ele publicara noticias atualizadas (posts) de inicio somente do reddit do canal r/ShitpostBR , tambem podendo colocar outros reddits no menu de database ao estiver ativado no grupo qualquer publicao nova aparecera no grupo !news ativa / desativa, ele publicara as imagem/inagens, video, e a legenda junto

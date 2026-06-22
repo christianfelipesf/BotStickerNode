@@ -27,6 +27,7 @@ const { handleGroupParticipantsUpdate } = require('./src/events/group');
 const { handleMessageUpsert } = require('./src/events/message');
 const { setupAI } = require('./src/services/ai');
 const dashboard = require('./src/dashboard/dashboard');
+const news = require('./src/services/news');
 
 // Inicializar Filtro de Logs
 initLogger();
@@ -73,7 +74,16 @@ try {
 } catch (e) {}
 
 const startTime = Date.now();
-incrementRestart();
+const _restartNumber = incrementRestart();
+try {
+    const utils = require('./src/database/utils');
+    const _version = utils.getVersion();
+    const _stats = utils.readStats();
+    const _ts = new Date().toLocaleString('pt-BR');
+    dashboard.log('action', 'SISTEMA',
+        `🔄 Reinício #${_restartNumber} — v${_version} • ${_ts} • Comandos acumulados: ${_stats.totalCommands || 0}`,
+        'Sistema', '—');
+} catch (_) {}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -93,6 +103,7 @@ async function startBot() {
 
     try { dashboard.attachSock(sock); } catch (_) {}
     try { dashboard.pushGroupsSnapshot(); } catch (_) {}
+    try { news.attachSock(sock); news.start(); } catch (_) {}
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -119,7 +130,7 @@ async function startBot() {
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
             try {
                 dashboard.log('action', 'SISTEMA',
-                    `🟢 Bot Conectado — v${version} • ${ts} • Reinício #${stats.restarts || 1} • Comandos: ${stats.totalCommands || 0}`,
+                    `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
                     'Sistema', '—');
             } catch (_) {}
         }

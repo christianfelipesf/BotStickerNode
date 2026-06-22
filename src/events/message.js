@@ -293,7 +293,7 @@ module.exports = {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard'].includes(cmd.name)) return;
+            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard', 'news'].includes(cmd.name)) return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, {

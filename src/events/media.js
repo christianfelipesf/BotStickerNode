@@ -1,9 +1,10 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const { 
-    getMediaMessage, react, isViewOnce, 
-    stickerToMedia, getBotName, mediaToSticker, 
-    changeSpeed 
+const {
+    getMediaMessage, react, isViewOnce,
+    stickerToMedia, getBotName, mediaToSticker,
+    changeSpeed,
+    isDashboardEnabled
 } = require('../database/utils');
 
 async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
@@ -14,14 +15,14 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         const isVideo = !!mediaMessage.videoMessage;
         const isAudio = !!mediaMessage.audioMessage;
         const originalCaption = mediaMessage.imageMessage?.caption || mediaMessage.videoMessage?.caption || '';
-        
+
         lastBotResponse = await react(sock, m, '👀', lastBotResponse, GLOBAL_COOLDOWN);
-        
-        const buffer = await downloadMediaMessage({ key: m.key, message: mediaMessage }, 'buffer', {}, { 
-            logger: pino({ level: 'silent' }), 
-            reuploadRequest: sock.updateMediaMessage 
+
+        const buffer = await downloadMediaMessage({ key: m.key, message: mediaMessage }, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage
         }).catch(() => null);
-        
+
         if (!buffer) {
             return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
@@ -29,17 +30,22 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         const senderName = m.pushName || 'Usuário';
         let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
         const opts = { mentions: [sender], quoted: m };
-        
-        // Log to Dashboard
+
+        // Log to Dashboard apenas quando o grupo tem dashboard ativo.
+        // Mídia revelada é considerada sensível — não vaza no chat do dashboard
+        // de outros grupos.
+        const dashboardOn = isDashboardEnabled(from);
         const groupMetadata = from.endsWith('@g.us') ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
         const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
-        
-        const mediaInfo = {
-            type: mediaType,
-            url: `data:${isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg')};base64,${buffer.toString('base64')}`
-        };
-        
-        require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0], mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
+
+        if (dashboardOn) {
+            const mediaInfo = {
+                type: mediaType,
+                url: `data:${isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg')};base64,${buffer.toString('base64')}`
+            };
+
+            require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0], mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
+        }
 
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
         else if (isVideo) await sock.sendMessage(from, { video: buffer, caption: revealCaption }, opts);
