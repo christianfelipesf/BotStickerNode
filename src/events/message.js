@@ -28,6 +28,26 @@ const processedMessages = new Set();
 // Limpa periodicamente para evitar crescimento infinito da memória
 setInterval(() => processedMessages.clear(), 10 * 60 * 1000);
 
+// Ring buffer de chaves recentes por grupo (para !limpar deletar N últimas)
+const RECENT_BUFFER_LIMIT = 100;
+const recentMessagesByGroup = new Map();
+
+function trackRecentMessage(jid, key) {
+    if (!jid || !key || !key.id) return;
+    let list = recentMessagesByGroup.get(jid);
+    if (!list) {
+        list = [];
+        recentMessagesByGroup.set(jid, list);
+    }
+    list.push({ id: key.id, participant: key.participant || null, fromMe: !!key.fromMe });
+    if (list.length > RECENT_BUFFER_LIMIT) list.shift();
+}
+
+function getRecentMessages(jid, limit) {
+    const list = recentMessagesByGroup.get(jid) || [];
+    return list.slice(-Math.max(1, Math.min(limit, list.length)));
+}
+
 const GLOBAL_COOLDOWN = 1000;
 let lastBotResponse = 0;
 const AUTO_VIEW_ONCE = true;
@@ -44,9 +64,10 @@ module.exports = {
             if (messageTime < bootThreshold) return;
 
             processedMessages.add(m.key.id);
-            
+
             const from = m.key.remoteJid;
             const isGroup = from.endsWith('@g.us');
+            if (isGroup) trackRecentMessage(from, m.key);
             const sender = m.key.fromMe
                 ? (sock.user?.id || m.key.participant || m.key.remoteJid)
                 : (m.key.participant || m.key.remoteJid);
@@ -293,7 +314,7 @@ module.exports = {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard', 'news'].includes(cmd.name)) return;
+            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard', 'news', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat'].includes(cmd.name)) return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, {
@@ -339,5 +360,7 @@ module.exports = {
         } catch (e) {
             console.error('Erro ao processar mensagem:', e);
         }
-    }
+    },
+    trackRecentMessage,
+    getRecentMessages
 };

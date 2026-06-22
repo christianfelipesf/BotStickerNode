@@ -143,6 +143,12 @@ function extractMedia(body) {
         if (vidMatch && !directVideo) directVideo = decodeEntities(vidMatch[1]);
     }
 
+    // Se o [link] é uma GIF direta (i.redd.it/xxx.gif) mas o <img> aponta para preview webp,
+    // usar a GIF direta como directImage para que isGifUrl retorne true.
+    if (directImage && !/\.gif(\?|$|&)/i.test(directImage) && /\.(gif)(\?|$|&)/i.test(thumbnail)) {
+        directImage = thumbnail;
+    }
+
     return {
         thumbnail,
         image: directImage || thumbnail,
@@ -238,11 +244,21 @@ function buildCaption(post, sub, showMeta) {
 }
 
 function isGifUrl(url) {
-    return /\.(gif)(\?|$|&)/i.test(String(url || ''));
+    if (!url) return false;
+    const u = String(url);
+    // Detecta .gif mesmo se tiver auto=webp ou outros query params depois
+    // Ex: https://preview.redd.it/abc.gif?width=640&auto=webp&s=...
+    if (/\/[^./?#]+\.gif(\?|$|#|&)/i.test(u)) return true;
+    if (/\.gif(\?|$|&)/i.test(u)) return true;
+    return false;
 }
 
 function isVideoUrl(url) {
-    return /\.(mp4|webm)(\?|$|&)/i.test(String(url || ''));
+    if (!url) return false;
+    const u = String(url);
+    if (/\/[^./?#]+\.(mp4|webm)(\?|$|#|&)/i.test(u)) return true;
+    if (/\.(mp4|webm)(\?|$|&)/i.test(u)) return true;
+    return false;
 }
 
 async function sendPostToGroup(sock, jid, post, sub) {
@@ -347,8 +363,17 @@ async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) 
         try {
             const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
             if (dl && dl.buffer && dl.buffer.length > 0) {
-                const isGif = isGifUrl(media.image) || (dl.mime && dl.mime.toLowerCase().includes('gif'));
-                if (isGif) {
+                const mimeLower = (dl.mime || '').toLowerCase();
+                const urlIsGif = isGifUrl(media.image);
+                const urlIsVideo = isVideoUrl(media.image);
+                const bufferIsVideo = mimeLower.startsWith('video/');
+                const bufferIsGif = mimeLower === 'image/gif' || (urlIsGif && !mimeLower.startsWith('image/'));
+
+                if (urlIsVideo || bufferIsVideo) {
+                    const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
+                    if (caption) payload.caption = caption;
+                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                } else if (urlIsGif || bufferIsGif) {
                     const payload = { video: dl.buffer, mimetype: 'video/mp4', gifPlayback: true };
                     if (caption) payload.caption = caption;
                     await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
@@ -393,8 +418,8 @@ async function pollOnce() {
     running = true;
     try {
         const lastSeen = getNewsState(STATE_KEY, {}) || {};
-        const newSeen = { ...lastSeen };
         const isFirstBoot = !lastSeen.__bootInitialized;
+        const newSeen = { ...lastSeen, __bootInitialized: lastSeen.__bootInitialized || Date.now() };
         let totalAttempted = 0;
         let totalSent = 0;
 
@@ -443,11 +468,6 @@ async function pollOnce() {
             if (isFirstBoot && fresh.length > batch.length) {
                 console.log(`📰 [news] r/${sub}: ${fresh.length - batch.length} post(s) restante(s) ignorado(s) (primeira execução, limite=${maxPerCycle}).`);
             }
-        }
-
-        if (isFirstBoot) {
-            newSeen.__bootInitialized = Date.now();
-            setNewsState(STATE_KEY, newSeen);
         }
 
         if (totalSent > 0) {
