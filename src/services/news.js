@@ -178,6 +178,7 @@ function extractSelftext(body) {
 }
 
 let _rateLimitedUntil = 0;
+let _consecutiveRateLimits = 0;
 
 async function fetchSubredditFeed(sub, userAgent) {
     const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
@@ -191,20 +192,25 @@ async function fetchSubredditFeed(sub, userAgent) {
         });
         if (res.status === 429 || res.status === 503) {
             const ra = parseInt(res.headers && res.headers['retry-after'], 10);
-            const waitMs = (Number.isFinite(ra) && ra > 0 ? ra : 120) * 1000;
+            const baseWait = (Number.isFinite(ra) && ra > 0 ? ra : 120);
+            _consecutiveRateLimits++;
+            const waitMs = baseWait * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
             _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
-            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s`);
+            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${_consecutiveRateLimits})`);
             return { __rateLimited: true, items: [] };
         }
         if (res.status !== 200 || !res.data) {
             console.error(`📰 [news] r/${sub} feed respondeu status=${res.status}`);
             return { __rateLimited: false, items: [] };
         }
+        _consecutiveRateLimits = 0;
         return { __rateLimited: false, items: parseRssItems(String(res.data)) };
     } catch (e) {
         const msg = String(e?.message || '').toLowerCase();
         if (msg.includes('429') || msg.includes('rate')) {
-            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+            _consecutiveRateLimits++;
+            const waitMs = 120 * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
+            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
             return { __rateLimited: true, items: [] };
         }
         throw e;
@@ -354,6 +360,8 @@ async function processQueue() {
 
             const showMeta = !!cfg.newsShowMeta;
             const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
+
+            if (Date.now() < _rateLimitedUntil) break;
 
             for (const jid of groups) {
                 if (isShuttingDown) break;
