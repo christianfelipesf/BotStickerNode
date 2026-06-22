@@ -16,3 +16,53 @@
 0|BotStick | 📰 [news] r/shitpostbr: 19 novo(s), enviando 19 neste ciclo.
 
 ele fica enviando todos os post anteriores sendo que são apenas posts novos, e videos e gifs ele envia como imagem nao como mp4 
+
+ [INTERAÇÃO] Comando !limpar por BotSticker em 120363374777828089@g.us
+0|BotStickerNode  | 💥 [CMD-ERROR] !limpar: Error: rate-overlimit
+0|BotStickerNode  |     at assertNodeErrorFree (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/WABinary/generic-utils.ts:55:9)
+0|BotStickerNode  |     at query (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/socket.ts:215:4)
+0|BotStickerNode  |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+0|BotStickerNode  |     at async groupMetadata (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/groups.ts:33:18)
+0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:457:20)
+0|BotStickerNode  |     at async Promise.all (index 0)
+0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:451:39)
+0|BotStickerNode  |     at async Object.transaction (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Utils/auth-utils.ts:157:14)
+0|BotStickerNode  |     at async relayMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:416:3)
+0|BotStickerNode  |     at async Object.sendMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:859:5) {
+0|BotStickerNode  |   data: 429,
+0|BotStickerNode  |   isBoom: true,
+0|BotStickerNode  |   isServer: true,
+0|BotStickerNode  |   output: {
+0|BotStickerNode  |     statusCode: 500,
+0|BotStickerNode  |     payload: {
+0|BotStickerNode  |       statusCode: 500,
+0|BotStickerNode  |       error: 'Internal Server Error',
+0|BotStickerNode  |       message: 'An internal server error occurred'
+0|BotStickerNode  |     },
+0|BotStickerNode  |     headers: {}
+0|BotStickerNode  |   }
+0|BotStickerNode  | }
+0|BotStickerNode  | Erro ao processar mensagem: Error: rate-overlimit
+0|BotStickerNode  |     at assertNodeErrorFree (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/WABinary/generic-utils.ts:55:9)
+0|BotStickerNode  |     at query (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/socket.ts:215:4)
+0|BotStickerNode  |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+0|BotStickerNode  |     at async groupMetadata (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/groups.ts:33:18)
+0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:457:20)
+0|BotStickerNode  |     at async Promise.all (index 0)
+0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:451:39)
+0|BotStickerNode  |     at async Object.transaction (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Utils/auth-utils.ts:157:14)
+0|BotStickerNode  |     at async relayMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:416:3)
+0|BotStickerNode  |     at async Object.sendMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:859:5) {
+0|BotStickerNode  |   data: 429,
+0|BotStickerNode  |   isBoom: true,
+0|BotStickerNode  |   isServer: true,
+0|BotStickerNode  |   output: {
+0|BotStickerNode  |     statusCode: 500,
+0|BotStickerNode  |     payload: {
+0|BotStickerNode  |       statusCode: 500,
+0|BotStickerNode  |       error: 'Internal Server Error',
+0|BotStickerNode  |       message: 'An internal server error occurred'
+0|BotStickerNode  |     },
+0|BotStickerNode  |     headers: {}
+0|BotStickerNode  |   }
+0|BotStickerNode  | }
