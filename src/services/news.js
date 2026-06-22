@@ -416,20 +416,23 @@ async function pollOnce() {
         return;
     }
 
-    const maxPerCycle = Math.max(1, Number(cfg.newsMaxPerCycle) || 1);
+    const randomMode = !!cfg.newsRandomSub;
+    const showMeta = !!cfg.newsShowMeta;
+    const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
 
     const lastSeen = getNewsState(STATE_KEY, {}) || {};
-    const isFirstBoot = !lastSeen.__bootInitialized;
 
-    if (isFirstBoot) {
-        lastSeen.__bootInitialized = Date.now();
-        setNewsState(STATE_KEY, lastSeen);
+    // Subreddits a consultar neste ciclo.
+    // newsRandomSub = false → todos os configurados (padrão).
+    // newsRandomSub = true  → sorteia 1 sub por ciclo.
+    let subsToCheck = subs;
+    if (randomMode && subs.length > 1) {
+        subsToCheck = [subs[Math.floor(Math.random() * subs.length)]];
     }
 
-    let anyRateLimited = false;
+    for (const sub of subsToCheck) {
+        if (Date.now() < _rateLimitedUntil) break;
 
-    for (const sub of subs) {
-        if (Date.now() < _rateLimitedUntil) { anyRateLimited = true; break; }
         let result = { __rateLimited: false, items: [] };
         try {
             result = await fetchSubredditFeed(sub, cfg.newsUserAgent);
@@ -437,39 +440,54 @@ async function pollOnce() {
             console.error(`📰 [news] falha ao buscar feed r/${sub}:`, e.message);
             continue;
         }
-        if (result.__rateLimited) { anyRateLimited = true; continue; }
+        if (result.__rateLimited) continue;
         const posts = result.items;
-        if (posts.length === 0) continue;
+        if (!posts || posts.length === 0) continue;
 
-        const known = new Set(lastSeen[sub] || []);
-        let fresh = posts.filter(p => p && p.id && !known.has(p.id));
-        if (fresh.length === 0) continue;
+        // SEMPRE pega o ÚLTIMO (primeiro do feed /new).
+        const latest = posts[0];
+        if (!latest || !latest.id) continue;
 
-        const toEnqueue = isFirstBoot
-            ? fresh.slice(0, maxPerCycle)
-            : (maxPerCycle > 0 ? fresh.slice(0, maxPerCycle) : fresh);
+        // lastSeen[sub] agora guarda **um único ID** (o último publicado).
+        // Se for igual ao atual, não republica.
+        const previousId = lastSeen[sub] || null;
+        if (previousId === latest.id) {
+            console.log(`📰 [news] r/${sub}: sem post novo (último já postado: ${latest.id}).`);
+            continue;
+        }
 
-        console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enfileirando ${toEnqueue.length}.`);
-
-        // Marca TODOS os IDs do fetch atual como vistos IMEDIATAMENTE,
-        // mesmo os que não serão enfileirados (backlog). Isso impede que
-        // posts antigos sejam republicados em polls futuros.
-        const allIds = posts.filter(p => p && p.id).map(p => p.id);
-        const merged = Array.from(new Set([...(lastSeen[sub] || []), ...allIds])).slice(-200);
-        lastSeen[sub] = merged;
+        // Persiste o ID **antes** de enviar. Assim, mesmo se o envio falhar
+        // (rate-limit, queda do bot), o próximo poll não vai republicar o mesmo.
+        lastSeen[sub] = latest.id;
         setNewsState(STATE_KEY, lastSeen);
 
-        for (const post of toEnqueue) {
-            enqueuePost(post, sub);
+        console.log(`📰 [news] r/${sub}: novo último post ${latest.id} — publicando.`);
+
+        for (const jid of groups) {
+            if (isShuttingDown) break;
+            if (!isNewsEnabled(jid)) continue;
+            if (Date.now() < _rateLimitedUntil) {
+                console.log(`📰 [news] envio pausado por rate-limit global.`);
+                break;
+            }
+
+            try {
+                await sendOne(sockRef, jid, latest, sub, showMeta);
+            } catch (e) {
+                const msg = String(e?.message || e || '').toLowerCase();
+                if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
+                    _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+                    console.error(`📰 [news] rate-limit em ${jid}; cooldown 120s.`);
+                    break;
+                } else {
+                    console.error(`📰 [news] erro ao enviar ${latest.id} para ${jid}:`, e?.message || e);
+                }
+            }
+
+            if (sendDelayMs > 0) await sleep(sendDelayMs);
         }
 
-        if (isFirstBoot && fresh.length > toEnqueue.length) {
-            console.log(`📰 [news] r/${sub}: ${fresh.length - toEnqueue.length} post(s) restante(s) ignorado(s) (backlog descartado na 1ª execução).`);
-        }
-    }
-
-    if (anyRateLimited) {
-        console.log('📰 [news] ciclo interrompido por rate-limit; fila preservada para próxima janela.');
+        await new Promise(resolve => setImmediate(resolve));
     }
 }
 

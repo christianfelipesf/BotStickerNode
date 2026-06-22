@@ -137,6 +137,7 @@ const DEFAULT_CONFIG = {
     newsSendDelayMs: 8000,
     newsMaxPerCycle: 1,
     newsShowMeta: false,
+    newsRandomSub: false,
     newsMaxRetries: 3,
     newsRetryBaseDelayMs: 15000,
     dashboardTrimIntervalMs: 60 * 1000
