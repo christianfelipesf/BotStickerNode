@@ -390,14 +390,6 @@ async function processQueue() {
                 if (sendDelayMs > 0) await sleep(sendDelayMs);
             }
 
-            const lastSeen = getNewsState(STATE_KEY, {}) || {};
-            const list = lastSeen[sub] || [];
-            if (!list.includes(post.id)) {
-                lastSeen[sub] = [...list, post.id].slice(-200);
-                if (!lastSeen.__bootInitialized) lastSeen.__bootInitialized = Date.now();
-                setNewsState(STATE_KEY, lastSeen);
-            }
-
             await new Promise(resolve => setImmediate(resolve));
         }
     } finally {
@@ -458,6 +450,14 @@ async function pollOnce() {
             : (maxPerCycle > 0 ? fresh.slice(0, maxPerCycle) : fresh);
 
         console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enfileirando ${toEnqueue.length}.`);
+
+        // Marca TODOS os IDs do fetch atual como vistos IMEDIATAMENTE,
+        // mesmo os que não serão enfileirados (backlog). Isso impede que
+        // posts antigos sejam republicados em polls futuros.
+        const allIds = posts.filter(p => p && p.id).map(p => p.id);
+        const merged = Array.from(new Set([...(lastSeen[sub] || []), ...allIds])).slice(-200);
+        lastSeen[sub] = merged;
+        setNewsState(STATE_KEY, lastSeen);
 
         for (const post of toEnqueue) {
             enqueuePost(post, sub);
