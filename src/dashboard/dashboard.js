@@ -273,9 +273,10 @@ function init(config) {
 
         const maxRows = Number(config?.dashboardMaxLogs) || MAX_LOGS;
         const maxAgeMs = (Number(config?.dashboardHistoryHours) || 12) * 3600 * 1000;
+        const trimIntervalMs = Math.max(10 * 1000, Number(config?.dashboardTrimIntervalMs) || 60 * 1000);
         logsTrimTimer = setInterval(() => {
             try { trimDashboardLogs({ maxAgeMs, maxRows }); } catch (_) {}
-        }, 60 * 1000);
+        }, trimIntervalMs);
         if (logsTrimTimer.unref) logsTrimTimer.unref();
 
         try {

@@ -6,54 +6,44 @@
 
 
 
-[ERRO] POSTS NOVOS NAO APARECEM NO WHATSAPP
+[DATABASE DA VPS]
 
- [INTERAÇÃO] Comando !limpar por BotSticker em 120363374777828089@g.us
-0|BotStickerNode  | 💥 [CMD-ERROR] !limpar: Error: rate-overlimit
-0|BotStickerNode  |     at assertNodeErrorFree (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/WABinary/generic-utils.ts:55:9)
-0|BotStickerNode  |     at query (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/socket.ts:215:4)
-0|BotStickerNode  |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-0|BotStickerNode  |     at async groupMetadata (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/groups.ts:33:18)
-0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:457:20)
-0|BotStickerNode  |     at async Promise.all (index 0)
-0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:451:39)
-0|BotStickerNode  |     at async Object.transaction (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Utils/auth-utils.ts:157:14)
-0|BotStickerNode  |     at async relayMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:416:3)
-0|BotStickerNode  |     at async Object.sendMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:859:5) {
-0|BotStickerNode  |   data: 429,
-0|BotStickerNode  |   isBoom: true,
-0|BotStickerNode  |   isServer: true,
-0|BotStickerNode  |   output: {
-0|BotStickerNode  |     statusCode: 500,
-0|BotStickerNode  |     payload: {
-0|BotStickerNode  |       statusCode: 500,
-0|BotStickerNode  |       error: 'Internal Server Error',
-0|BotStickerNode  |       message: 'An internal server error occurred'
-0|BotStickerNode  |     },
-0|BotStickerNode  |     headers: {}
-0|BotStickerNode  |   }
-0|BotStickerNode  | }
-0|BotStickerNode  | Erro ao processar mensagem: Error: rate-overlimit
-0|BotStickerNode  |     at assertNodeErrorFree (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/WABinary/generic-utils.ts:55:9)
-0|BotStickerNode  |     at query (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/socket.ts:215:4)
-0|BotStickerNode  |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-0|BotStickerNode  |     at async groupMetadata (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/groups.ts:33:18)
-0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:457:20)
-0|BotStickerNode  |     at async Promise.all (index 0)
-0|BotStickerNode  |     at async <anonymous> (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:451:39)
-0|BotStickerNode  |     at async Object.transaction (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Utils/auth-utils.ts:157:14)
-0|BotStickerNode  |     at async relayMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:416:3)
-0|BotStickerNode  |     at async Object.sendMessage (/root/BotStickerNode/node_modules/@whiskeysockets/baileys/src/Socket/messages-send.ts:859:5) {
-0|BotStickerNode  |   data: 429,
-0|BotStickerNode  |   isBoom: true,
-0|BotStickerNode  |   isServer: true,
-0|BotStickerNode  |   output: {
-0|BotStickerNode  |     statusCode: 500,
-0|BotStickerNode  |     payload: {
-0|BotStickerNode  |       statusCode: 500,
-0|BotStickerNode  |       error: 'Internal Server Error',
-0|BotStickerNode  |       message: 'An internal server error occurred'
-0|BotStickerNode  |     },
-0|BotStickerNode  |     headers: {}
-0|BotStickerNode  |   }
-0|BotStickerNode  | }
+root@vps68131:~/BotStickerNode# cat database.json
+{
+  "config": {
+    "botName": "BotSticker",
+    "prefix": "!",
+    "showLogoInMenu": true,
+    "voiceEffects": true,
+    "geminiModel": "gemini-1.5-flash",
+    "summaryLimit": 20,
+    "aiPrompt": "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
+    "summaryPrompt": "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
+    "stickerPack": "BotStickerNode",
+    "stickerAuthor": "Bot",
+    "geminiApiKey": "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
+    "dashboardEnabled": true,
+    "dashboardPort": 3000,
+    "dashboardMaxLogs": 5000,
+    "dashboardHistoryHours": 72,
+    "adminCanControl": false,
+    "clearDefaultLimit": 10,
+    "newsSubreddits": [
+      "ShitpostBR"
+    ],
+    "newsPollIntervalMs": 300000,
+    "newsUserAgent": "BotStickerNode/1.0 (by /u/BotStickerNode)",
+    "newsSendDelayMs": 5000,
+    "newsMaxPerCycle": 1,
+    "newsShowMeta": false,
+    "newsMaxRetries": 3,
+    "newsRetryBaseDelayMs": 15000,
+    "linkgrupo": "https://chat.whatsapp.com/LbAzWNIRifxJCwaUjMNyNm?s=cl&p=a&mlu=0"
+  },
+  "stats": {
+    "restarts": 46,
+    "totalCommands": 211,
+    "_activityDate": "6/22/2026"
+  },
+  "groups": {}
+}root@vps68131:~/BotStickerNode#

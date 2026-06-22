@@ -247,6 +247,13 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
+    const maxRetries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
+    const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
+    const retryOpts = {
+        maxRetries,
+        baseDelayMs: retryBaseDelayMs,
+        onRetry: (n, wait) => console.warn(`📰 [news] rate-limit r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
+    };
 
     if (media.video && isVideoUrl(media.video)) {
         try {
@@ -254,10 +261,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
             if (dl && dl.buffer && dl.buffer.length > 0) {
                 const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
                 if (caption) payload.caption = caption;
-                return await sendMessageSafe(sock, jid, payload, {
-                    maxRetries: 3,
-                    onRetry: (n, wait) => console.warn(`📰 [news] rate-limit vídeo r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
-                });
+                return await sendMessageSafe(sock, jid, payload, retryOpts);
             }
         } catch (e) {
             console.error(`📰 [news] falha vídeo r/${sub}:`, e.message);
@@ -277,24 +281,15 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 if (urlIsVideo || bufferIsVideo) {
                     const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
                     if (caption) payload.caption = caption;
-                    return await sendMessageSafe(sock, jid, payload, {
-                        maxRetries: 3,
-                        onRetry: (n, wait) => console.warn(`📰 [news] rate-limit r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
-                    });
+                    return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else if (urlIsGif || bufferIsGif) {
                     const payload = { video: dl.buffer, mimetype: 'video/mp4', gifPlayback: true };
                     if (caption) payload.caption = caption;
-                    return await sendMessageSafe(sock, jid, payload, {
-                        maxRetries: 3,
-                        onRetry: (n, wait) => console.warn(`📰 [news] rate-limit gif r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
-                    });
+                    return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else {
                     const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg' };
                     if (caption) payload.caption = caption;
-                    return await sendMessageSafe(sock, jid, payload, {
-                        maxRetries: 3,
-                        onRetry: (n, wait) => console.warn(`📰 [news] rate-limit img r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
-                    });
+                    return await sendMessageSafe(sock, jid, payload, retryOpts);
                 }
             }
         } catch (e) {
@@ -303,10 +298,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     }
 
     if (caption && showMeta) {
-        return await sendMessageSafe(sock, jid, { text: caption }, {
-            maxRetries: 3,
-            onRetry: (n, wait) => console.warn(`📰 [news] rate-limit texto r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
-        });
+        return await sendMessageSafe(sock, jid, { text: caption }, retryOpts);
     }
 }
 

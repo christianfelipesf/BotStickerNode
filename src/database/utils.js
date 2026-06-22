@@ -131,12 +131,15 @@ const DEFAULT_CONFIG = {
     dashboardHistoryHours: 12,
     adminCanControl: false,
     clearDefaultLimit: 10,
-    newsSubreddits: ['ShitpostBR'],
+    newsSubreddits: ['ShitpostBR', 'pics'],
     newsPollIntervalMs: 15 * 60 * 1000,
     newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     newsSendDelayMs: 8000,
     newsMaxPerCycle: 1,
-    newsShowMeta: false
+    newsShowMeta: false,
+    newsMaxRetries: 3,
+    newsRetryBaseDelayMs: 15000,
+    dashboardTrimIntervalMs: 60 * 1000
 };
 
 
@@ -372,8 +375,23 @@ function loadJsonDB() {
 
 function mergeWithDefaults(obj) {
     const d = DEFAULT_JSON();
+    const cfg = { ...d.config, ...(obj.config || {}) };
+
+    if (Array.isArray(d.config.newsSubreddits)) {
+        const cur = Array.isArray(cfg.newsSubreddits) ? cfg.newsSubreddits : [];
+        const seen = new Set();
+        const merged = [];
+        for (const s of [...cur, ...d.config.newsSubreddits]) {
+            const k = String(s || '').trim().toLowerCase();
+            if (!k || seen.has(k)) continue;
+            seen.add(k);
+            merged.push(s);
+        }
+        cfg.newsSubreddits = merged;
+    }
+
     return {
-        config: { ...d.config, ...(obj.config || {}) },
+        config: cfg,
         stats: { ...d.stats, ...(obj.stats || {}) },
         groups: {
             ...(obj.groups || {})
@@ -1297,8 +1315,10 @@ async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
 // esgotadas as tentativas. Usado para todas as mensagens enviadas
 // em loop (news, !limpar, etc.) para não derrubar o bot.
 // ============================================================
-const RATE_LIMIT_BACKOFFS_MS = [2000, 5000, 10000, 20000, 30000];
-const RATE_LIMIT_MAX_RETRIES = RATE_LIMIT_BACKOFFS_MS.length;
+function _buildBackoffs(baseMs) {
+    const base = Math.max(500, Number(baseMs) || 15000);
+    return [base, Math.round(base * 2.5), Math.round(base * 5), Math.round(base * 10), Math.round(base * 20)];
+}
 
 function _isRateLimitError(err) {
     if (!err) return false;
@@ -1309,14 +1329,15 @@ function _isRateLimitError(err) {
 }
 
 async function sendMessageSafe(sock, jid, payload, options = {}) {
-    const { maxRetries = RATE_LIMIT_MAX_RETRIES, onRetry } = options;
+    const { maxRetries = 3, baseDelayMs = 15000, onRetry } = options;
+    const backoffs = _buildBackoffs(baseDelayMs);
     let attempt = 0;
     while (true) {
         try {
             return await sock.sendMessage(jid, payload, options.sendOptions || {});
         } catch (err) {
             if (_isRateLimitError(err) && attempt < maxRetries) {
-                const wait = RATE_LIMIT_BACKOFFS_MS[attempt] || 30000;
+                const wait = backoffs[attempt] || backoffs[backoffs.length - 1];
                 try { if (typeof onRetry === 'function') onRetry(attempt + 1, wait, err); } catch (_) {}
                 await new Promise(r => setTimeout(r, wait));
                 attempt++;
