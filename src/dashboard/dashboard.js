@@ -10,7 +10,11 @@ const {
     trimDashboardLogs,
     countDashboardLogs,
     updateDashboardLogReactions,
-    clearDashboardLogs
+    clearDashboardLogs,
+    upsertDashboardGroupInfo,
+    getDashboardGroupInfo,
+    listDashboardGroupInfos,
+    deleteDashboardGroupInfo
 } = require('../database/utils');
 
 let ioServer = null;
@@ -80,9 +84,13 @@ function rememberGroupInfo(jid, patch = {}) {
     const info = {
         jid: base.jid,
         subject: patch.subject || cached.subject || null,
-        pictureUrl: patch.pictureUrl || cached.pictureUrl || null
+        pictureUrl: patch.pictureUrl || cached.pictureUrl || null,
+        memberCount: patch.memberCount !== undefined ? patch.memberCount : (cached.memberCount || 0),
+        ownerJid: patch.ownerJid || cached.ownerJid || null,
+        desc: patch.desc || cached.desc || null
     };
     groupInfoCache.set(base.jid, { info, updatedAt: Date.now() });
+    try { upsertDashboardGroupInfo(base.jid, info); } catch (_) {}
 }
 
 async function getParticipatingGroup(jid) {
@@ -95,6 +103,38 @@ async function getParticipatingGroup(jid) {
     }
 }
 
+async function fetchAndCacheGroupMeta(jid) {
+    const out = {};
+    if (!sockRef) return out;
+    try {
+        const meta = await sockRef.groupMetadata(jid);
+        if (meta) {
+            if (meta.subject) out.subject = meta.subject;
+            if (typeof meta.size === 'number') out.memberCount = meta.size;
+            else if (Array.isArray(meta.participants)) out.memberCount = meta.participants.length;
+            if (meta.owner) out.ownerJid = meta.owner;
+            else if (meta.subjectOwner) out.ownerJid = meta.subjectOwner;
+            if (meta.desc) out.desc = meta.desc;
+            else if (meta.description) out.desc = meta.description;
+        }
+    } catch (_) {}
+    try {
+        const url = await sockRef.profilePictureUrl(jid, 'image');
+        if (url) out.pictureUrl = url;
+    } catch (_) {}
+    if (!out.subject || out.memberCount === undefined) {
+        try {
+            const part = await getParticipatingGroup(jid);
+            if (part) {
+                if (!out.subject && part.subject) out.subject = part.subject;
+                if (out.memberCount === undefined && typeof part.size === 'number') out.memberCount = part.size;
+                else if (out.memberCount === undefined && Array.isArray(part.participants)) out.memberCount = part.participants.length;
+            }
+        } catch (_) {}
+    }
+    return out;
+}
+
 async function getGroupInfo(item, force = false) {
     const base = normalizeGroupItem(item);
     if (!base) return null;
@@ -105,41 +145,63 @@ async function getGroupInfo(item, force = false) {
             ...base,
             ...cached.info,
             subject: cached.info.subject || base.subject || fallbackGroupSubject(base.jid),
-            pictureUrl: cached.info.pictureUrl || base.pictureUrl || null
+            pictureUrl: cached.info.pictureUrl || base.pictureUrl || null,
+            memberCount: cached.info.memberCount || 0,
+            ownerJid: cached.info.ownerJid || null,
+            desc: cached.info.desc || null
         };
     }
 
-    const info = {
+    const fromDb = getDashboardGroupInfo(base.jid) || {};
+    let info = {
         jid: base.jid,
-        subject: base.subject || fallbackGroupSubject(base.jid),
-        pictureUrl: base.pictureUrl || null
+        subject: base.subject || fromDb.subject || null,
+        pictureUrl: base.pictureUrl || fromDb.pictureUrl || null,
+        memberCount: fromDb.memberCount || 0,
+        ownerJid: fromDb.ownerJid || null,
+        desc: fromDb.desc || null
     };
 
-    if (sockRef) {
-        try {
-            const meta = await sockRef.groupMetadata(base.jid);
-            if (meta?.subject) info.subject = meta.subject;
-        } catch (_) {}
-        if (info.subject === fallbackGroupSubject(base.jid) || !info.subject) {
-            const participating = await getParticipatingGroup(base.jid);
-            if (participating?.subject) info.subject = participating.subject;
-        }
-        try {
-            const url = await sockRef.profilePictureUrl(base.jid, 'image');
-            if (url) info.pictureUrl = url;
-        } catch (_) {}
+    const needsRefresh = force
+        || !info.subject
+        || info.memberCount === 0
+        || !info.pictureUrl;
+
+    if (needsRefresh) {
+        const fresh = await fetchAndCacheGroupMeta(base.jid);
+        info = {
+            jid: base.jid,
+            subject: info.subject || fresh.subject || null,
+            pictureUrl: info.pictureUrl || fresh.pictureUrl || null,
+            memberCount: fresh.memberCount || info.memberCount || 0,
+            ownerJid: info.ownerJid || fresh.ownerJid || null,
+            desc: info.desc || fresh.desc || null
+        };
     }
 
+    if (!info.subject) info.subject = fallbackGroupSubject(base.jid);
+
     groupInfoCache.set(base.jid, { info, updatedAt: Date.now() });
+    try { upsertDashboardGroupInfo(base.jid, info); } catch (_) {}
     return info;
 }
 
 async function getGroupsSnapshot(options = {}) {
     const raw = groupsApi ? await groupsApi() : [];
     const items = Array.isArray(raw) ? raw : [];
+    const knownJids = new Set(items.map(i => i?.jid).filter(Boolean));
+
+    try {
+        const stored = listDashboardGroupInfos();
+        for (const s of stored) {
+            if (!knownJids.has(s.jid)) {
+                try { deleteDashboardGroupInfo(s.jid); } catch (_) {}
+            }
+        }
+    } catch (_) {}
+
     const seen = new Set();
     const out = [];
-
     for (const item of items) {
         const base = normalizeGroupItem(item);
         if (!base || seen.has(base.jid)) continue;

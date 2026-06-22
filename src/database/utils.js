@@ -62,6 +62,16 @@ db.exec(`
         updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS dashboard_group_info (
+        jid          TEXT PRIMARY KEY,
+        subject      TEXT,
+        picture_url  TEXT,
+        member_count INTEGER NOT NULL DEFAULT 0,
+        owner_jid    TEXT,
+        desc         TEXT,
+        updated_at   INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS dashboard_logs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         type        TEXT NOT NULL,
@@ -707,6 +717,89 @@ function clearDashboardLogs() {
         console.error('❌ [dashboard_logs] clear:', e.message);
         return 0;
     }
+}
+
+// ============================================================
+// Dashboard group info (persistente em SQLite)
+// Mantém subject, foto, contagem de membros, owner e descrição
+// para sincronizar com o painel mesmo após restart.
+// ============================================================
+const _dgiGet = db.prepare(`
+    SELECT subject, picture_url, member_count, owner_jid, desc, updated_at
+    FROM dashboard_group_info WHERE jid = ?
+`);
+const _dgiAll = db.prepare(`
+    SELECT jid, subject, picture_url, member_count, owner_jid, desc, updated_at
+    FROM dashboard_group_info
+`);
+const _dgiUpsert = db.prepare(`
+    INSERT INTO dashboard_group_info
+        (jid, subject, picture_url, member_count, owner_jid, desc, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET
+        subject      = excluded.subject,
+        picture_url  = excluded.picture_url,
+        member_count = excluded.member_count,
+        owner_jid    = excluded.owner_jid,
+        desc         = excluded.desc,
+        updated_at   = excluded.updated_at
+`);
+const _dgiDelete = db.prepare(`DELETE FROM dashboard_group_info WHERE jid = ?`);
+
+function upsertDashboardGroupInfo(jid, patch = {}) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    const prev = _dgiGet.get(jid) || {};
+    const subject = patch.subject !== undefined ? patch.subject : prev.subject;
+    const pictureUrl = patch.pictureUrl !== undefined ? patch.pictureUrl : prev.picture_url;
+    const memberCount = patch.memberCount !== undefined ? Number(patch.memberCount) || 0 : (prev.member_count || 0);
+    const ownerJid = patch.ownerJid !== undefined ? patch.ownerJid : prev.owner_jid;
+    const desc = patch.desc !== undefined ? patch.desc : prev.desc;
+    try {
+        _dgiUpsert.run(jid, subject || null, pictureUrl || null, memberCount, ownerJid || null, desc || null, Date.now());
+        return true;
+    } catch (e) {
+        console.error('❌ [dashboard_group_info] upsert:', e.message);
+        return false;
+    }
+}
+
+function getDashboardGroupInfo(jid) {
+    if (!jid) return null;
+    try {
+        const r = _dgiGet.get(jid);
+        if (!r) return null;
+        return {
+            jid,
+            subject: r.subject || null,
+            pictureUrl: r.picture_url || null,
+            memberCount: r.member_count || 0,
+            ownerJid: r.owner_jid || null,
+            desc: r.desc || null,
+            updatedAt: r.updated_at
+        };
+    } catch (_) { return null; }
+}
+
+function listDashboardGroupInfos() {
+    try {
+        const rows = _dgiAll.all();
+        return rows.map(r => ({
+            jid: r.jid,
+            subject: r.subject || null,
+            pictureUrl: r.picture_url || null,
+            memberCount: r.member_count || 0,
+            ownerJid: r.owner_jid || null,
+            desc: r.desc || null,
+            updatedAt: r.updated_at
+        }));
+    } catch (e) {
+        console.error('❌ [dashboard_group_info] list:', e.message);
+        return [];
+    }
+}
+
+function deleteDashboardGroupInfo(jid) {
+    try { _dgiDelete.run(jid); return true; } catch (_) { return false; }
 }
 
 // --- Group Settings (visão mesclada JSON + SQLite) ---
@@ -1389,5 +1482,6 @@ module.exports = {
     canAdminControl,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
     updateDashboardLogReactions, clearDashboardLogs,
+    upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     flushNow
 };

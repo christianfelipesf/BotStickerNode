@@ -72,7 +72,11 @@ module.exports = {
             if (protocolMsg) {
                 if (protocolMsg.type === 3 && isGroup && isDashboardEnabled(from)) {
                     const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
-                    safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
+                    safeDashboardRememberGroup(from, {
+                        subject: groupMetadata.subject,
+                        memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
+                        ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
+                    });
                     
                     safeDashboardLog('chat',
                         groupMetadata.subject,
@@ -148,7 +152,12 @@ module.exports = {
             // Log no Dashboard (Apenas com dashboard opt-in - independente de o bot estar ativo ou não no grupo)
             if (isGroup && isDashboardEnabled(from)) {
                 const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
-                safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
+                safeDashboardRememberGroup(from, {
+                    subject: groupMetadata.subject,
+                    memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
+                    ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null,
+                    desc: groupMetadata.desc || groupMetadata.description || null
+                });
                 const mediaMsg = getMediaMessage(m.message);
                 let mediaInfo = null;
                 let hidden = false;
@@ -287,7 +296,11 @@ module.exports = {
             if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard'].includes(cmd.name)) return;
 
             const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
-            if (isGroup) safeDashboardRememberGroup(from, { subject: groupMetadata.subject });
+            if (isGroup) safeDashboardRememberGroup(from, {
+                subject: groupMetadata.subject,
+                memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
+                ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
+            });
             const botActiveInGroup = isGroup && isActiveGroup(from);
             if (botActiveInGroup || !isGroup) {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });

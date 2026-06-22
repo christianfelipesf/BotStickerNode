@@ -1,13 +1,23 @@
-const { isDashboardEnabled } = require('../database/utils');
+const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo } = require('../database/utils');
 const dashboard = require('../dashboard/dashboard');
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
+const safeRemember = (...args) => { try { dashboard.rememberGroupInfo(...args); } catch (_) {} };
 
 module.exports = {
     handleGroupParticipantsUpdate: async (sock, anu) => {
         if (!isDashboardEnabled(anu.id)) return;
         try {
-            const metadata = await sock.groupMetadata(anu.id);
+            const metadata = await sock.groupMetadata(anu.id).catch(() => null);
+            const subject = metadata?.subject || null;
+            const memberCount = Array.isArray(metadata?.participants) ? metadata.participants.length : undefined;
+            if (subject) {
+                safeRemember(anu.id, { subject, memberCount });
+            } else if (memberCount !== undefined) {
+                safeRemember(anu.id, { memberCount });
+            }
+            if (!metadata) return;
+
             for (const num of anu.participants) {
                 const phone = num.split('@')[0];
                 let text = '';
@@ -17,7 +27,7 @@ module.exports = {
                 else if (anu.action === 'demote') text = `Rebaixado de admin`;
                 
                 if (text) {
-                    safeDashboardLog('event', metadata.subject, text, null, phone, null, { 
+                    safeDashboardLog('event', subject || 'Grupo', text, null, phone, null, { 
                         toJid: anu.id, 
                         senderJid: num, 
                         fromMe: false 
