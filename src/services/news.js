@@ -3,7 +3,8 @@ const {
     readConfig,
     listNewsGroups,
     getNewsState,
-    setNewsState
+    setNewsState,
+    isNewsEnabled
 } = require('../database/utils');
 
 const STATE_KEY = 'lastSeenPostIds';
@@ -11,7 +12,11 @@ const HTTP_TIMEOUT_MS = 20 * 1000;
 
 let sockRef = null;
 let pollTimer = null;
-let running = false;
+let isShuttingDown = false;
+
+// Fila serial de envio (processa 1 post por vez)
+const sendQueue = [];
+let isProcessing = false;
 
 function attachSock(sock) { sockRef = sock; }
 
@@ -23,12 +28,7 @@ function buildHeaders(userAgent) {
 }
 
 function normalizeSubreddit(name) {
-    return String(name || '')
-        .trim()
-        .replace(/^r\//i, '')
-        .replace(/^\//, '')
-        .replace(/\/$/, '')
-        .toLowerCase();
+    return String(name || '').trim().replace(/^r\//i, '').replace(/^\//, '').replace(/\/$/, '').toLowerCase();
 }
 
 function dedupeSubreddits(list) {
@@ -46,12 +46,9 @@ function dedupeSubreddits(list) {
 function decodeEntities(s) {
     if (s == null) return '';
     return String(s)
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, '&');
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 }
 
 function stripHtml(s) {
@@ -69,18 +66,14 @@ function parseRssItems(xml) {
     const items = [];
     const entryRe = /<entry[\s>]([\s\S]*?)<\/entry>/gi;
     const itemRe = /<item[\s>]([\s\S]*?)<\/item>/gi;
-    const blockRe = (xml.includes('<entry')) ? entryRe : itemRe;
+    const blockRe = xml.includes('<entry') ? entryRe : itemRe;
 
     let m;
     while ((m = blockRe.exec(xml)) !== null) {
         const body = m[1];
         const idRaw = extractAttr(body, 'id') || extractAttr(body, 'guid') || '';
         const title = stripHtml((body.match(/<title[\s>]([\s\S]*?)<\/title>/i) || [])[1] || '');
-        const authorRaw = (body.match(/<author[\s>][\s\S]*?<name>([\s\S]*?)<\/name>/i) || [])[1] || '';
-        const author = stripHtml(authorRaw).replace(/^\/u\//, '');
         const link = extractAttr(body, 'href') || stripHtml((body.match(/<link[\s\S]*?\/?>(?:[\s\S]*?<\/link>)?/i) || [])[0] || '');
-        const updated = stripHtml((body.match(/<updated>([\s\S]*?)<\/updated>/i) || [])[1] || '');
-        const published = stripHtml((body.match(/<(?:published|pubDate)>([\s\S]*?)<\/(?:published|pubDate)>/i) || [])[1] || '');
 
         const id = idFromRedditUrl(link) || stripHtml(idRaw);
         if (!id) continue;
@@ -92,11 +85,8 @@ function parseRssItems(xml) {
             id,
             title,
             selftext,
-            author: author ? `u/${author}` : '',
             url: link,
             permalink: link.startsWith('http') ? link : `https://www.reddit.com${link}`,
-            updated,
-            published,
             media
         });
     }
@@ -114,7 +104,6 @@ function extractMedia(body) {
     let contentHtml = '';
     let directImage = '';
     let directVideo = '';
-    let externalLink = '';
 
     const thumbMatch = body.match(/<media:thumbnail[^>]*url\s*=\s*"([^"]+)"/i);
     if (thumbMatch) thumbnail = decodeEntities(thumbMatch[1]);
@@ -143,8 +132,6 @@ function extractMedia(body) {
         if (vidMatch && !directVideo) directVideo = decodeEntities(vidMatch[1]);
     }
 
-    // Se o [link] é uma GIF direta (i.redd.it/xxx.gif) mas o <img> aponta para preview webp,
-    // usar a GIF direta como directImage para que isGifUrl retorne true.
     if (directImage && !/\.gif(\?|$|&)/i.test(directImage) && /\.(gif)(\?|$|&)/i.test(thumbnail)) {
         directImage = thumbnail;
     }
@@ -152,8 +139,7 @@ function extractMedia(body) {
     return {
         thumbnail,
         image: directImage || thumbnail,
-        video: directVideo,
-        externalLink
+        video: directVideo
     };
 }
 
@@ -162,11 +148,8 @@ function extractSelftext(body) {
     if (!contentMatch) return '';
     const decoded = decodeEntities(contentMatch[1]);
 
-    // O selftext fica DEPOIS do bloco <table>...<img>...</table> e DEPOIS do "submitted by".
-    // Estratégia: pegar tudo após "</table>" e limpar.
     const afterTable = decoded.split(/<\/table>/i).slice(1).join('</table>') || decoded;
 
-    // Remover tags, mas preservar quebras de parágrafo (<p>) e listas
     let text = afterTable
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
@@ -177,7 +160,6 @@ function extractSelftext(body) {
         .replace(/&#32;/g, ' ')
         .replace(/\u00a0/g, ' ');
 
-    // Limpar lixo: " submitted by ", "[link]", "[comments]", " /u/USER ", etc.
     text = text
         .replace(/\s*submitted by\s*/i, '')
         .replace(/\s*\/?u\/[A-Za-z0-9_\-]+\s*/g, ' ')
@@ -190,10 +172,7 @@ function extractSelftext(body) {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 
-    // Limite razoável para não estourar a caption do WhatsApp (que tem limite)
-    if (text.length > 800) {
-        text = text.slice(0, 797) + '...';
-    }
+    if (text.length > 800) text = text.slice(0, 797) + '...';
     return text;
 }
 
@@ -246,8 +225,6 @@ function buildCaption(post, sub, showMeta) {
 function isGifUrl(url) {
     if (!url) return false;
     const u = String(url);
-    // Detecta .gif mesmo se tiver auto=webp ou outros query params depois
-    // Ex: https://preview.redd.it/abc.gif?width=640&auto=webp&s=...
     if (/\/[^./?#]+\.gif(\?|$|#|&)/i.test(u)) return true;
     if (/\.gif(\?|$|&)/i.test(u)) return true;
     return false;
@@ -261,86 +238,11 @@ function isVideoUrl(url) {
     return false;
 }
 
-async function sendPostToGroup(sock, jid, post, sub) {
-    const caption = buildCaption(post, sub);
-    const cfg = readConfig();
-    const media = post.media || {};
-
-    if (media.video && isVideoUrl(media.video)) {
-        try {
-            const dl = await downloadToBuffer(media.video, cfg.newsUserAgent);
-            if (dl && dl.buffer && dl.buffer.length > 0) {
-                await sock.sendMessage(jid, {
-                    video: dl.buffer,
-                    mimetype: dl.mime || 'video/mp4',
-                    caption
-                });
-                return;
-            }
-        } catch (e) {
-            console.error(`📰 [news] falha vídeo r/${sub}:`, e.message);
-        }
-    }
-
-    if (media.image) {
-        try {
-            const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
-            if (dl && dl.buffer && dl.buffer.length > 0) {
-                const isGif = isGifUrl(media.image) || (dl.mime && dl.mime.toLowerCase().includes('gif'));
-                if (isGif) {
-                    await sock.sendMessage(jid, {
-                        video: dl.buffer,
-                        mimetype: 'video/mp4',
-                        gifPlayback: true,
-                        caption
-                    });
-                } else {
-                    await sock.sendMessage(jid, {
-                        image: dl.buffer,
-                        mimetype: dl.mime || 'image/jpeg',
-                        caption
-                    });
-                }
-                return;
-            }
-        } catch (e) {
-            console.error(`📰 [news] falha imagem r/${sub}:`, e.message);
-        }
-    }
-
-    const fallback = `${caption}\n\n🔗 ${post.permalink || post.url || ''}`.trim();
-    await sock.sendMessage(jid, { text: fallback });
-}
-
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function isRateLimitError(err) {
-    const msg = String((err && (err.message || err.output?.statusMessage)) || err || '').toLowerCase();
-    return msg.includes('rate') || msg.includes('overlimit') || msg.includes('429') || msg.includes('too many');
-}
-
-async function sendWithRetry(sock, jid, payload, opts = {}) {
-    const retries = Math.max(0, Number(opts.retries) || 0);
-    const baseDelay = Math.max(500, Number(opts.retryDelayMs) || 3000);
-    let lastErr;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            return await sock.sendMessage(jid, payload);
-        } catch (e) {
-            lastErr = e;
-            if (!isRateLimitError(e) || attempt >= retries) throw e;
-            const wait = baseDelay * (attempt + 1);
-            console.error(`📰 [news] rate-limit em ${jid}, aguardando ${Math.round(wait / 1000)}s antes de retentar (${attempt + 1}/${retries})`);
-            await sleep(wait);
-        }
-    }
-    throw lastErr;
-}
-
-async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) {
-    const showMeta = !!(readConfig().newsShowMeta);
+async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
@@ -351,8 +253,7 @@ async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) 
             if (dl && dl.buffer && dl.buffer.length > 0) {
                 const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
                 if (caption) payload.caption = caption;
-                await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
-                return;
+                return await sock.sendMessage(jid, payload);
             }
         } catch (e) {
             console.error(`📰 [news] falha vídeo r/${sub}:`, e.message);
@@ -372,17 +273,16 @@ async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) 
                 if (urlIsVideo || bufferIsVideo) {
                     const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
                     if (caption) payload.caption = caption;
-                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                    return await sock.sendMessage(jid, payload);
                 } else if (urlIsGif || bufferIsGif) {
                     const payload = { video: dl.buffer, mimetype: 'video/mp4', gifPlayback: true };
                     if (caption) payload.caption = caption;
-                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                    return await sock.sendMessage(jid, payload);
                 } else {
                     const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg' };
                     if (caption) payload.caption = caption;
-                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                    return await sock.sendMessage(jid, payload);
                 }
-                return;
             }
         } catch (e) {
             console.error(`📰 [news] falha imagem r/${sub}:`, e.message);
@@ -390,95 +290,127 @@ async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) 
     }
 
     if (caption && showMeta) {
-        await sendWithRetry(sock, jid, { text: caption }, { retries, retryDelayMs: retryBaseDelayMs });
+        return await sock.sendMessage(jid, { text: caption });
+    }
+}
+
+// Enfileira um post para envio. Retorna true se enfileirado.
+function enqueuePost(post, sub) {
+    if (!sockRef) return false;
+    sendQueue.push({ post, sub, enqueuedAt: Date.now() });
+    scheduleProcessQueue();
+    return true;
+}
+
+// Processa a fila serialmente com setImmediate entre itens para nunca bloquear
+function scheduleProcessQueue() {
+    if (isProcessing) return;
+    isProcessing = true;
+    setImmediate(processQueue);
+}
+
+async function processQueue() {
+    try {
+        while (!isShuttingDown && sendQueue.length > 0 && sockRef) {
+            const { post, sub } = sendQueue.shift();
+
+            const cfg = readConfig();
+            const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
+            if (groups.length === 0) {
+                // Nenhum grupo quer receber; descarta
+                continue;
+            }
+
+            const showMeta = !!cfg.newsShowMeta;
+            const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
+
+            for (const jid of groups) {
+                if (isShuttingDown) break;
+                if (!isNewsEnabled(jid)) continue;
+
+                try {
+                    await sendOne(sockRef, jid, post, sub, showMeta);
+                } catch (e) {
+                    const msg = String(e?.message || e || '').toLowerCase();
+                    if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
+                        console.error(`📰 [news] rate-limit em ${jid}; aguardando 30s`);
+                        await sleep(30000);
+                    } else {
+                        console.error(`📰 [news] erro ao enviar ${post.id} para ${jid}:`, e?.message || e);
+                    }
+                }
+
+                if (sendDelayMs > 0) await sleep(sendDelayMs);
+            }
+
+            // Marca como visto imediatamente após processar (em vez de depender do envio)
+            const lastSeen = getNewsState(STATE_KEY, {}) || {};
+            const list = lastSeen[sub] || [];
+            if (!list.includes(post.id)) {
+                lastSeen[sub] = [...list, post.id].slice(-200);
+                if (!lastSeen.__bootInitialized) lastSeen.__bootInitialized = Date.now();
+                setNewsState(STATE_KEY, lastSeen);
+            }
+
+            // Libera o event loop entre posts
+            await new Promise(resolve => setImmediate(resolve));
+        }
+    } finally {
+        isProcessing = false;
     }
 }
 
 async function pollOnce() {
-    if (running) return;
-    if (!sockRef) return;
-    const groups = listNewsGroups();
+    if (isShuttingDown || !sockRef) return;
+
+    const cfg = readConfig();
+    const subs = dedupeSubreddits(cfg.newsSubreddits);
+    if (subs.length === 0) return;
+
+    const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
     if (groups.length === 0) {
         console.log('📰 [news] nenhum grupo com feed ativado.');
         return;
     }
 
-    const cfg = readConfig();
-    const subs = dedupeSubreddits(cfg.newsSubreddits);
-    if (subs.length === 0) {
-        console.log('📰 [news] nenhum subreddit configurado.');
-        return;
+    const maxPerCycle = Math.max(1, Number(cfg.newsMaxPerCycle) || 1);
+
+    const lastSeen = getNewsState(STATE_KEY, {}) || {};
+    const isFirstBoot = !lastSeen.__bootInitialized;
+
+    // Marca inicialização IMEDIATAMENTE (sem esperar enfileirar)
+    if (isFirstBoot) {
+        lastSeen.__bootInitialized = Date.now();
+        setNewsState(STATE_KEY, lastSeen);
     }
 
-    const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
-    const maxPerCycle = Math.max(1, Number(cfg.newsMaxPerCycle) || 1);
-    const retries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
-    const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
+    for (const sub of subs) {
+        let posts = [];
+        try {
+            posts = await fetchSubredditFeed(sub, cfg.newsUserAgent);
+        } catch (e) {
+            console.error(`📰 [news] falha ao buscar feed r/${sub}:`, e.message);
+            continue;
+        }
+        if (posts.length === 0) continue;
 
-    running = true;
-    try {
-        const lastSeen = getNewsState(STATE_KEY, {}) || {};
-        const isFirstBoot = !lastSeen.__bootInitialized;
-        const newSeen = { ...lastSeen, __bootInitialized: lastSeen.__bootInitialized || Date.now() };
-        let totalAttempted = 0;
-        let totalSent = 0;
+        const known = new Set(lastSeen[sub] || []);
+        let fresh = posts.filter(p => p && p.id && !known.has(p.id));
+        if (fresh.length === 0) continue;
 
-        for (const sub of subs) {
-            let posts = [];
-            try {
-                posts = await fetchSubredditFeed(sub, cfg.newsUserAgent);
-            } catch (e) {
-                console.error(`📰 [news] falha ao buscar feed r/${sub}:`, e.message);
-                continue;
-            }
-            if (posts.length === 0) continue;
+        // Na primeira execução: enfileira no máx maxPerCycle (descarta o resto)
+        // Nas seguintes: enfileira TUDO, mas o processQueue respeita o delay
+        const toEnqueue = isFirstBoot ? fresh.slice(0, maxPerCycle) : fresh;
 
-            const known = new Set(lastSeen[sub] || []);
-            const fresh = posts.filter(p => p && p.id && !known.has(p.id));
+        console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enfileirando ${toEnqueue.length}.`);
 
-            if (fresh.length === 0) continue;
-
-            const batch = isFirstBoot ? fresh.slice(0, maxPerCycle) : fresh;
-
-            console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enviando ${batch.length} neste ciclo.`);
-
-            for (const post of [...batch].reverse()) {
-                newSeen[sub] = [...(newSeen[sub] || []), post.id].slice(-200);
-                let subSuccess = 0;
-                for (const jid of groups) {
-                    totalAttempted++;
-                    try {
-                        await sendPostToGroup(sockRef, jid, post, sub, retries, retryBaseDelayMs);
-                        totalSent++;
-                        subSuccess++;
-                    } catch (e) {
-                        console.error(`📰 [news] erro ao enviar ${post.id} para ${jid}:`, e.message);
-                    }
-                    if (sendDelayMs > 0) await sleep(sendDelayMs);
-                }
-                if (subSuccess === 0 && groups.length > 0) {
-                    const backoff = retryBaseDelayMs * 2;
-                    console.error(`📰 [news] todas as tentativas falharam; aguardando ${Math.round(backoff / 1000)}s antes de continuar.`);
-                    await sleep(backoff);
-                }
-            }
-
-            setNewsState(STATE_KEY, newSeen);
-
-            if (isFirstBoot && fresh.length > batch.length) {
-                console.log(`📰 [news] r/${sub}: ${fresh.length - batch.length} post(s) restante(s) ignorado(s) (primeira execução, limite=${maxPerCycle}).`);
-            }
+        for (const post of toEnqueue) {
+            enqueuePost(post, sub);
         }
 
-        if (totalSent > 0) {
-            console.log(`📰 [news] ${totalSent} post(s) enviado(s) com sucesso de ${totalAttempted} tentativa(s).`);
-        } else if (totalAttempted === 0) {
-            console.log(`📰 [news] nenhum post novo.`);
-        } else {
-            console.log(`📰 [news] ${totalAttempted} tentativa(s) de envio, todas falharam (provável rate-limit).`);
+        if (isFirstBoot && fresh.length > toEnqueue.length) {
+            console.log(`📰 [news] r/${sub}: ${fresh.length - toEnqueue.length} post(s) restante(s) ignorado(s) (backlog descartado na 1ª execução).`);
         }
-    } finally {
-        running = false;
     }
 }
 
@@ -497,6 +429,7 @@ function start() {
 }
 
 function stop() {
+    isShuttingDown = true;
     if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
