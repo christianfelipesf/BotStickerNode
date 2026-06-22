@@ -28,7 +28,9 @@ module.exports = {
             }
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
-            else config[p] = (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled') ? v.toLowerCase() === 'true' : (p === 'summaryLimit' ? parseInt(v) : v);
+            else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled') config[p] = v.toLowerCase() === 'true';
+            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsPollIntervalMs' || p === 'newsSendDelayMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
+            else config[p] = v;
             
             writeConfig(config);
             // Refresh local config and AI
