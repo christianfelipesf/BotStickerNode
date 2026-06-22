@@ -424,6 +424,9 @@ async function pollOnce() {
 
 function start() {
     stop();
+    isShuttingDown = false;
+    sendQueue.length = 0;
+    isProcessing = false;
     const cfg = readConfig();
     const ms = Math.max(60 * 1000, Number(cfg.newsPollIntervalMs) || 5 * 60 * 1000);
     pollTimer = setInterval(() => {
@@ -433,7 +436,7 @@ function start() {
     setTimeout(() => {
         pollOnce().catch(err => console.error('📰 [news] initial poll:', err?.message || err));
     }, 20 * 1000);
-    console.log(`📰 [news] polling ativado a cada ${Math.round(ms / 1000)}s`);
+    console.log(`📰 [news] polling ativado a cada ${Math.round(ms / 1000)}s (subs: ${(cfg.newsSubreddits || []).join(', ')})`);
 }
 
 function stop() {

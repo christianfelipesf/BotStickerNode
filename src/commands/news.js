@@ -1,3 +1,9 @@
+function formatInterval(ms) {
+    const total = Math.max(1000, Number(ms) || 300000);
+    if (total < 60 * 1000) return `${Math.round(total / 1000)}s`;
+    return `${Math.round(total / 60000)} min`;
+}
+
 module.exports = {
     name: 'news',
     aliases: ['noticias', 'feed'],
@@ -42,7 +48,7 @@ module.exports = {
             setNewsEnabled(from, true);
             const subsText = subs.map(s => `r/${s}`).join(', ');
             await sock.sendMessage(from, {
-                text: `📰 *Feed de notícias ativado!*\n\n📡 Subreddits: ${subsText}\n⏱️ Intervalo: ${Math.round((cfg.newsPollIntervalMs || 300000) / 60000)} min\n\nUse *${config.prefix}news desativar* para parar.`
+                text: `📰 *Feed de notícias ativado!*\n\n📡 Subreddits: ${subsText}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMs || 300000)}\n\nUse *${config.prefix}news desativar* para parar.`
             }, { quoted: m });
             return await react(sock, m, '🟢', lastBotResponse, GLOBAL_COOLDOWN);
         }
@@ -81,7 +87,7 @@ module.exports = {
             const enabled = isNewsEnabled(from);
             const totalGroups = listNewsGroups().length;
             await sock.sendMessage(from, {
-                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n⏱️ Intervalo: ${Math.round((cfg.newsPollIntervalMs || 300000) / 60000)} min\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
+                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMs || 300000)}\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
             }, { quoted: m });
             return await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
         }
