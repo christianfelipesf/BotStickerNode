@@ -86,10 +86,12 @@ function parseRssItems(xml) {
         if (!id) continue;
 
         const media = extractMedia(body);
+        const selftext = extractSelftext(body);
 
         items.push({
             id,
             title,
+            selftext,
             author: author ? `u/${author}` : '',
             url: link,
             permalink: link.startsWith('http') ? link : `https://www.reddit.com${link}`,
@@ -149,6 +151,46 @@ function extractMedia(body) {
     };
 }
 
+function extractSelftext(body) {
+    const contentMatch = body.match(/<content[^>]*type\s*=\s*"html"[^>]*>([\s\S]*?)<\/content>/i);
+    if (!contentMatch) return '';
+    const decoded = decodeEntities(contentMatch[1]);
+
+    // O selftext fica DEPOIS do bloco <table>...<img>...</table> e DEPOIS do "submitted by".
+    // Estratégia: pegar tudo após "</table>" e limpar.
+    const afterTable = decoded.split(/<\/table>/i).slice(1).join('</table>') || decoded;
+
+    // Remover tags, mas preservar quebras de parágrafo (<p>) e listas
+    let text = afterTable
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+        .replace(/<\/(ul|ol)>\s*<li[^>]*>/gi, '\n• ')
+        .replace(/<\/?(ul|ol|li|p|div|span)[^>]*>/gi, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#32;/g, ' ')
+        .replace(/\u00a0/g, ' ');
+
+    // Limpar lixo: " submitted by ", "[link]", "[comments]", " /u/USER ", etc.
+    text = text
+        .replace(/\s*submitted by\s*/i, '')
+        .replace(/\s*\/?u\/[A-Za-z0-9_\-]+\s*/g, ' ')
+        .replace(/\s*\[link\]\s*/gi, ' ')
+        .replace(/\s*\[comments\]\s*/gi, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n[ \t]+/g, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    // Limite razoável para não estourar a caption do WhatsApp (que tem limite)
+    if (text.length > 800) {
+        text = text.slice(0, 797) + '...';
+    }
+    return text;
+}
+
 async function fetchSubredditFeed(sub, userAgent) {
     const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
     const res = await axios.get(url, {
@@ -178,19 +220,21 @@ async function downloadToBuffer(mediaUrl, userAgent) {
     return { buffer: Buffer.from(res.data), mime: String(mime).split(';')[0].trim() };
 }
 
-function buildCaption(post, sub) {
-    const title = post.title || '';
-    const author = post.author || '';
-    const permalink = post.permalink || post.url || '';
-    const dateStr = (post.published || post.updated || '').slice(0, 16).replace('T', ' ');
-    const lines = [
-        `📰 *r/${sub}*`,
-        `*${title}*`,
-    ];
-    if (author) lines.push(`👤 ${author}`);
-    if (dateStr) lines.push(`🕒 ${dateStr}`);
-    if (permalink) lines.push(`🔗 ${permalink}`);
-    return lines.filter(Boolean).join('\n');
+function buildCaption(post, sub, showMeta) {
+    const title = (post.title || '').trim();
+    const selftext = (post.selftext || '').trim();
+
+    if (showMeta) {
+        const lines = [];
+        if (title) lines.push(`*${title}*`);
+        if (selftext) lines.push(selftext);
+        const permalink = post.permalink || post.url || '';
+        if (permalink) lines.push(permalink);
+        return lines.join('\n');
+    }
+
+    if (title && selftext) return `*${title}*\n\n${selftext}`;
+    return title || selftext || '';
 }
 
 function isGifUrl(url) {
@@ -252,6 +296,79 @@ async function sendPostToGroup(sock, jid, post, sub) {
     await sock.sendMessage(jid, { text: fallback });
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(err) {
+    const msg = String((err && (err.message || err.output?.statusMessage)) || err || '').toLowerCase();
+    return msg.includes('rate') || msg.includes('overlimit') || msg.includes('429') || msg.includes('too many');
+}
+
+async function sendWithRetry(sock, jid, payload, opts = {}) {
+    const retries = Math.max(0, Number(opts.retries) || 0);
+    const baseDelay = Math.max(500, Number(opts.retryDelayMs) || 3000);
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await sock.sendMessage(jid, payload);
+        } catch (e) {
+            lastErr = e;
+            if (!isRateLimitError(e) || attempt >= retries) throw e;
+            const wait = baseDelay * (attempt + 1);
+            console.error(`📰 [news] rate-limit em ${jid}, aguardando ${Math.round(wait / 1000)}s antes de retentar (${attempt + 1}/${retries})`);
+            await sleep(wait);
+        }
+    }
+    throw lastErr;
+}
+
+async function sendPostToGroup(sock, jid, post, sub, retries, retryBaseDelayMs) {
+    const showMeta = !!(readConfig().newsShowMeta);
+    const caption = buildCaption(post, sub, showMeta);
+    const cfg = readConfig();
+    const media = post.media || {};
+
+    if (media.video && isVideoUrl(media.video)) {
+        try {
+            const dl = await downloadToBuffer(media.video, cfg.newsUserAgent);
+            if (dl && dl.buffer && dl.buffer.length > 0) {
+                const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
+                if (caption) payload.caption = caption;
+                await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                return;
+            }
+        } catch (e) {
+            console.error(`📰 [news] falha vídeo r/${sub}:`, e.message);
+        }
+    }
+
+    if (media.image) {
+        try {
+            const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
+            if (dl && dl.buffer && dl.buffer.length > 0) {
+                const isGif = isGifUrl(media.image) || (dl.mime && dl.mime.toLowerCase().includes('gif'));
+                if (isGif) {
+                    const payload = { video: dl.buffer, mimetype: 'video/mp4', gifPlayback: true };
+                    if (caption) payload.caption = caption;
+                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                } else {
+                    const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg' };
+                    if (caption) payload.caption = caption;
+                    await sendWithRetry(sock, jid, payload, { retries, retryDelayMs: retryBaseDelayMs });
+                }
+                return;
+            }
+        } catch (e) {
+            console.error(`📰 [news] falha imagem r/${sub}:`, e.message);
+        }
+    }
+
+    if (caption && showMeta) {
+        await sendWithRetry(sock, jid, { text: caption }, { retries, retryDelayMs: retryBaseDelayMs });
+    }
+}
+
 async function pollOnce() {
     if (running) return;
     if (!sockRef) return;
@@ -268,10 +385,17 @@ async function pollOnce() {
         return;
     }
 
+    const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
+    const maxPerCycle = Math.max(1, Number(cfg.newsMaxPerCycle) || 1);
+    const retries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
+    const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
+
     running = true;
     try {
         const lastSeen = getNewsState(STATE_KEY, {}) || {};
         const newSeen = { ...lastSeen };
+        const isFirstBoot = !lastSeen.__bootInitialized;
+        let totalAttempted = 0;
         let totalSent = 0;
 
         for (const sub of subs) {
@@ -287,30 +411,51 @@ async function pollOnce() {
             const known = new Set(lastSeen[sub] || []);
             const fresh = posts.filter(p => p && p.id && !known.has(p.id));
 
-            for (const post of [...fresh].reverse()) {
-                let allOk = true;
+            if (fresh.length === 0) continue;
+
+            const batch = isFirstBoot ? fresh.slice(0, maxPerCycle) : fresh;
+
+            console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enviando ${batch.length} neste ciclo.`);
+
+            for (const post of [...batch].reverse()) {
+                newSeen[sub] = [...(newSeen[sub] || []), post.id].slice(-200);
+                let subSuccess = 0;
                 for (const jid of groups) {
+                    totalAttempted++;
                     try {
-                        await sendPostToGroup(sockRef, jid, post, sub);
+                        await sendPostToGroup(sockRef, jid, post, sub, retries, retryBaseDelayMs);
+                        totalSent++;
+                        subSuccess++;
                     } catch (e) {
-                        allOk = false;
-                        console.error(`📰 [news] erro ao enviar para ${jid}:`, e.message);
+                        console.error(`📰 [news] erro ao enviar ${post.id} para ${jid}:`, e.message);
                     }
+                    if (sendDelayMs > 0) await sleep(sendDelayMs);
                 }
-                if (allOk) {
-                    newSeen[sub] = [...(newSeen[sub] || []), post.id].slice(-100);
-                    totalSent++;
-                } else {
-                    console.error(`📰 [news] post ${post.id} de r/${sub} NÃO marcado como visto (houve falha no envio)`);
+                if (subSuccess === 0 && groups.length > 0) {
+                    const backoff = retryBaseDelayMs * 2;
+                    console.error(`📰 [news] todas as tentativas falharam; aguardando ${Math.round(backoff / 1000)}s antes de continuar.`);
+                    await sleep(backoff);
                 }
+            }
+
+            setNewsState(STATE_KEY, newSeen);
+
+            if (isFirstBoot && fresh.length > batch.length) {
+                console.log(`📰 [news] r/${sub}: ${fresh.length - batch.length} post(s) restante(s) ignorado(s) (primeira execução, limite=${maxPerCycle}).`);
             }
         }
 
-        setNewsState(STATE_KEY, newSeen);
+        if (isFirstBoot) {
+            newSeen.__bootInitialized = Date.now();
+            setNewsState(STATE_KEY, newSeen);
+        }
+
         if (totalSent > 0) {
-            console.log(`📰 [news] ${totalSent} post(s) novo(s) enviado(s) para ${groups.length} grupo(s).`);
-        } else {
+            console.log(`📰 [news] ${totalSent} post(s) enviado(s) com sucesso de ${totalAttempted} tentativa(s).`);
+        } else if (totalAttempted === 0) {
             console.log(`📰 [news] nenhum post novo.`);
+        } else {
+            console.log(`📰 [news] ${totalAttempted} tentativa(s) de envio, todas falharam (provável rate-limit).`);
         }
     } finally {
         running = false;

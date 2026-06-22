@@ -131,8 +131,13 @@ const DEFAULT_CONFIG = {
     dashboardHistoryHours: 72,
     adminCanControl: false,
     newsSubreddits: ['ShitpostBR'],
-    newsPollIntervalMs: 5 * 60 * 1000,
-    newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    newsPollIntervalMs: 10 * 60 * 1000,
+    newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    newsSendDelayMs: 5000,
+    newsMaxPerCycle: 1,
+    newsMaxRetries: 3,
+    newsRetryBaseDelayMs: 15000,
+    newsShowMeta: false
 };
 
 
