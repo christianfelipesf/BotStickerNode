@@ -179,6 +179,7 @@ function extractSelftext(body) {
 
 let _rateLimitedUntil = 0;
 let _consecutiveRateLimits = 0;
+const _subCooldownUntil = new Map();
 
 async function fetchSubredditFeed(sub, userAgent) {
     const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
@@ -196,6 +197,9 @@ async function fetchSubredditFeed(sub, userAgent) {
             _consecutiveRateLimits++;
             const waitMs = baseWait * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
             _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            const prev = _subCooldownUntil.get(sub) || 0;
+            const subUntil = Date.now() + waitMs;
+            if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
             console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${_consecutiveRateLimits})`);
             return { __rateLimited: true, items: [] };
         }
@@ -204,6 +208,7 @@ async function fetchSubredditFeed(sub, userAgent) {
             return { __rateLimited: false, items: [] };
         }
         _consecutiveRateLimits = 0;
+        _subCooldownUntil.delete(sub);
         return { __rateLimited: false, items: parseRssItems(String(res.data)) };
     } catch (e) {
         const msg = String(e?.message || '').toLowerCase();
@@ -211,6 +216,9 @@ async function fetchSubredditFeed(sub, userAgent) {
             _consecutiveRateLimits++;
             const waitMs = 120 * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
             _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            const prev = _subCooldownUntil.get(sub) || 0;
+            const subUntil = Date.now() + waitMs;
+            if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
             return { __rateLimited: true, items: [] };
         }
         throw e;
@@ -432,6 +440,14 @@ async function pollOnce() {
 
     for (const sub of subsToCheck) {
         if (Date.now() < _rateLimitedUntil) break;
+
+        // Cooldown por sub: pula este e tenta o próximo.
+        const subCooldown = _subCooldownUntil.get(sub) || 0;
+        if (Date.now() < subCooldown) {
+            const wait = Math.round((subCooldown - Date.now()) / 1000);
+            console.log(`📰 [news] r/${sub}: em cooldown por mais ${wait}s — pulando.`);
+            continue;
+        }
 
         let result = { __rateLimited: false, items: [] };
         try {
