@@ -279,6 +279,12 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         onRetry: (n, wait) => console.warn(`📰 [news] rate-limit r/${sub} → ${jid} tentativa ${n}, aguardando ${wait}ms`)
     };
 
+    await new Promise(resolve => setImmediate(resolve));
+    if (Date.now() < _rateLimitedUntil) {
+        console.log(`📰 [news] pulando envio para ${jid} (rate-limit global ativo).`);
+        return;
+    }
+
     if (media.video && isVideoUrl(media.video)) {
         try {
             const dl = await downloadToBuffer(media.video, cfg.newsUserAgent);
@@ -447,7 +453,9 @@ async function pollOnce() {
         let fresh = posts.filter(p => p && p.id && !known.has(p.id));
         if (fresh.length === 0) continue;
 
-        const toEnqueue = isFirstBoot ? fresh.slice(0, maxPerCycle) : fresh;
+        const toEnqueue = isFirstBoot
+            ? fresh.slice(0, maxPerCycle)
+            : (maxPerCycle > 0 ? fresh.slice(0, maxPerCycle) : fresh);
 
         console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enfileirando ${toEnqueue.length}.`);
 
