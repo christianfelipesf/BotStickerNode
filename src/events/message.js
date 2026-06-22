@@ -13,7 +13,8 @@ const {
     readStats, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
     changeSpeed, getBotName, react, getMessageText,
-    isDashboardEnabled, listDashboardGroups, setDashboardEnabled
+    isDashboardEnabled, listDashboardGroups, setDashboardEnabled,
+    groupMetadataCached
 } = require('../database/utils');
 
 const dashboardCacheMedia = dashboard.cacheMedia;
@@ -92,7 +93,7 @@ module.exports = {
             const protocolMsg = m.message?.protocolMessage || m.message?.ephemeralMessage?.message?.protocolMessage;
             if (protocolMsg) {
                 if (protocolMsg.type === 3 && isGroup && isDashboardEnabled(from)) {
-                    const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                    const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
                     safeDashboardRememberGroup(from, {
                         subject: groupMetadata.subject,
                         memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
@@ -172,7 +173,7 @@ module.exports = {
 
             // Log no Dashboard (Apenas com dashboard opt-in - independente de o bot estar ativo ou não no grupo)
             if (isGroup && isDashboardEnabled(from)) {
-                const groupMetadata = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+                const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
                 safeDashboardRememberGroup(from, {
                     subject: groupMetadata.subject,
                     memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
@@ -316,7 +317,7 @@ module.exports = {
 
             if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard', 'news', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat'].includes(cmd.name)) return;
 
-            const groupMetadata = isGroup ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
+            const groupMetadata = isGroup ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, {
                 subject: groupMetadata.subject,
                 memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,

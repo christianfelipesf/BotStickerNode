@@ -6,16 +6,7 @@
 
 
 
-[ADD] o !limpar LIMPA 10 ULTIMAS MENSAGENS DO GRUPOusa a configuracao do database padrao (10) !limpar 10 !clear 10 !purge 10✅ (o mais comum) !delete 10, !apagar 10, !del 10, !clearchat 10
-
-[FIX] O news tá com problema 
-
- 📰 [news] r/shitpostbr: 20 novo(s), enviando 1 neste ciclo.
-0|BotStick | 📰 [news] r/shitpostbr: 19 post(s) restante(s) ignorado(s) (primeira execução, limite=1).
-0|BotStick | 📰 [news] 2 post(s) enviado(s) com sucesso de 2 tentativa(s).
-0|BotStick | 📰 [news] r/shitpostbr: 19 novo(s), enviando 19 neste ciclo.
-
-ele fica enviando todos os post anteriores sendo que são apenas posts novos, e videos e gifs ele envia como imagem nao como mp4 
+[ERRO] POSTS NOVOS NAO APARECEM NO WHATSAPP
 
  [INTERAÇÃO] Comando !limpar por BotSticker em 120363374777828089@g.us
 0|BotStickerNode  | 💥 [CMD-ERROR] !limpar: Error: rate-overlimit

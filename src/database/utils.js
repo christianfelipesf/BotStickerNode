@@ -1291,6 +1291,65 @@ async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
     }
 }
 
+// ============================================================
+// sendMessageSafe — wrapper com retry/backoff automático para 429
+// rate-overlimit do WhatsApp. Retorna a resposta do envio ou null se
+// esgotadas as tentativas. Usado para todas as mensagens enviadas
+// em loop (news, !limpar, etc.) para não derrubar o bot.
+// ============================================================
+const RATE_LIMIT_BACKOFFS_MS = [2000, 5000, 10000, 20000, 30000];
+const RATE_LIMIT_MAX_RETRIES = RATE_LIMIT_BACKOFFS_MS.length;
+
+function _isRateLimitError(err) {
+    if (!err) return false;
+    const data = err.data || err.output?.payload;
+    if (data?.statusCode === 429) return true;
+    const msg = String(err.message || err || '').toLowerCase();
+    return msg.includes('rate-overlimit') || msg.includes('rate overlimit') || msg.includes('429');
+}
+
+async function sendMessageSafe(sock, jid, payload, options = {}) {
+    const { maxRetries = RATE_LIMIT_MAX_RETRIES, onRetry } = options;
+    let attempt = 0;
+    while (true) {
+        try {
+            return await sock.sendMessage(jid, payload, options.sendOptions || {});
+        } catch (err) {
+            if (_isRateLimitError(err) && attempt < maxRetries) {
+                const wait = RATE_LIMIT_BACKOFFS_MS[attempt] || 30000;
+                try { if (typeof onRetry === 'function') onRetry(attempt + 1, wait, err); } catch (_) {}
+                await new Promise(r => setTimeout(r, wait));
+                attempt++;
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+
+// Cache curto de groupMetadata para evitar hammering (5s TTL)
+const _gmCache = new Map();
+const _gmCacheTtlMs = 5000;
+
+async function groupMetadataCached(sock, jid) {
+    if (!sock || !jid) return { subject: 'Grupo', participants: [] };
+    const cached = _gmCache.get(jid);
+    const now = Date.now();
+    if (cached && now - cached.ts < _gmCacheTtlMs) return cached.data;
+    try {
+        const data = await sock.groupMetadata(jid);
+        _gmCache.set(jid, { ts: now, data });
+        return data;
+    } catch (e) {
+        return { subject: 'Grupo', participants: [] };
+    }
+}
+
+function clearGroupMetadataCache(jid) {
+    if (jid) _gmCache.delete(jid);
+    else _gmCache.clear();
+}
+
 function getMessageText(message) {
     if (!message) return '';
     let m = message;
@@ -1305,8 +1364,9 @@ function getMessageText(message) {
 
 async function getAdmins(sock, jid) {
     try {
-        const metadata = await sock.groupMetadata(jid);
-        return metadata.participants
+        const metadata = await groupMetadataCached(sock, jid);
+        const parts = Array.isArray(metadata.participants) ? metadata.participants : [];
+        return parts
             .filter(p => p.admin === 'admin' || p.admin === 'superadmin' || p.isAdmin || p.isSuperAdmin)
             .map(p => ({ id: p.id, jid: p.jid, lid: p.lid, name: p.name }));
     } catch (e) {
@@ -1558,6 +1618,7 @@ module.exports = {
     changeSpeed, getBotName, react, getMessageText, getVersion,
     updateMemberActivity, getTopMember, getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
+    sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,
