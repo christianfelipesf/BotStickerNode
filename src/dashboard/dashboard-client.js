@@ -243,6 +243,15 @@ function allMessages() {
         .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
+function rerenderActiveChat() {
+    if (!activeJid) return;
+    lastDate = '';
+    chat.innerHTML = '';
+    const list = activeJid === ALL_CHAT_ID ? allMessages() : (messagesByGroup[activeJid] || []);
+    list.forEach(d => appendMessage(d));
+    scrollToBottom();
+}
+
 function renderReactions(reactions) {
     if (!reactions || Object.keys(reactions).length === 0) return '';
     const emojis = Array.from(new Set(Object.values(reactions)));
@@ -351,36 +360,31 @@ window.selectAllChat = () => {
     chatName.textContent = 'Todos';
     chatSub.textContent = 'Mensagens de todos os grupos';
     chatAvatar.innerHTML = '<div class="ch-avatar-img all-avatar">T</div>';
-    lastDate = '';
-    chat.innerHTML = '';
-    allMessages().forEach(d => appendMessage(d));
-    scrollToBottom();
+    clearReply();
+    document.body.classList.add('chat-open');
     messageInput.disabled = false;
     sendBtn.disabled = false;
     document.getElementById('attachBtn').disabled = false;
     composerEl.classList.remove('disabled');
-    clearReply();
-    document.body.classList.add('chat-open');
+    rerenderActiveChat();
     renderGroups();
 };
 
 window.selectGroup = (jid) => {
-    if (!knownGroupJids.has(jid)) return showToast('Grupo indisponivel no dashboard');
+    if (!jid || (knownGroupJids.size && !knownGroupJids.has(jid))) return showToast('Grupo indisponivel no dashboard');
     activeJid = jid;
     const g = groups.find(x => x.jid === jid);
     const subj = g?.subject || jid.split('@')[0];
     chatName.textContent = subj;
     chatSub.textContent = jid.split('@')[0];
     chatAvatar.innerHTML = avatarHtml(g, 'ch-avatar-img');
-    lastDate = '';
-    chat.innerHTML = '';
-    (messagesByGroup[jid] || []).forEach(d => appendMessage(d));
-    scrollToBottom();
+    clearReply();
+    document.body.classList.add('chat-open');
     messageInput.disabled = false;
     sendBtn.disabled = false;
     document.getElementById('attachBtn').disabled = false;
     composerEl.classList.remove('disabled');
-    document.body.classList.add('chat-open');
+    rerenderActiveChat();
     renderGroups();
 };
 groupSearch.addEventListener('input', renderGroups);
@@ -389,33 +393,45 @@ backBtn.addEventListener('click', () => { document.body.classList.remove('chat-o
 socket.on('groups', (list) => {
     groups = Array.isArray(list) ? list : [];
     knownGroupJids = new Set(groups.map(g => g.jid).filter(Boolean));
-    for (const jid of Object.keys(messagesByGroup)) {
-        if (!knownGroupJids.has(jid)) delete messagesByGroup[jid];
-    }
-    if (activeJid && activeJid !== ALL_CHAT_ID && !knownGroupJids.has(activeJid)) {
+    if (activeJid && activeJid !== ALL_CHAT_ID && knownGroupJids.size && !knownGroupJids.has(activeJid)) {
         selectAllChat();
     }
     renderGroups();
 });
 socket.on('history', (history) => {
-    messagesByGroup = {};
-    (Array.isArray(history) ? history : []).forEach(d => {
-        if (!d.toJid) return;
-        if (knownGroupJids.size && !knownGroupJids.has(d.toJid)) return;
+    const incoming = Array.isArray(history) ? history : [];
+    const existingKeys = new Set();
+    for (const jid of Object.keys(messagesByGroup)) {
+        for (const m of messagesByGroup[jid]) {
+            if (m.messageId) existingKeys.add(`${m.toJid}|${m.messageId}|${m.type}`);
+        }
+    }
+    for (const d of incoming) {
+        if (!d || !d.toJid) continue;
+        if (d.messageId) {
+            const k = `${d.toJid}|${d.messageId}|${d.type}`;
+            if (existingKeys.has(k)) continue;
+            existingKeys.add(k);
+        }
         if (!messagesByGroup[d.toJid]) messagesByGroup[d.toJid] = [];
         messagesByGroup[d.toJid].push(d);
-    });
+    }
     if (activeJid) {
-        lastDate = '';
-        chat.innerHTML = '';
-        (activeJid === ALL_CHAT_ID ? allMessages() : (messagesByGroup[activeJid] || [])).forEach(d => appendMessage(d));
-        scrollToBottom();
+        rerenderActiveChat();
     }
     renderGroups();
 });
 socket.on('msg', (data) => {
     if (!data || !data.toJid) return;
-    if (knownGroupJids.size && !knownGroupJids.has(data.toJid)) return;
+    if (data.messageId) {
+        const arr = messagesByGroup[data.toJid] || [];
+        const dupKey = `${data.toJid}|${data.messageId}|${data.type}`;
+        for (const m of arr) {
+            if (m.messageId === data.messageId && m.type === data.type) return;
+        }
+        const exists = arr.some(m => `${m.toJid}|${m.messageId}|${m.type}` === dupKey);
+        if (exists) return;
+    }
     if (!messagesByGroup[data.toJid]) messagesByGroup[data.toJid] = [];
     messagesByGroup[data.toJid].push(data);
     if (data.toJid === activeJid || activeJid === ALL_CHAT_ID) {
