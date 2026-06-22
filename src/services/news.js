@@ -177,20 +177,38 @@ function extractSelftext(body) {
     return text;
 }
 
+let _rateLimitedUntil = 0;
+
 async function fetchSubredditFeed(sub, userAgent) {
     const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
-    const res = await axios.get(url, {
-        timeout: HTTP_TIMEOUT_MS,
-        headers: buildHeaders(userAgent),
-        responseType: 'text',
-        validateStatus: () => true,
-        transformResponse: [(data) => data]
-    });
-    if (res.status !== 200 || !res.data) {
-        console.error(`📰 [news] r/${sub} feed respondeu status=${res.status}`);
-        return [];
+    try {
+        const res = await axios.get(url, {
+            timeout: HTTP_TIMEOUT_MS,
+            headers: buildHeaders(userAgent),
+            responseType: 'text',
+            validateStatus: () => true,
+            transformResponse: [(data) => data]
+        });
+        if (res.status === 429 || res.status === 503) {
+            const ra = parseInt(res.headers && res.headers['retry-after'], 10);
+            const waitMs = (Number.isFinite(ra) && ra > 0 ? ra : 120) * 1000;
+            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s`);
+            return { __rateLimited: true, items: [] };
+        }
+        if (res.status !== 200 || !res.data) {
+            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status}`);
+            return { __rateLimited: false, items: [] };
+        }
+        return { __rateLimited: false, items: parseRssItems(String(res.data)) };
+    } catch (e) {
+        const msg = String(e?.message || '').toLowerCase();
+        if (msg.includes('429') || msg.includes('rate')) {
+            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+            return { __rateLimited: true, items: [] };
+        }
+        throw e;
     }
-    return parseRssItems(String(res.data));
 }
 
 async function downloadToBuffer(mediaUrl, userAgent) {
@@ -320,12 +338,17 @@ function scheduleProcessQueue() {
 async function processQueue() {
     try {
         while (!isShuttingDown && sendQueue.length > 0 && sockRef) {
+            if (Date.now() < _rateLimitedUntil) {
+                console.log(`📰 [news] fila pausada por rate-limit; limpando backlog (${sendQueue.length} itens).`);
+                sendQueue.length = 0;
+                break;
+            }
+
             const { post, sub } = sendQueue.shift();
 
             const cfg = readConfig();
             const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
             if (groups.length === 0) {
-                // Nenhum grupo quer receber; descarta
                 continue;
             }
 
@@ -335,14 +358,16 @@ async function processQueue() {
             for (const jid of groups) {
                 if (isShuttingDown) break;
                 if (!isNewsEnabled(jid)) continue;
+                if (Date.now() < _rateLimitedUntil) break;
 
                 try {
                     await sendOne(sockRef, jid, post, sub, showMeta);
                 } catch (e) {
                     const msg = String(e?.message || e || '').toLowerCase();
                     if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
-                        console.error(`📰 [news] rate-limit em ${jid}; aguardando 30s`);
-                        await sleep(30000);
+                        _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+                        console.error(`📰 [news] rate-limit em ${jid}; cooldown 120s.`);
+                        break;
                     } else {
                         console.error(`📰 [news] erro ao enviar ${post.id} para ${jid}:`, e?.message || e);
                     }
@@ -351,7 +376,6 @@ async function processQueue() {
                 if (sendDelayMs > 0) await sleep(sendDelayMs);
             }
 
-            // Marca como visto imediatamente após processar (em vez de depender do envio)
             const lastSeen = getNewsState(STATE_KEY, {}) || {};
             const list = lastSeen[sub] || [];
             if (!list.includes(post.id)) {
@@ -360,7 +384,6 @@ async function processQueue() {
                 setNewsState(STATE_KEY, lastSeen);
             }
 
-            // Libera o event loop entre posts
             await new Promise(resolve => setImmediate(resolve));
         }
     } finally {
@@ -370,6 +393,12 @@ async function processQueue() {
 
 async function pollOnce() {
     if (isShuttingDown || !sockRef) return;
+
+    if (Date.now() < _rateLimitedUntil) {
+        const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
+        console.log(`📰 [news] em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
+        return;
+    }
 
     const cfg = readConfig();
     const subs = dedupeSubreddits(cfg.newsSubreddits);
@@ -386,28 +415,30 @@ async function pollOnce() {
     const lastSeen = getNewsState(STATE_KEY, {}) || {};
     const isFirstBoot = !lastSeen.__bootInitialized;
 
-    // Marca inicialização IMEDIATAMENTE (sem esperar enfileirar)
     if (isFirstBoot) {
         lastSeen.__bootInitialized = Date.now();
         setNewsState(STATE_KEY, lastSeen);
     }
 
+    let anyRateLimited = false;
+
     for (const sub of subs) {
-        let posts = [];
+        if (Date.now() < _rateLimitedUntil) { anyRateLimited = true; break; }
+        let result = { __rateLimited: false, items: [] };
         try {
-            posts = await fetchSubredditFeed(sub, cfg.newsUserAgent);
+            result = await fetchSubredditFeed(sub, cfg.newsUserAgent);
         } catch (e) {
             console.error(`📰 [news] falha ao buscar feed r/${sub}:`, e.message);
             continue;
         }
+        if (result.__rateLimited) { anyRateLimited = true; continue; }
+        const posts = result.items;
         if (posts.length === 0) continue;
 
         const known = new Set(lastSeen[sub] || []);
         let fresh = posts.filter(p => p && p.id && !known.has(p.id));
         if (fresh.length === 0) continue;
 
-        // Na primeira execução: enfileira no máx maxPerCycle (descarta o resto)
-        // Nas seguintes: enfileira TUDO, mas o processQueue respeita o delay
         const toEnqueue = isFirstBoot ? fresh.slice(0, maxPerCycle) : fresh;
 
         console.log(`📰 [news] r/${sub}: ${fresh.length} novo(s), enfileirando ${toEnqueue.length}.`);
@@ -419,6 +450,10 @@ async function pollOnce() {
         if (isFirstBoot && fresh.length > toEnqueue.length) {
             console.log(`📰 [news] r/${sub}: ${fresh.length - toEnqueue.length} post(s) restante(s) ignorado(s) (backlog descartado na 1ª execução).`);
         }
+    }
+
+    if (anyRateLimited) {
+        console.log('📰 [news] ciclo interrompido por rate-limit; fila preservada para próxima janela.');
     }
 }
 
