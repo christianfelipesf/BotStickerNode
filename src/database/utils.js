@@ -132,8 +132,9 @@ const DEFAULT_CONFIG = {
     adminCanControl: false,
     newsSubreddits: ['ShitpostBR'],
     newsPollIntervalMs: 5 * 60 * 1000,
-    newsUserAgent: 'BotStickerNode/1.0 (by /u/BotStickerNode)'
+    newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
+
 
 // Defaults editáveis manualmente (parte fixa, baixa frequência)
 // Apenas: config, stats, botName/menuImage por grupo.
