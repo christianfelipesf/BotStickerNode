@@ -1,24 +1,32 @@
 /* Dashboard — paleta WA (#111b21/#0b141a/#202c33/#25d366), radius 12px, poucas regras */
 :root{--bg:#111b21;--sb:#0b141a;--pn:#202c33;--pn2:#182229;--b:rgba(255,255,255,.08);--tx:#e9edef;--dm:#8696a0;--g:#25d366;--t:#128c7e;--bl:#53bdeb;--w:#ffb84d;--er:#ff8182;--r:12px}
 [data-theme=light]{--bg:#f0f2f5;--sb:#fff;--pn:#fff;--pn2:#f0f2f5;--b:rgba(11,20,26,.12);--tx:#111b21;--dm:#54656f}
-/* Tema OLED — terminal Linux: preto puro, verde fosforescente, ciano, monoespaçado */
+/* Tema OLED — estilo Windows Terminal: preto profundo, accent azul/cyan, monoespaçado */
 [data-theme=oled]{
-    --bg:#000;--sb:#000;--pn:#050505;--pn2:#0a0a0a;
-    --b:#0f3a1a;--tx:#00ff7f;--dm:#1ea860;
-    --g:#00ff7f;--t:#00d9ff;--bl:#00d9ff;--w:#ffd866;--er:#ff5555;
-    --r:2px;
+    --bg:#000;--sb:#0a0a0a;--pn:#0c0c0c;--pn2:#141414;
+    --b:#1f1f1f;--tx:#cccccc;--dm:#808080;
+    --g:#0078d4;--t:#00b7c3;--bl:#4ec9b0;--w:#dcdcaa;--er:#f48771;
+    --r:4px;
 }
-[data-theme=oled] body,[data-theme=oled] .cb-body,[data-theme=oled] .col-chat{font-family:"Fira Mono","DejaVu Sans Mono","Courier New",monospace}
-[data-theme=oled] .cb-body{background:#000;box-shadow:inset 0 0 80px rgba(0,255,127,.03)}
-[data-theme=oled] .msg-bubble{background:#0a0a0a;border:1px solid #0f3a1a;color:#00ff7f;box-shadow:none}
-[data-theme=oled] .from-me .msg-bubble{background:#001a0e;border-color:#00ff7f;color:#a8ffc8}
-[data-theme=oled] .msg-author{color:#00d9ff}
-[data-theme=oled] .from-me .msg-author{color:#ffd866}
-[data-theme=oled] .st-bar{background:linear-gradient(90deg,#00ff7f,#00d9ff)}
-[data-theme=oled] .group-badge{background:#00ff7f;color:#001a0e}
-[data-theme=oled] .group-dot{background:#00ff7f;box-shadow:0 0 6px #00ff7f}
-[data-theme=oled] .msg-system{background:transparent;color:#ffd866;border:1px solid #ffd866;border-radius:0}
-[data-theme=oled] .msg-error{color:#ff5555;border-color:#ff5555}
+[data-theme=oled] body,[data-theme=oled] .cb-body,[data-theme=oled] .col-chat{font-family:"Cascadia Mono","Cascadia Code","Consolas","Courier New",monospace}
+[data-theme=oled] .ch-avatar,[data-theme=oled] .group-avatar{font-family:"Segoe UI",sans-serif}
+[data-theme=oled] .cb-body{background:#000;box-shadow:inset 0 0 120px rgba(0,120,212,.04)}
+[data-theme=oled] .msg-bubble{background:#0c0c0c;border:1px solid #1f1f1f;border-left:3px solid var(--g);color:#cccccc;box-shadow:none}
+[data-theme=oled] .from-me .msg-bubble{background:#0e1a26;border-left-color:var(--t);color:#e6e6e6}
+[data-theme=oled] .msg-author{color:var(--bl)}
+[data-theme=oled] .from-me .msg-author{color:var(--w)}
+[data-theme=oled] .msg-quote{border-left-color:var(--g);background:rgba(0,120,212,.06)}
+[data-theme=oled] .st-bar{background:linear-gradient(90deg,var(--g),var(--t))}
+[data-theme=oled] .st-card{border-color:#1f1f1f;background:#0c0c0c}
+[data-theme=oled] .st-big{color:var(--g)}
+[data-theme=oled] .group-badge{background:var(--g);color:#ffffff}
+[data-theme=oled] .group-dot{background:var(--g);box-shadow:0 0 4px var(--g)}
+[data-theme=oled] .group-item.active{background:#0e1a26}
+[data-theme=oled] .group-item.active::before{background:var(--g)}
+[data-theme=oled] .msg-system{background:transparent;color:var(--w);border:1px solid var(--w);border-radius:0}
+[data-theme=oled] .msg-error{color:var(--er);border-color:var(--er)}
+[data-theme=oled] .send-btn{background:var(--g);color:#ffffff}
+[data-theme=oled] ::-webkit-scrollbar-thumb{background:#1f1f1f}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font:14px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden;-webkit-tap-highlight-color:transparent}
 button{font:inherit}
