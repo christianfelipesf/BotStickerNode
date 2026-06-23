@@ -127,8 +127,9 @@ button{font:inherit}
 .st-meter-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,.4)}
 .st-meta{font-size:11.5px;color:var(--dm)}
 .st-big{font-size:18px;font-weight:700;color:var(--g);font-variant-numeric:tabular-nums}
-.st-logs{max-height:220px;overflow-y:auto;font:11.5px ui-monospace,Menlo,Consolas,monospace;color:var(--dm);background:var(--pn2);border-radius:8px;padding:8px 10px}
-.st-logs .log-line{display:flex;gap:8px;padding:2px 0;border-bottom:1px dashed var(--b)}
+.st-logs{max-height:320px;overflow-y:auto;font:11.5px ui-monospace,Menlo,Consolas,monospace;color:var(--dm);background:var(--pn2);border-radius:8px;padding:8px 10px}
+.st-logs .log-line{display:flex;flex-wrap:wrap;gap:4px 8px;padding:4px 0;border-bottom:1px dashed var(--b);align-items:baseline}
+.st-logs .log-line>span{flex:0 0 auto;min-width:0}
 .st-logs .log-line:last-child{border-bottom:none}
 .st-logs .log-time{color:var(--t);white-space:nowrap}
 .st-logs .log-tag{background:var(--g);color:#00210e;border-radius:4px;padding:0 5px;font-size:10px;text-transform:uppercase;font-weight:700}
@@ -150,10 +151,11 @@ button{font:inherit}
     .ch-icon-btn{display:flex}
     body[data-screen=chats] #backBtn,body[data-screen=stats] #openStatsMobile{display:none}
     .mobile-tabbar{display:grid;grid-template-columns:repeat(3,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--sb);border-top:1px solid var(--b);padding-bottom:env(safe-area-inset-bottom);z-index:90}
-    .mt-tab{background:transparent;border:none;color:var(--dm);padding:8px 4px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px}
+    .mt-tab{background:transparent;border:none;color:var(--dm);padding:8px 4px 6px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:60px}
     .mt-tab.active{color:var(--g)}
-    .cb-composer{padding-bottom:calc(56px + env(safe-area-inset-bottom))}
-    .toast{bottom:calc(70px + env(safe-area-inset-bottom))}
+    .col-chat{padding-bottom:env(safe-area-inset-bottom)}
+    .cb-composer{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+    .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
 }
 @media (min-width:901px) and (max-width:1100px){.app{grid-template-columns:minmax(240px,280px) 1fr minmax(240px,280px)}}
 
