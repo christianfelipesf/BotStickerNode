@@ -86,7 +86,7 @@ groupSearch.addEventListener('input',renderGroups);
 backBtn.addEventListener('click',()=>{activeJid=null;setScreen('chats');chatName.textContent='Selecione um grupo';chatSub.textContent='—';chatAvatar.innerHTML='<div class="group-avatar">?</div>';chat.innerHTML='';renderGroups()});
 if(mobileBackFromStats)mobileBackFromStats.addEventListener('click',()=>setScreen(activeJid?'chat':'chats'));
 if(openStatsMobile)openStatsMobile.addEventListener('click',()=>{setScreen('stats');refreshSys()});
-if(toggleStatsPanel)toggleStatsPanel.addEventListener('click',()=>{colStats.classList.toggle('collapsed');toggleStatsPanel.textContent=colStats.classList.contains('collapsed')?'«':'»'});
+if(toggleStatsPanel)toggleStatsPanel.addEventListener('click',()=>{const c=colStats.classList.toggle('collapsed');toggleStatsPanel.textContent=c?'«':'»';toggleStatsPanel.title=c?'Expandir painel':'Recolher painel'});
 if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.addEventListener('click',()=>{const t=b.dataset.tab;if(t==='chats'){activeJid=null;setScreen('chats');chat.innerHTML='';renderGroups()}else if(t==='chat'){if(!activeJid){activeJid=ALL;chatName.textContent='Todos';rerender();renderGroups()}setScreen('chat')}else if(t==='stats'){setScreen('stats');refreshSys()}});
 
 /* ========== Socket ========== */
