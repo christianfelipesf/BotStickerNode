@@ -163,8 +163,11 @@ function extractMedia(body, link = '') {
         directImage = thumbnail;
     }
 
-    // Detecta domínio do post via <category domain="..."> ou category interna.
-    // v.redd.it = vídeo, i.redd.it = imagem direta, etc.
+    // Detecta domínio do post. Pode estar em:
+    // 1) <category domain="v.redd.it">
+    // 2) Conteúdo interno com domain=v.redd.it
+    // 3) <link> apontando para v.redd.it diretamente
+    // 4) Selftext mencionando "v.redd.it" ou "[link]" para v.redd.it
     let domain = '';
     const catDomain = body.match(/<category[^>]*domain\s*=\s*"([^"]+)"/i);
     if (catDomain) domain = catDomain[1];
@@ -175,6 +178,11 @@ function extractMedia(body, link = '') {
             if (m2) domain = m2[1];
         }
     }
+    if (!domain) {
+        // Procura no conteúdo HTML por link v.redd.it
+        const vReddMatch = (contentHtml || '').match(/https?:\/\/v\.redd\.it\/[^\s"'<>]+/i);
+        if (vReddMatch) domain = 'v.redd.it';
+    }
     if (!domain && link) {
         try {
             const u = new URL(link);
@@ -184,7 +192,12 @@ function extractMedia(body, link = '') {
         } catch (_) {}
     }
 
-    const isVideoPost = /v\.redd\.it/i.test(domain) || (!!domain && !directImage && !directVideo && /video/i.test(link || ''));
+    // Se detectou v.redd.it, é post de vídeo SEMPRE — mesmo que tenha thumbnail.
+    // O bot vai buscar a URL real do MP4 via JSON API depois.
+    const isVideoPost = /v\.redd\.it/i.test(domain) ||
+        (!directVideo && /v\.redd\.it|reddit_video/i.test(contentHtml || '')) ||
+        (!!domain && !directImage && !directVideo && /video/i.test(link || ''));
+
     const isGifPost = /\.(gif)$/i.test(domain) || (!!directImage && /\.gif(\?|$|&)/i.test(directImage));
 
     return {
@@ -263,13 +276,22 @@ async function fetchVideoFromJson(postId, userAgent) {
             validateStatus: () => true,
             transformResponse: [(data) => data]
         });
-        if (res.status !== 200 || !res.data) return null;
+        if (res.status !== 200 || !res.data) {
+            newsErr(`JSON API para ${postId} retornou status=${res.status}`);
+            return null;
+        }
         const data = JSON.parse(res.data);
         const post = Array.isArray(data) && data[0]?.data?.children?.[0]?.data;
+        if (!post) {
+            newsErr(`JSON API para ${postId}: estrutura inesperada.`);
+            return null;
+        }
         const v = post?.secure_media?.reddit_video || post?.media?.reddit_video;
         if (v && v.fallback_url) return String(v.fallback_url);
+        newsErr(`JSON API para ${postId}: sem reddit_video.fallback_url (domain=${post.domain || '?'})`);
         return null;
-    } catch (_) {
+    } catch (e) {
+        newsErr(`JSON API para ${postId} falhou:`, e?.message || e);
         return null;
     }
 }
@@ -437,6 +459,8 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
+    const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
+    newsLog(`r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${isVideoPostFlag} isGif=${!!media.isGifPost} hasVideo=${!!media.video} hasImage=${!!media.image}`);
     const maxRetries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
     const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
     const retryOpts = {
@@ -451,10 +475,20 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         return;
     }
 
-    // Se é post de vídeo mas não temos URL direta, tenta JSON API.
-    if (post.isVideoPost && !media.video && post.id) {
-        const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
-        if (vUrl) media.video = vUrl;
+    // Se é post de vídeo mas não temos URL direta, busca via JSON API.
+    // (post.isVideoPost OU media.isVideoPost — `isVideoPost` é colocado dentro
+    // de media pelo extractMedia.)
+    const isVideoPostFlag = post.isVideoPost || media.isVideoPost;
+    if (isVideoPostFlag && post.id) {
+        if (!media.video || !isVideoUrl(media.video)) {
+            const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
+            if (vUrl) {
+                media.video = vUrl;
+                newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
+            } else {
+                newsErr(`r/${sub}: post ${post.id} marcado como vídeo mas JSON API não retornou URL.`);
+            }
+        }
     }
 
     if (media.video && isVideoUrl(media.video)) {
@@ -474,8 +508,8 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         // Se é post de vídeo e o JSON não retornou URL, NÃO cai no fallback
         // de imagem (que enviaria thumbnail estática como "imagem" no WhatsApp).
         // Pula direto para enviar só o texto com link.
-        if (post.isVideoPost && !media.video) {
-            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — enviando só texto com link.`);
+        if (isVideoPostFlag && !media.video) {
+            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — pulando envio de mídia.`);
             return;
         }
         try {
