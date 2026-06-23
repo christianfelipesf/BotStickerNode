@@ -24,9 +24,6 @@
             <div class="ch-toolbar-btns">
                 <button id="push-btn" class="sb-btn" onclick="togglePush()">PUSH</button>
                 <button id="notif-btn" class="sb-btn" onclick="toggleSound()">SOM</button>
-                <button class="sb-btn" onclick="setTheme('light')" title="Claro">☀</button>
-                <button class="sb-btn" onclick="setTheme('dark')" title="Escuro">🌙</button>
-                <button class="sb-btn" onclick="setTheme('oled')" title="OLED">⬛</button>
             </div>
         </header>
         <ul id="groupList" class="group-list"><li class="empty">Carregando…</li></ul>
@@ -68,7 +65,6 @@
     <aside class="col col-stats" id="colStats">
         <header class="st-head">
             <div class="st-title">📊 Estatísticas</div>
-            <button class="ch-icon-btn" id="toggleStatsPanel" title="Recolher painel" aria-label="Recolher painel" style="display:flex">»</button>
         </header>
         <div class="st-body" id="statsBody">
             <div class="st-card"><div class="st-card-title">🤖 Bot</div><div class="st-grid"><div class="st-kv"><div class="st-k">Estado</div><div class="st-v" id="sysBotState">—</div></div><div class="st-kv"><div class="st-k">PID</div><div class="st-v" id="sysPid">—</div></div><div class="st-kv"><div class="st-k">Reinícios</div><div class="st-v" id="sysRestarts">—</div></div><div class="st-kv"><div class="st-k">Comandos</div><div class="st-v" id="sysCommands">—</div></div></div></div>

@@ -9,9 +9,7 @@ replyName=$('replyName'),replyTextEl=$('replyText'),
 attachmentsEl=$('attachments'),messageInput=$('messageInput'),
 sendBtn=$('sendBtn'),fileInput=$('fileInput'),composerEl=$('composer'),
 toastEl=$('toast'),backBtn=$('backBtn'),
-mobileBackFromStats=$('mobileBackFromStats'),openStatsMobile=$('openStatsMobile'),
-toggleStatsPanel=$('toggleStatsPanel'),colStats=$('colStats'),
-mobileTabbar=$('mobileTabbar');
+mobileBackFromStats=$('mobileBackFromStats'),openStatsMobile=$('openStatsMobile'),colStats=$('colStats'),mobileTabbar=$('mobileTabbar');
 
 const ALL='__all__';
 let groups=[],activeJid=null,msgsByJid={},lastDate='',currentReply=null,pendingAttachments=[];
@@ -25,9 +23,8 @@ function userColor(ph){if(!ph)return'var(--g)';const c=['#3498db','#e74c3c','#2e
 function toast(m,ms=2200){toastEl.textContent=m;toastEl.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>toastEl.classList.remove('show'),ms)}
 function play(a){if(soundEnabled&&a)try{a.currentTime=0;a.play().catch(()=>{})}catch(_){}}
 
-/* ========== Tema / som / push ========== */
-function setTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('wa_theme',t)}
-setTheme(localStorage.getItem('wa_theme')||'dark');
+/* ========== Som / push (tema único: OLED Windows Terminal) ========== */
+document.documentElement.setAttribute('data-theme','oled');
 if(soundEnabled){notifBtn.innerText='SOM ON';notifBtn.classList.add('active')}
 if(pushEnabled){pushBtn.innerText='PUSH ON';pushBtn.classList.add('active')}
 window.toggleSound=()=>{soundEnabled=!soundEnabled;notifBtn.innerText=soundEnabled?'SOM ON':'SOM';notifBtn.classList.toggle('active',soundEnabled);if(soundEnabled)play(soundChat);localStorage.setItem('wa_sound',soundEnabled?'1':'0')};
@@ -86,7 +83,7 @@ groupSearch.addEventListener('input',renderGroups);
 backBtn.addEventListener('click',()=>{activeJid=null;setScreen('chats');chatName.textContent='Selecione um grupo';chatSub.textContent='—';chatAvatar.innerHTML='<div class="group-avatar">?</div>';chat.innerHTML='';renderGroups()});
 if(mobileBackFromStats)mobileBackFromStats.addEventListener('click',()=>setScreen(activeJid?'chat':'chats'));
 if(openStatsMobile)openStatsMobile.addEventListener('click',()=>{setScreen('stats');refreshSys()});
-if(toggleStatsPanel)toggleStatsPanel.addEventListener('click',()=>{const c=colStats.classList.toggle('collapsed');toggleStatsPanel.textContent=c?'«':'»';toggleStatsPanel.title=c?'Expandir painel':'Recolher painel'});
+
 if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.addEventListener('click',()=>{const t=b.dataset.tab;if(t==='chats'){activeJid=null;setScreen('chats');chat.innerHTML='';renderGroups()}else if(t==='chat'){if(!activeJid){activeJid=ALL;chatName.textContent='Todos';rerender();renderGroups()}setScreen('chat')}else if(t==='stats'){setScreen('stats');refreshSys()}});
 
 /* ========== Socket ========== */
