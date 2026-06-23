@@ -60,13 +60,17 @@ function getRecentMessages(jid, limit) {
 //   4) se outro bot (não este) reagiu OU o comando não é permitido, ignora
 // ============================================================
 const partialPending = new Map(); // key = `${jid}:${msgId}` -> { resolve, timer, botJid, commandName, isGroup }
-const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia', 'geral']);
+const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia']);
 // Comandos admin/críticos nunca respondem em modo parcial, mesmo que categoria
 const PARTIAL_BLOCKED_COMMANDS = new Set([
     'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
     'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
-    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome'
+    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome',
+    'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai'
 ]);
+// Comandos que controlam o próprio modo de ativamento (sempre funcionam,
+// inclusive dentro do modo parcial — senão o usuário não consegue desligar).
+const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status']);
 
 function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
 
@@ -430,24 +434,33 @@ module.exports = {
             // ATIVAMENTO PARCIAL: se o grupo está em modo parcial,
             // comandos admin ficam mudos e comandos de mídia só
             // respondem após `partialWaitMs` sem reação de outro bot.
+            // Comandos de controle de ativamento (!ativar/!desativar/
+            // !ativarp/!desativarp/!status) sempre passam — caso
+            // contrário, o usuário não consegue sair do modo parcial.
             // ============================================================
             if (isGroup && isPartialActive(from)) {
-                // Comandos admin nunca respondem em modo parcial
-                if (!_isPartialAllowed(cmd)) {
+                if (PARTIAL_BYPASS_COMMANDS.has(cmd.name)) {
+                    // Bypass intencional — permite sair do modo parcial.
+                } else if (!_isPartialAllowed(cmd)) {
                     console.log(`🤐 [PARCIAL] comando ${config.prefix}${commandName} bloqueado em ${from}`);
+                    try {
+                        safeDashboardLog('action', (await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }))).subject,
+                            `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, sender.split('@')[0],
+                            null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+                    } catch (_) {}
                     return;
-                }
-
-                // Registrar pendente e esperar — se alguém reagir, cancela.
-                const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
-                const waitMs = getPartialWaitMs();
-                const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
-                if (pendingPromise && waitMs > 0) {
-                    setPartialTimer(from, m.key.id, waitMs);
-                    const result = await pendingPromise;
-                    if (result && result.reacted) {
-                        console.log(`🤐 [PARCIAL] outro bot reagiu a !${commandName} em ${from}, ignorando`);
-                        return;
+                } else {
+                    // Registrar pendente e esperar — se alguém reagir, cancela.
+                    const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+                    const waitMs = getPartialWaitMs();
+                    const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
+                    if (pendingPromise && waitMs > 0) {
+                        setPartialTimer(from, m.key.id, waitMs);
+                        const result = await pendingPromise;
+                        if (result && result.reacted) {
+                            console.log(`🤐 [PARCIAL] outro bot reagiu a !${commandName} em ${from}, ignorando`);
+                            return;
+                        }
                     }
                 }
             }
