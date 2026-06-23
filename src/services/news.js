@@ -1,4 +1,8 @@
 const axios = require('axios');
+const { spawn } = require('child_process');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
 const {
     readConfig,
     listNewsGroups,
@@ -159,10 +163,37 @@ function extractMedia(body) {
         directImage = thumbnail;
     }
 
+    // Detecta domínio do post via <category domain="..."> ou category interna.
+    // v.redd.it = vídeo, i.redd.it = imagem direta, etc.
+    let domain = '';
+    const catDomain = body.match(/<category[^>]*domain\s*=\s*"([^"]+)"/i);
+    if (catDomain) domain = catDomain[1];
+    if (!domain) {
+        const catInner = body.match(/<category[^>]*>([\s\S]*?)<\/category>/i);
+        if (catInner) {
+            const m2 = String(catInner[1]).match(/domain["']?\s*[:=]\s*["']?([a-z0-9.\-]+)/i);
+            if (m2) domain = m2[1];
+        }
+    }
+    if (!domain && link) {
+        try {
+            const u = new URL(link);
+            if (/\.redd\.it$/i.test(u.hostname) && u.hostname !== 'www.reddit.com' && u.hostname !== 'reddit.com') {
+                domain = u.hostname;
+            }
+        } catch (_) {}
+    }
+
+    const isVideoPost = /v\.redd\.it/i.test(domain) || (!!domain && !directImage && !directVideo && /video/i.test(link || ''));
+    const isGifPost = /\.(gif)$/i.test(domain) || (!!directImage && /\.gif(\?|$|&)/i.test(directImage));
+
     return {
         thumbnail,
         image: directImage || thumbnail,
-        video: directVideo
+        video: directVideo,
+        isVideoPost,
+        isGifPost,
+        domain: domain || null
     };
 }
 
@@ -218,6 +249,29 @@ function _bumpSubCooldown(sub) {
 function _clearSubCooldown(sub) {
     _subConsecutiveRateLimits.set(sub, 0);
     _subCooldownUntil.delete(sub);
+}
+
+// Quando o RSS não traz a URL direta do MP4 (post v.redd.it), busca via API JSON.
+async function fetchVideoFromJson(postId, userAgent) {
+    if (!postId) return null;
+    try {
+        const url = `https://www.reddit.com/comments/${encodeURIComponent(postId)}.json`;
+        const res = await axios.get(url, {
+            timeout: HTTP_TIMEOUT_MS,
+            headers: buildHeaders(userAgent),
+            responseType: 'text',
+            validateStatus: () => true,
+            transformResponse: [(data) => data]
+        });
+        if (res.status !== 200 || !res.data) return null;
+        const data = JSON.parse(res.data);
+        const post = Array.isArray(data) && data[0]?.data?.children?.[0]?.data;
+        const v = post?.secure_media?.reddit_video || post?.media?.reddit_video;
+        if (v && v.fallback_url) return String(v.fallback_url);
+        return null;
+    } catch (_) {
+        return null;
+    }
 }
 
 async function fetchSubredditFeed(sub, userAgent) {
@@ -341,6 +395,44 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Converte um buffer GIF em MP4 via ffmpeg para preservar animação no WhatsApp.
+// WhatsApp só anima GIFs quando enviados como vídeo com gifPlayback=true.
+// Limitamos tamanho/qualidade para evitar travamento.
+async function convertGifToMp4(buffer) {
+    if (!buffer || buffer.length === 0) return null;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inPath = path.join(os.tmpdir(), `news_gif_${id}.gif`);
+    const outPath = path.join(os.tmpdir(), `news_mp4_${id}.mp4`);
+    try {
+        fs.writeFileSync(inPath, buffer);
+        await new Promise((resolve, reject) => {
+            const ff = spawn('ffmpeg', [
+                '-y',
+                '-i', inPath,
+                '-vf', "scale='min(720,iw)':-2:flags=lanczos",
+                '-r', '15',
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-crf', '23',
+                '-preset', 'veryfast',
+                '-movflags', '+faststart',
+                '-an',
+                outPath
+            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ff.on('error', reject);
+            ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)));
+        });
+        const mp4 = fs.readFileSync(outPath);
+        return mp4.length > 0 ? mp4 : null;
+    } catch (e) {
+        newsErr(`conversão GIF→MP4 falhou:`, e?.message || e);
+        return null;
+    } finally {
+        try { fs.unlinkSync(inPath); } catch (_) {}
+        try { fs.unlinkSync(outPath); } catch (_) {}
+    }
+}
+
 async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
@@ -359,6 +451,12 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         return;
     }
 
+    // Se é post de vídeo mas não temos URL direta, tenta JSON API.
+    if (post.isVideoPost && !media.video && post.id) {
+        const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
+        if (vUrl) media.video = vUrl;
+    }
+
     if (media.video && isVideoUrl(media.video)) {
         try {
             const dl = await downloadToBuffer(media.video, cfg.newsUserAgent);
@@ -373,6 +471,13 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     }
 
     if (media.image) {
+        // Se é post de vídeo e o JSON não retornou URL, NÃO cai no fallback
+        // de imagem (que enviaria thumbnail estática como "imagem" no WhatsApp).
+        // Pula direto para enviar só o texto com link.
+        if (post.isVideoPost && !media.video) {
+            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — enviando só texto com link.`);
+            return;
+        }
         try {
             const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
             if (dl && dl.buffer && dl.buffer.length > 0) {
@@ -380,14 +485,23 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 const urlIsGif = isGifUrl(media.image);
                 const urlIsVideo = isVideoUrl(media.image);
                 const bufferIsVideo = mimeLower.startsWith('video/');
-                const bufferIsGif = mimeLower === 'image/gif' || (urlIsGif && !mimeLower.startsWith('image/'));
+                const bufferIsGif = mimeLower === 'image/gif' || urlIsGif;
 
                 if (urlIsVideo || bufferIsVideo) {
                     const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else if (urlIsGif || bufferIsGif) {
-                    const payload = { video: dl.buffer, mimetype: 'video/mp4', gifPlayback: true };
+                    // WhatsApp só anima GIFs enviados como MP4 com gifPlayback=true.
+                    // Converte o buffer via ffmpeg para preservar a animação.
+                    const mp4 = await convertGifToMp4(dl.buffer);
+                    if (mp4) {
+                        const payload = { video: mp4, mimetype: 'video/mp4', gifPlayback: true };
+                        if (caption) payload.caption = caption;
+                        return await sendMessageSafe(sock, jid, payload, retryOpts);
+                    }
+                    // Fallback: envia como imagem estática se a conversão falhar
+                    const payload = { image: dl.buffer, mimetype: 'image/gif' };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else {
@@ -570,6 +684,15 @@ async function pollOnce() {
         // (rate-limit, queda do bot), o próximo poll não vai republicar.
         lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
         setNewsState(STATE_KEY, lastSeen);
+
+        // Se é post de vídeo (v.redd.it) sem URL direta do MP4, busca via JSON API.
+        if (latest.isVideoPost && !latest.media.video) {
+            const vUrl = await fetchVideoFromJson(latest.id, cfg.newsUserAgent);
+            if (vUrl) {
+                latest.media.video = vUrl;
+                newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
+            }
+        }
 
         newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
         publishedThisCycle = true;
