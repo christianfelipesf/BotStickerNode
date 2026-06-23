@@ -108,4 +108,8 @@ async function refreshSys(){try{const r=await fetch('/api/system',{cache:'no-sto
 setInterval(refreshSys,3000);refreshSys();
 
 /* Init */
+function updateTabbarHeight(){if(!mobileTabbar)return;const h=mobileTabbar.getBoundingClientRect().height;if(h>0)document.documentElement.style.setProperty('--tabbar-h',Math.ceil(h)+'px')}
+updateTabbarHeight();
+if(typeof ResizeObserver!=='undefined'&&mobileTabbar){new ResizeObserver(updateTabbarHeight).observe(mobileTabbar)}
+window.addEventListener('resize',updateTabbarHeight);
 setScreen('chats');renderGroups();
