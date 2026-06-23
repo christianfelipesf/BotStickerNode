@@ -701,145 +701,132 @@ async function pollOnce() {
     }
     _isPolling = true;
 
-    if (Date.now() < _rateLimitedUntil) {
-        const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
-        // Suprime spam — mostra só 1x a cada 5 min para o mesmo tempo de cooldown.
-        newsLogOnce(`cooldown:${Math.round(wait / 60)}min`, `em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
-        return;
-    }
-
-    const cfg = readConfig();
-    const subs = dedupeSubreddits(cfg.newsSubreddits);
-    if (subs.length === 0) return;
-
-    const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
-    if (groups.length === 0) {
-        newsLogOnce('no-groups', 'nenhum grupo com feed ativado.');
-        return;
-    }
-
-    const randomMode = !!cfg.newsRandomSub;
-    const showMeta = !!cfg.newsShowMeta;
-    const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
-    const staggerMs = Math.max(0, Number(cfg.newsFetchStaggerMs) || 30000);
-    const onePerCycle = !!cfg.newsOnePerCycle;
-
-    const lastSeen = getNewsState(STATE_KEY, {}) || {};
-
-    // Subreddits a consultar neste ciclo.
-    // newsRandomSub = false → todos os configurados (padrão).
-    // newsRandomSub = true  → sorteia 1 sub por ciclo.
-    let subsToCheck = subs;
-    if (randomMode && subs.length > 1) {
-        subsToCheck = [subs[Math.floor(Math.random() * subs.length)]];
-    }
-
-    let firstSubOfCycle = true;
-    let publishedThisCycle = false;
-
-    for (const sub of subsToCheck) {
-        if (onePerCycle && publishedThisCycle) {
-            newsLogOnce('cycle-skip', `cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
-            break;
+    try {
+        if (Date.now() < _rateLimitedUntil) {
+            const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
+            newsLogOnce(`cooldown:${Math.round(wait / 60)}min`, `em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
+            return;
         }
 
-        // Cooldown por sub: pula este e tenta o próximo.
-        const subCooldown = _subCooldownUntil.get(sub) || 0;
-        if (Date.now() < subCooldown) {
-            const wait = Math.round((subCooldown - Date.now()) / 1000);
-            newsLog(`r/${sub}: em cooldown por mais ${wait}s — pulando.`);
-            continue;
+        const cfg = readConfig();
+        const subs = dedupeSubreddits(cfg.newsSubreddits);
+        if (subs.length === 0) return;
+
+        const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
+        if (groups.length === 0) {
+            newsLogOnce('no-groups', 'nenhum grupo com feed ativado.');
+            return;
         }
 
-        // Stagger entre subs: evita burst de requests que dispara 429 do Reddit.
-        if (!firstSubOfCycle && staggerMs > 0) {
-            newsLog(`aguardando ${Math.round(staggerMs / 1000)}s antes de r/${sub}...`);
-            const steps = Math.ceil(staggerMs / 5000);
-            for (let i = 0; i < steps; i++) {
-                if (isShuttingDown) return;
-                await sleep(Math.min(5000, staggerMs - i * 5000));
-            }
-        }
-        firstSubOfCycle = false;
+        const randomMode = !!cfg.newsRandomSub;
+        const showMeta = !!cfg.newsShowMeta;
+        const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
+        const staggerMs = Math.max(0, Number(cfg.newsFetchStaggerMs) || 30000);
+        const onePerCycle = !!cfg.newsOnePerCycle;
 
-        let result = { __rateLimited: false, items: [] };
-        try {
-            result = await fetchSubredditFeed(sub, cfg.newsUserAgent);
-        } catch (e) {
-            newsErr(`falha ao buscar feed r/${sub}:`, e.message);
-            continue;
-        }
-        if (result.__rateLimited) continue;
-        const posts = result.items;
-        if (!posts || posts.length === 0) continue;
+        const lastSeen = getNewsState(STATE_KEY, {}) || {};
 
-        // SEMPRE pega o ÚLTIMO (primeiro do feed /new).
-        const latest = posts[0];
-        if (!latest || !latest.id) continue;
-
-        // Pula posts marcados como problemáticos (vídeo sem URL acessível).
-        if (isPostFailed(latest.id)) {
-            newsLog(`r/${sub}: pulando post ${latest.id} (marcado como problemático).`);
-            continue;
+        let subsToCheck = subs;
+        if (randomMode && subs.length > 1) {
+            subsToCheck = [subs[Math.floor(Math.random() * subs.length)]];
         }
 
-        // lastSeen[sub] agora guarda { id, imageUrl } do último publicado.
-        // Dedupe por id E por URL de imagem (Reddit às vezes faz cross-post
-        // com IDs diferentes mas mesma imagem — sem isso, duplicaria).
-        const previous = lastSeen[sub] || null;
-        const currentImage = normalizeMediaUrl((latest.media && (latest.media.image || latest.media.thumbnail)) || '');
-        const previousImage = (previous && typeof previous === 'object') ? (previous.imageUrl || '') : '';
-        const previousId = (previous && typeof previous === 'object') ? previous.id : (typeof previous === 'string' ? previous : null);
+        let firstSubOfCycle = true;
+        let publishedThisCycle = false;
 
-        const sameById = previousId === latest.id;
-        const sameByImage = !!currentImage && currentImage === previousImage;
-
-        if (sameById || sameByImage) {
-            const reason = sameById ? `id ${latest.id}` : `imagem duplicada`;
-            newsLog(`r/${sub}: sem post novo (${reason} já postado).`);
-            continue;
-        }
-
-        // Persiste o estado **antes** de enviar. Assim, mesmo se o envio falhar
-        // (rate-limit, queda do bot), o próximo poll não vai republicar.
-        lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
-        setNewsState(STATE_KEY, lastSeen);
-
-        // Se é post de vídeo (v.redd.it) sem URL direta do MP4, busca via JSON API.
-        if (latest.isVideoPost && !latest.media.video) {
-            const vUrl = await fetchVideoFromJson(latest.id, cfg.newsUserAgent);
-            if (vUrl) {
-                latest.media.video = vUrl;
-                newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
-            }
-        }
-
-        newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
-        publishedThisCycle = true;
-
-        for (const jid of groups) {
-            if (isShuttingDown) break;
-            if (!isNewsEnabled(jid)) continue;
-            if (Date.now() < _rateLimitedUntil) {
-                newsLog(`envio pausado por rate-limit global.`);
+        for (const sub of subsToCheck) {
+            if (onePerCycle && publishedThisCycle) {
+                newsLogOnce('cycle-skip', `cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
                 break;
             }
 
+            const subCooldown = _subCooldownUntil.get(sub) || 0;
+            if (Date.now() < subCooldown) {
+                const wait = Math.round((subCooldown - Date.now()) / 1000);
+                newsLog(`r/${sub}: em cooldown por mais ${wait}s — pulando.`);
+                continue;
+            }
+
+            if (!firstSubOfCycle && staggerMs > 0) {
+                newsLog(`aguardando ${Math.round(staggerMs / 1000)}s antes de r/${sub}...`);
+                const steps = Math.ceil(staggerMs / 5000);
+                for (let i = 0; i < steps; i++) {
+                    if (isShuttingDown) return;
+                    await sleep(Math.min(5000, staggerMs - i * 5000));
+                }
+            }
+            firstSubOfCycle = false;
+
+            let result = { __rateLimited: false, items: [] };
             try {
-                await sendOne(sockRef, jid, latest, sub, showMeta);
+                result = await fetchSubredditFeed(sub, cfg.newsUserAgent);
             } catch (e) {
-                const msg = String(e?.message || e || '').toLowerCase();
-                if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
-                    _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
-                    newsErr(`rate-limit em ${jid}; cooldown 120s.`);
-                    break;
-                } else {
-                    newsErr(`erro ao enviar ${latest.id} para ${jid}:`, e?.message || e);
+                newsErr(`falha ao buscar feed r/${sub}:`, e.message);
+                continue;
+            }
+            if (result.__rateLimited) continue;
+            const posts = result.items;
+            if (!posts || posts.length === 0) continue;
+
+            const latest = posts[0];
+            if (!latest || !latest.id) continue;
+
+            if (isPostFailed(latest.id)) {
+                newsLog(`r/${sub}: pulando post ${latest.id} (marcado como problemático).`);
+                continue;
+            }
+
+            const previous = lastSeen[sub] || null;
+            const currentImage = normalizeMediaUrl((latest.media && (latest.media.image || latest.media.thumbnail)) || '');
+            const previousImage = (previous && typeof previous === 'object') ? (previous.imageUrl || '') : '';
+            const previousId = (previous && typeof previous === 'object') ? previous.id : (typeof previous === 'string' ? previous : null);
+
+            const sameById = previousId === latest.id;
+            const sameByImage = !!currentImage && currentImage === previousImage;
+
+            if (sameById || sameByImage) {
+                const reason = sameById ? `id ${latest.id}` : `imagem duplicada`;
+                newsLog(`r/${sub}: sem post novo (${reason} já postado).`);
+                continue;
+            }
+
+            lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
+            setNewsState(STATE_KEY, lastSeen);
+
+            if (latest.isVideoPost && !latest.media.video) {
+                const vUrl = await fetchVideoFromJson(latest.id, cfg.newsUserAgent);
+                if (vUrl) {
+                    latest.media.video = vUrl;
+                    newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
                 }
             }
 
-            if (sendDelayMs > 0) await sleep(sendDelayMs);
-        }
+            newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
+            publishedThisCycle = true;
+
+            for (const jid of groups) {
+                if (isShuttingDown) break;
+                if (!isNewsEnabled(jid)) continue;
+                if (Date.now() < _rateLimitedUntil) {
+                    newsLog(`envio pausado por rate-limit global.`);
+                    break;
+                }
+
+                try {
+                    await sendOne(sockRef, jid, latest, sub, showMeta);
+                } catch (e) {
+                    const msg = String(e?.message || e || '').toLowerCase();
+                    if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
+                        _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+                        newsErr(`rate-limit em ${jid}; cooldown 120s.`);
+                        break;
+                    } else {
+                        newsErr(`erro ao enviar ${latest.id} para ${jid}:`, e?.message || e);
+                    }
+                }
+
+                if (sendDelayMs > 0) await sleep(sendDelayMs);
+            }
 
             await new Promise(resolve => setImmediate(resolve));
         }
