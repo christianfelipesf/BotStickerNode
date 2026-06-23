@@ -31,8 +31,9 @@ module.exports = {
             else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle') config[p] = v.toLowerCase() === 'true';
             else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
             else if (p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs') {
-                // Aceita: "45" (minutos), "45m", "60s", "1h", "2700000ms" ou ms puro.
-                // Mantém compat com o nome antigo newsPollIntervalMs.
+                // Aceita: "45" (minutos), "45m", "60s", "1h", "2700000ms".
+                // newsPollIntervalMinutes → grava em MINUTOS (número puro).
+                // newsPollIntervalMs (legado) → grava em ms.
                 const m = String(v || '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/);
                 if (!m) {
                     await sock.sendMessage(from, { text: `❌ Formato inválido. Use: ${config.prefix}set newsPollIntervalMinutes 45m  (ou 60s, 1h)` }, { quoted: m });
@@ -40,13 +41,21 @@ module.exports = {
                 }
                 const num = parseFloat(m[1]);
                 const unit = m[2] || 'm';
-                let totalMs;
-                if (unit === 'ms') totalMs = Math.round(num);
-                else if (unit === 's') totalMs = Math.round(num * 1000);
-                else if (unit === 'm') totalMs = Math.round(num * 60 * 1000);
-                else if (unit === 'h') totalMs = Math.round(num * 60 * 60 * 1000);
-                // Compat: se usuário usou o nome antigo, mantém ms; senão grava em ms também.
-                config[p] = totalMs;
+                if (p === 'newsPollIntervalMinutes') {
+                    // Grava SEMPRE em minutos (forma padrão da chave).
+                    if (unit === 'ms') config[p] = Math.round(num / 60000);
+                    else if (unit === 's') config[p] = Math.round(num / 60);
+                    else if (unit === 'm') config[p] = Math.round(num);
+                    else if (unit === 'h') config[p] = Math.round(num * 60);
+                } else {
+                    // Legado: grava em ms.
+                    let totalMs;
+                    if (unit === 'ms') totalMs = Math.round(num);
+                    else if (unit === 's') totalMs = Math.round(num * 1000);
+                    else if (unit === 'm') totalMs = Math.round(num * 60 * 1000);
+                    else if (unit === 'h') totalMs = Math.round(num * 60 * 60 * 1000);
+                    config[p] = totalMs;
+                }
             }
             else if (p === 'newsSubreddits') {
                 const raw = String(v || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);

@@ -19,10 +19,15 @@ function parseIntervalMs(v) {
     return Math.round(n * 60 * 1000);
 }
 
-function formatInterval(ms) {
-    const total = parseIntervalMs(ms);
-    if (total < 60 * 1000) return `${Math.max(1, Math.round(total / 1000))}s`;
-    return `${Math.round(total / 60000)} min`;
+// Formata um valor de intervalo (em minutos) para exibição amigável.
+// Aceita number (minutos) ou string com sufixo ("60s", "45m", "1h").
+function formatInterval(v) {
+    if (v == null) return '15 min';
+    const totalMs = parseIntervalMs(v);
+    if (totalMs < 60 * 1000) return `${Math.max(1, Math.round(totalMs / 1000))}s`;
+    const minutes = totalMs / 60000;
+    if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60}h`;
+    return `${Math.round(minutes)} min`;
 }
 
 module.exports = {
@@ -69,7 +74,7 @@ module.exports = {
             setNewsEnabled(from, true);
             const subsText = subs.map(s => `r/${s}`).join(', ');
             await sock.sendMessage(from, {
-                text: `📰 *Feed de notícias ativado!*\n\n📡 Subreddits: ${subsText}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15 * 60 * 1000)}\n\nUse *${config.prefix}news desativar* para parar.`
+                text: `📰 *Feed de notícias ativado!*\n\n📡 Subreddits: ${subsText}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n\nUse *${config.prefix}news desativar* para parar.`
             }, { quoted: m });
             return await react(sock, m, '🟢', lastBotResponse, GLOBAL_COOLDOWN);
         }
@@ -108,7 +113,7 @@ module.exports = {
             const enabled = isNewsEnabled(from);
             const totalGroups = listNewsGroups().length;
             await sock.sendMessage(from, {
-                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15 * 60 * 1000)}\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
+                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
             }, { quoted: m });
             return await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
         }

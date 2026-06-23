@@ -285,6 +285,7 @@ function extractSelftext(body) {
 }
 
 let _rateLimitedUntil = 0;
+let _isPolling = false; // trava anti-concorrência para pollOnce
 const _subCooldownUntil = new Map();
 const _subConsecutiveRateLimits = new Map();
 
@@ -694,10 +695,16 @@ async function processQueue() {
 
 async function pollOnce() {
     if (isShuttingDown || !sockRef) return;
+    if (_isPolling) {
+        // pollOnce anterior ainda rodando — descarta este para evitar spam.
+        return;
+    }
+    _isPolling = true;
 
     if (Date.now() < _rateLimitedUntil) {
         const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
-        newsLog(`em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
+        // Suprime spam — mostra só 1x a cada 5 min para o mesmo tempo de cooldown.
+        newsLogOnce(`cooldown:${Math.round(wait / 60)}min`, `em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
         return;
     }
 
@@ -707,7 +714,7 @@ async function pollOnce() {
 
     const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
     if (groups.length === 0) {
-        newsLog('nenhum grupo com feed ativado.');
+        newsLogOnce('no-groups', 'nenhum grupo com feed ativado.');
         return;
     }
 
@@ -732,7 +739,7 @@ async function pollOnce() {
 
     for (const sub of subsToCheck) {
         if (onePerCycle && publishedThisCycle) {
-            newsLog(`cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
+            newsLogOnce('cycle-skip', `cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
             break;
         }
 
@@ -834,7 +841,10 @@ async function pollOnce() {
             if (sendDelayMs > 0) await sleep(sendDelayMs);
         }
 
-        await new Promise(resolve => setImmediate(resolve));
+            await new Promise(resolve => setImmediate(resolve));
+        }
+    } finally {
+        _isPolling = false;
     }
 }
 
