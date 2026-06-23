@@ -331,8 +331,7 @@ module.exports = {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
 
-            const tsLabel = new Date().toLocaleString('pt-BR');
-            console.log(`🤖 [INTERAÇÃO] [${tsLabel}] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
+            console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
 
             const context = {

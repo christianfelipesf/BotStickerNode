@@ -1,34 +1,25 @@
-const _start = Date.now();
-
-function _now() {
-    return new Date().toLocaleString('pt-BR', { hour12: false });
+function ts() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function _ms() {
-    return String(Date.now() - _start).padStart(6, ' ');
+function patch() {
+    const wrap = (orig) => function (...args) {
+        const prefix = `[${ts()}]`;
+        if (args.length === 0) return orig(prefix);
+        const first = args[0];
+        if (typeof first === 'string') return orig(prefix + ' ' + first, ...args.slice(1));
+        return orig(prefix, ...args);
+    };
+    const origLog = console.log.bind(console);
+    const origInfo = console.info?.bind(console);
+    const origWarn = console.warn?.bind(console);
+    const origError = console.error.bind(console);
+    console.log = wrap(origLog);
+    if (origInfo) console.info = wrap(origInfo);
+    if (origWarn) console.warn = wrap(origWarn);
+    console.error = wrap(origError);
 }
 
-function fmt(label, detail) {
-    const detailPart = detail ? ` — ${detail}` : '';
-    return `[${_now()}] [+${_ms()}ms] ${label}${detailPart}`;
-}
-
-const counters = {};
-function step(scope, label, detail) {
-    counters[scope] = (counters[scope] || 0) + 1;
-    const n = String(counters[scope]).padStart(3, '0');
-    const detailPart = detail ? ` — ${detail}` : '';
-    return `[${_now()}] [+${_ms()}ms] ${scope} #${n} ${label}${detailPart}`;
-}
-
-function section(title) {
-    const bar = '─'.repeat(Math.max(0, 60 - title.length - 4));
-    return `\n──── ${title} ${bar}`;
-}
-
-function event(scope, eventName, detail) {
-    const detailPart = detail ? ` — ${detail}` : '';
-    return `[${_now()}] [+${_ms()}ms] ${scope} ◆ ${eventName}${detailPart}`;
-}
-
-module.exports = { fmt, step, section, event, _start };
+module.exports = { ts, patch };
