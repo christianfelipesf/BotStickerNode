@@ -11,6 +11,14 @@ const {
 const STATE_KEY = 'lastSeenPostIds';
 const HTTP_TIMEOUT_MS = 20 * 1000;
 
+function ts() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+const newsLog = (...args) => console.log(`📰 [news][${ts()}]`, ...args);
+const newsErr = (...args) => console.error(`📰 [news][${ts()}]`, ...args);
+
 let sockRef = null;
 let pollTimer = null;
 let isShuttingDown = false;
@@ -208,6 +216,20 @@ async function fetchSubredditFeed(sub, userAgent) {
             validateStatus: () => true,
             transformResponse: [(data) => data]
         });
+
+        // Subreddit inexistente, banido, privado ou removido: o Reddit devolve
+        // HTML 404 com body "page not found". NÃO é rate-limit, NÃO é erro
+        // transitório. Marca cooldown longo para evitar spam de requests, mas
+        // não toca no contador de rate-limit.
+        const status = res.status;
+        if (status === 404 || status === 403 || status === 410) {
+            const prev = _subCooldownUntil.get(sub) || 0;
+            const subUntil = Date.now() + 6 * 60 * 60 * 1000;
+            if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
+            newsErr(`r/${sub} feed respondeu status=${status} (subreddit inexistente/privado/banido) → cooldown 6h. Remova de newsSubreddits se quiser desativar.`);
+            return { __rateLimited: true, items: [], __invalidSub: true };
+        }
+
         if (res.status === 429 || res.status === 503) {
             const ra = parseInt(res.headers && res.headers['retry-after'], 10);
             const baseWait = (Number.isFinite(ra) && ra > 0 ? ra : 120);
@@ -218,13 +240,25 @@ async function fetchSubredditFeed(sub, userAgent) {
             const subUntil = Date.now() + waitMs;
             if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
             _rateLimitedUntil = Math.max(_rateLimitedUntil, subUntil);
-            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${n})`);
+            newsErr(`r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${n})`);
             return { __rateLimited: true, items: [] };
         }
         if (res.status !== 200 || !res.data) {
-            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status}`);
+            newsErr(`r/${sub} feed respondeu status=${res.status}`);
             return { __rateLimited: false, items: [] };
         }
+
+        // Detecta HTML 200 falso (subreddit inexistente em /new/.rss).
+        // O Reddit às vezes devolve página HTML com "page not found" + status 200.
+        const bodyLower = String(res.data).slice(0, 500).toLowerCase();
+        if (bodyLower.includes('page not found') || bodyLower.includes('<!doctype html')) {
+            const prev = _subCooldownUntil.get(sub) || 0;
+            const subUntil = Date.now() + 6 * 60 * 60 * 1000;
+            if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
+            newsErr(`r/${sub} feed retornou HTML (subreddit inválido/indisponível) → cooldown 6h. Remova de newsSubreddits.`);
+            return { __rateLimited: true, items: [], __invalidSub: true };
+        }
+
         _clearSubCooldown(sub);
         return { __rateLimited: false, items: parseRssItems(String(res.data)) };
     } catch (e) {
@@ -307,7 +341,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
 
     await new Promise(resolve => setImmediate(resolve));
     if (Date.now() < _rateLimitedUntil) {
-        console.log(`📰 [news] pulando envio para ${jid} (rate-limit global ativo).`);
+        newsLog(`pulando envio para ${jid} (rate-limit global ativo).`);
         return;
     }
 
@@ -320,7 +354,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 return await sendMessageSafe(sock, jid, payload, retryOpts);
             }
         } catch (e) {
-            console.error(`📰 [news] falha vídeo r/${sub}:`, e.message);
+            newsErr(`falha vídeo r/${sub}:`, e.message);
         }
     }
 
@@ -349,7 +383,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 }
             }
         } catch (e) {
-            console.error(`📰 [news] falha imagem r/${sub}:`, e.message);
+            newsErr(`falha imagem r/${sub}:`, e.message);
         }
     }
 
@@ -377,7 +411,7 @@ async function processQueue() {
     try {
         while (!isShuttingDown && sendQueue.length > 0 && sockRef) {
             if (Date.now() < _rateLimitedUntil) {
-                console.log(`📰 [news] fila pausada por rate-limit; limpando backlog (${sendQueue.length} itens).`);
+                newsLog(`fila pausada por rate-limit; limpando backlog (${sendQueue.length} itens).`);
                 sendQueue.length = 0;
                 break;
             }
@@ -406,10 +440,10 @@ async function processQueue() {
                     const msg = String(e?.message || e || '').toLowerCase();
                     if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
                         _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
-                        console.error(`📰 [news] rate-limit em ${jid}; cooldown 120s.`);
+                        newsErr(`rate-limit em ${jid}; cooldown 120s.`);
                         break;
                     } else {
-                        console.error(`📰 [news] erro ao enviar ${post.id} para ${jid}:`, e?.message || e);
+                        newsErr(`erro ao enviar ${post.id} para ${jid}:`, e?.message || e);
                     }
                 }
 
@@ -428,7 +462,7 @@ async function pollOnce() {
 
     if (Date.now() < _rateLimitedUntil) {
         const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
-        console.log(`📰 [news] em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
+        newsLog(`em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
         return;
     }
 
@@ -438,7 +472,7 @@ async function pollOnce() {
 
     const groups = listNewsGroups().filter(jid => isNewsEnabled(jid));
     if (groups.length === 0) {
-        console.log('📰 [news] nenhum grupo com feed ativado.');
+        newsLog('nenhum grupo com feed ativado.');
         return;
     }
 
@@ -463,7 +497,7 @@ async function pollOnce() {
 
     for (const sub of subsToCheck) {
         if (onePerCycle && publishedThisCycle) {
-            console.log(`📰 [news] cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
+            newsLog(`cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
             break;
         }
 
@@ -471,13 +505,13 @@ async function pollOnce() {
         const subCooldown = _subCooldownUntil.get(sub) || 0;
         if (Date.now() < subCooldown) {
             const wait = Math.round((subCooldown - Date.now()) / 1000);
-            console.log(`📰 [news] r/${sub}: em cooldown por mais ${wait}s — pulando.`);
+            newsLog(`r/${sub}: em cooldown por mais ${wait}s — pulando.`);
             continue;
         }
 
         // Stagger entre subs: evita burst de requests que dispara 429 do Reddit.
         if (!firstSubOfCycle && staggerMs > 0) {
-            console.log(`📰 [news] aguardando ${Math.round(staggerMs / 1000)}s antes de r/${sub}...`);
+            newsLog(`aguardando ${Math.round(staggerMs / 1000)}s antes de r/${sub}...`);
             const steps = Math.ceil(staggerMs / 5000);
             for (let i = 0; i < steps; i++) {
                 if (isShuttingDown) return;
@@ -490,7 +524,7 @@ async function pollOnce() {
         try {
             result = await fetchSubredditFeed(sub, cfg.newsUserAgent);
         } catch (e) {
-            console.error(`📰 [news] falha ao buscar feed r/${sub}:`, e.message);
+            newsErr(`falha ao buscar feed r/${sub}:`, e.message);
             continue;
         }
         if (result.__rateLimited) continue;
@@ -505,7 +539,7 @@ async function pollOnce() {
         // Se for igual ao atual, não republica.
         const previousId = lastSeen[sub] || null;
         if (previousId === latest.id) {
-            console.log(`📰 [news] r/${sub}: sem post novo (último já postado: ${latest.id}).`);
+            newsLog(`r/${sub}: sem post novo (último já postado: ${latest.id}).`);
             continue;
         }
 
@@ -514,14 +548,14 @@ async function pollOnce() {
         lastSeen[sub] = latest.id;
         setNewsState(STATE_KEY, lastSeen);
 
-        console.log(`📰 [news] r/${sub}: novo último post ${latest.id} — publicando.`);
+        newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
         publishedThisCycle = true;
 
         for (const jid of groups) {
             if (isShuttingDown) break;
             if (!isNewsEnabled(jid)) continue;
             if (Date.now() < _rateLimitedUntil) {
-                console.log(`📰 [news] envio pausado por rate-limit global.`);
+                newsLog(`envio pausado por rate-limit global.`);
                 break;
             }
 
@@ -531,10 +565,10 @@ async function pollOnce() {
                 const msg = String(e?.message || e || '').toLowerCase();
                 if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
                     _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
-                    console.error(`📰 [news] rate-limit em ${jid}; cooldown 120s.`);
+                    newsErr(`rate-limit em ${jid}; cooldown 120s.`);
                     break;
                 } else {
-                    console.error(`📰 [news] erro ao enviar ${latest.id} para ${jid}:`, e?.message || e);
+                    newsErr(`erro ao enviar ${latest.id} para ${jid}:`, e?.message || e);
                 }
             }
 
@@ -560,13 +594,13 @@ function start() {
     const cfg = readConfig();
     const ms = Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMs));
     pollTimer = setInterval(() => {
-        pollOnce().catch(err => console.error('📰 [news] poll:', err?.message || err));
+        pollOnce().catch(e => newsErr(`poll: ${e?.message || e}`));
     }, ms);
     if (pollTimer.unref) pollTimer.unref();
     setTimeout(() => {
-        pollOnce().catch(err => console.error('📰 [news] initial poll:', err?.message || err));
+        pollOnce().catch(e => newsErr(`initial poll: ${e?.message || e}`));
     }, 20 * 1000);
-    console.log(`📰 [news] polling ativado a cada ${Math.round(ms / 1000)}s (subs: ${(cfg.newsSubreddits || []).join(', ')})`);
+    newsLog(`polling ativado a cada ${Math.round(ms / 1000)}s (subs: ${(cfg.newsSubreddits || []).join(', ')})`);
 }
 
 function stop() {

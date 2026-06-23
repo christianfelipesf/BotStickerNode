@@ -7,6 +7,7 @@ const {
     mediaToSticker,
     insertDashboardLog,
     loadDashboardHistory,
+    getDashboardLogByMessageId,
     trimDashboardLogs,
     countDashboardLogs,
     updateDashboardLogReactions,
@@ -21,7 +22,7 @@ let ioServer = null;
 let sockRef = null;
 let groupsApi = null;
 const MAX_LOGS = 200;
-const HISTORY_SEND_LIMIT = 200;
+const HISTORY_SEND_LIMIT = 100;
 const groupInfoCache = new Map();
 const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
@@ -268,14 +269,19 @@ function init(config) {
         server.listen(port, '0.0.0.0', () => console.log(`[dashboard] ativo em http://localhost:${port}`));
         groupsRefreshTimer = setInterval(() => {
             pushGroupsSnapshot({ force: false }).catch(() => {});
-        }, 5 * 60 * 1000);
+        }, 10 * 60 * 1000);
         if (groupsRefreshTimer.unref) groupsRefreshTimer.unref();
 
         const maxRows = Number(config?.dashboardMaxLogs) || MAX_LOGS;
         const maxAgeMs = (Number(config?.dashboardHistoryHours) || 12) * 3600 * 1000;
-        const trimIntervalMs = Math.max(10 * 1000, Number(config?.dashboardTrimIntervalMs) || 60 * 1000);
+        const trimIntervalMs = Math.max(30 * 1000, Number(config?.dashboardTrimIntervalMs) || 5 * 60 * 1000);
         logsTrimTimer = setInterval(() => {
-            try { trimDashboardLogs({ maxAgeMs, maxRows }); } catch (_) {}
+            try {
+                const c = countDashboardLogs();
+                if (c > maxRows || (maxAgeMs > 0 && c > 0)) {
+                    trimDashboardLogs({ maxAgeMs, maxRows });
+                }
+            } catch (_) {}
         }, trimIntervalMs);
         if (logsTrimTimer.unref) logsTrimTimer.unref();
 
@@ -508,7 +514,11 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
 async function pushGroupsSnapshot(options = {}) {
     if (!ioServer) return;
     try {
-        const list = await getGroupsSnapshot(options);
+        const now = Date.now();
+        const wantsForce = !!options.force;
+        const effectiveForce = wantsForce && (now - lastForceRefreshAt > FORCE_REFRESH_COOLDOWN_MS);
+        if (wantsForce) lastForceRefreshAt = now;
+        const list = await getGroupsSnapshot({ force: effectiveForce });
         ioServer.emit('groups', list);
     } catch (e) {
         console.error('[dashboard] pushGroupsSnapshot:', e?.message || e);
@@ -517,8 +527,7 @@ async function pushGroupsSnapshot(options = {}) {
 
 function handleReaction(targetId, emoji, senderJid, senderName) {
     try {
-        const recent = loadDashboardHistory({ limit: 50 });
-        const msg = recent.find(item => item.messageId === targetId);
+        const msg = getDashboardLogByMessageId(targetId);
         let targetJid = null;
         let targetType = null;
         if (msg) {
@@ -539,6 +548,9 @@ function handleReaction(targetId, emoji, senderJid, senderName) {
         console.error('[dashboard] handleReaction:', e.message);
     }
 }
+
+let lastForceRefreshAt = 0;
+const FORCE_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 
 let htmlTemplate = null;
 function getHtml(botName) {

@@ -105,7 +105,10 @@ db.exec(`
     );
     CREATE INDEX IF NOT EXISTS idx_dashboard_logs_ts ON dashboard_logs(timestamp);
     CREATE INDEX IF NOT EXISTS idx_dashboard_logs_to_jid ON dashboard_logs(to_jid, timestamp);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_logs_msgid
+    CREATE INDEX IF NOT EXISTS idx_dashboard_logs_msgid
+        ON dashboard_logs(message_id)
+        WHERE message_id IS NOT NULL AND message_id != '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_logs_msgid_unique
         ON dashboard_logs(to_jid, message_id, type)
         WHERE message_id IS NOT NULL AND message_id != '';
 `);
@@ -694,6 +697,14 @@ const _dlSelectAll = db.prepare(`
     FROM dashboard_logs
     ORDER BY timestamp ASC
 `);
+const _dlSelectAllLimited = db.prepare(`
+    SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+           sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+           time_label, timestamp
+    FROM dashboard_logs
+    ORDER BY timestamp ASC
+    LIMIT ?
+`);
 const _dlSelectRecent = db.prepare(`
     SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
            sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
@@ -701,6 +712,15 @@ const _dlSelectRecent = db.prepare(`
     FROM dashboard_logs
     WHERE timestamp >= ?
     ORDER BY timestamp ASC
+    LIMIT ?
+`);
+const _dlSelectByMessageId = db.prepare(`
+    SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+           sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+           time_label, timestamp
+    FROM dashboard_logs
+    WHERE message_id = ?
+    LIMIT 1
 `);
 const _dlTrimByAge = db.prepare(`DELETE FROM dashboard_logs WHERE timestamp < ?`);
 const _dlTrimByCount = db.prepare(`
@@ -768,16 +788,26 @@ function _rowToLog(row) {
 
 function loadDashboardHistory({ since = 0, limit = 500 } = {}) {
     try {
+        const lim = Math.max(1, Math.min(1000, Number(limit) || 500));
         const rows = since > 0
-            ? _dlSelectRecent.all(since)
-            : _dlSelectAll.all();
+            ? _dlSelectRecent.all(since, lim)
+            : _dlSelectAllLimited.all(lim);
         const out = [];
         for (const r of rows) out.push(_rowToLog(r));
-        if (limit > 0 && out.length > limit) return out.slice(out.length - limit);
         return out;
     } catch (e) {
         console.error('❌ [dashboard_logs] load:', e.message);
         return [];
+    }
+}
+
+function getDashboardLogByMessageId(messageId) {
+    if (!messageId) return null;
+    try {
+        const row = _dlSelectByMessageId.get(messageId);
+        return row ? _rowToLog(row) : null;
+    } catch (e) {
+        return null;
     }
 }
 
