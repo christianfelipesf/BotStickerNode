@@ -1679,7 +1679,7 @@ module.exports = {
     getNewsState, setNewsState,
     canAdminControl,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
-    updateDashboardLogReactions, clearDashboardLogs,
+    updateDashboardLogReactions, clearDashboardLogs, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     flushNow
 };
