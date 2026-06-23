@@ -30,6 +30,27 @@ module.exports = {
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
             else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle') config[p] = v.toLowerCase() === 'true';
             else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsPollIntervalMs' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
+            else if (p === 'newsSubreddits') {
+                const raw = String(v || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+                const seen = new Set();
+                const out = [];
+                for (const s of raw) {
+                    let n = s.replace(/^r\//i, '').replace(/^\//, '').replace(/\/$/, '').toLowerCase();
+                    if (!n) continue;
+                    if (!/^[a-z0-9_]{2,32}$/.test(n)) {
+                        await sock.sendMessage(from, { text: `❌ Subreddit inválido ignorado: *${s}*` }, { quoted: m });
+                        continue;
+                    }
+                    if (seen.has(n)) continue;
+                    seen.add(n);
+                    out.push(n);
+                }
+                if (out.length === 0) {
+                    await sock.sendMessage(from, { text: `❌ Nenhum subreddit válido informado. Use: ${config.prefix}set newsSubreddits pics,ShitpostBR` }, { quoted: m });
+                    return lastBotResponse;
+                }
+                config[p] = out;
+            }
             else config[p] = v;
             
             writeConfig(config);
