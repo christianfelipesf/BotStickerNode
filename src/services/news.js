@@ -459,8 +459,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
-    const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
-    newsLog(`r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${isVideoPostFlag} isGif=${!!media.isGifPost} hasVideo=${!!media.video} hasImage=${!!media.image}`);
+    newsLog(`r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${!!(post.isVideoPost || media.isVideoPost)} isGif=${!!media.isGifPost} hasVideo=${!!media.video} hasImage=${!!media.image}`);
     const maxRetries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
     const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
     const retryOpts = {
@@ -478,7 +477,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     // Se é post de vídeo mas não temos URL direta, busca via JSON API.
     // (post.isVideoPost OU media.isVideoPost — `isVideoPost` é colocado dentro
     // de media pelo extractMedia.)
-    const isVideoPostFlag = post.isVideoPost || media.isVideoPost;
+    const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
     if (isVideoPostFlag && post.id) {
         if (!media.video || !isVideoUrl(media.video)) {
             const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
