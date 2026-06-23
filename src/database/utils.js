@@ -1433,6 +1433,20 @@ async function react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN) {
     }
 }
 
+// Reage com base no status final (ok/erro). Quando o grupo está em modo
+// parcial (!ativarp), usa '🟡' para ok e '⚠️' para erro, sinalizando o modo.
+// Quando o bot está no modo total (!ativar) ou em PV, usa os emojis padrão
+// passados pelo chamador (okEmoji / errEmoji).
+async function reactStatus(sock, m, from, isOk, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN) {
+    let emoji;
+    if (isPartialActive(from)) {
+        emoji = isOk ? '🟡' : '⚠️';
+    } else {
+        emoji = isOk ? (okEmoji || '✅') : (errEmoji || '❌');
+    }
+    return await react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN);
+}
+
 // ============================================================
 // sendMessageSafe — wrapper com retry/backoff automático para 429
 // rate-overlimit do WhatsApp. Retorna a resposta do envio ou null se
@@ -1762,7 +1776,7 @@ module.exports = {
     isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
     readStats, incrementRestart, incrementCommand, formatUptime,
     readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed, getBotName, react, getMessageText, getVersion,
+    changeSpeed, getBotName, react, reactStatus, getMessageText, getVersion,
     updateMemberActivity, getTopMember, getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,

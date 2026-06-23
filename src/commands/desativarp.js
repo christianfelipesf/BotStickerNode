@@ -3,7 +3,7 @@ module.exports = {
     category: 'grupos',
     description: 'Desliga o bot no grupo (modo parcial)',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, deactivatePartial, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
+        const { react, reactStatus, deactivatePartial, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
@@ -26,8 +26,16 @@ module.exports = {
         }
 
         const success = deactivatePartial(from);
-        console.log(`⚪ [BOT-PARCIAL] desativado em ${from} por @${senderNorm.split('@')[0]}`);
-        await sock.sendMessage(from, { text: '⚪ *Ativamento Parcial* desativado neste grupo.' }, { quoted: m });
-        return await react(sock, m, success ? '⚪' : '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
+        console.log(`🟡 [BOT-PARCIAL] desativado em ${from} por @${senderNorm.split('@')[0]}`);
+        if (!success) {
+            return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
+        }
+        try {
+            await sock.sendMessage(from, { text: '🟡 *Ativamento Parcial* desativado neste grupo.' }, { quoted: m });
+        } catch (err) {
+            console.error('❌ [BOT-PARCIAL] falhou ao enviar mensagem de desativamento:', err.message);
+            return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
+        }
+        return await reactStatus(sock, m, from, true, '🔴', '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
     }
 };

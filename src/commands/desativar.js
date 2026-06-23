@@ -3,7 +3,7 @@ module.exports = {
     category: 'grupos',
     description: 'Desliga o bot no grupo',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, deactivateGroup, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
+        const { react, reactStatus, deactivateGroup, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
@@ -27,6 +27,6 @@ module.exports = {
 
         const success = deactivateGroup(from);
         console.log(`🔴 [BOT] desativado em ${from} por @${senderNorm.split('@')[0]}`);
-        return await react(sock, m, success ? '🔴' : '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
+        return await reactStatus(sock, m, from, success, '🔴', '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
     }
 };

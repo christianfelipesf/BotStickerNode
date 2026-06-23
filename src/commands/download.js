@@ -167,7 +167,7 @@ module.exports = {
     category: 'mídia',
     description: 'Baixa mídia de TikTok, Instagram, YouTube, Facebook e mais',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react } = utils;
+        const { react, reactStatus } = utils;
         const hd = commandName === 'downloadhd' || commandName === 'dhd';
         const url = extractUrl(fullArgsText);
 

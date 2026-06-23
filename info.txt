@@ -6,18 +6,3 @@
 
 -- O SCRIPT É UPADO NA GITHUB E RODA NA VPS LINUX
 
-[FIX]verifique se o script reiniciou ou é so uma informacao, ele estava ativo nao reiniciei ele e ele exitiu conectado denovo mas nao as mensagens anteriores mas e pra corrigir caso ele reiniciou
-40ms
-0|BotStick | [12:54:33] 🤖 [INTERAÇÃO] Comando !config por BotSticker em 120363374777828089@g.us
-0|BotStick | [12:54:33]    └─ [12:54:33] [+ 0ms / total 0ms] cmd.!config #1 início — BotSticker → !config
-0|BotStick | [12:54:33]    └─ [12:54:33] [+  431ms / total 431ms] cmd.!config #2 fim — ok em 431ms
-0|BotStick | [12:54:58] 🤖 [INTERAÇÃO] Comando !set por BotSticker em 120363374777828089@g.us
-0|BotStick | [12:54:58]    └─ [12:54:58] [+ 0ms / total 0ms] cmd.!set #1 início — BotSticker → !set
-0|BotStick | [12:54:59]    └─ [12:54:59] [+  365ms / total 365ms] cmd.!set #2 fim — ok em 365ms
-0|BotStick | [12:56:40] 📰 [news] desativado pela config (newsEnabled=false).
-0|BotStick | [12:56:41]
-0|BotStick | 🟢 BOTSTICKER CONECTADO! (Versão: pull)
-0|BotStick |
-
-[FEATURE] Ativamento parcial do bot ele ativa porém verifica nos comandos se teve alguma reação, ele espera 10 segundos (configurado via database) se não teve nenhuma reação ele responde ao comando
-!ativarp !desativarp irá ser chamado de ativamento parcial  alguns comandos funcionarão como !play, !s etc mas comandos de admin não funcionarão ele nao respondera nada e caso use !ativar é diferente de !ativarp ou fica ativo um ou outro mas a dferença dele é que ele ira detectar se outro bot nao ja resagiu == respondeu o comando da pessoa

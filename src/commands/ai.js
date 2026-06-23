@@ -4,7 +4,7 @@ module.exports = {
     category: 'ai',
     description: 'Pergunta para a inteligência artificial',
     async execute(sock, m, { from, fullArgsText, utils, model, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, getMessageText } = utils;
+        const { react, reactStatus, getMessageText } = utils;
         if (!model) {
             await sock.sendMessage(from, { text: '❌ IA não configurada. Defina a geminiApiKey.' }, { quoted: m });
             return lastBotResponse;
@@ -28,7 +28,7 @@ module.exports = {
             let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN); 
             const result = await model.generateContent(prompt);
             await sock.sendMessage(from, { text: result.response.text() }, { quoted: m }); 
-            return await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
+            return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (e) { 
             console.error('❌ [IA] Erro:', e);
             await sock.sendMessage(from, { text: '❌ Comandos de IA indisponíveis no momento.' }, { quoted: m });
