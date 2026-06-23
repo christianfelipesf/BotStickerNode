@@ -22,15 +22,18 @@
 .st-big{color:var(--g)}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font:14px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden;-webkit-tap-highlight-color:transparent}
+@supports (height: 100dvh){
+    html,body{height:100dvh}
+}
 button{font:inherit}
 
 /* Layout: 3 colunas no desktop, telas únicas no mobile */
 .app{display:grid;grid-template-columns:minmax(260px,320px) 1fr minmax(280px,340px);height:100vh;width:100vw;overflow:hidden}
+@supports (height: 100dvh){.app{height:100dvh}}
 .col{display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--b)}
 .col:last-child{border-right:none;border-left:1px solid var(--b)}
 .col-chats,.col-stats{background:var(--sb)}
 .col-chat{background:var(--bg)}
-@media (max-width:900px){.app{grid-template-columns:1fr}.col{display:none;border:none;width:auto!important;min-width:0!important}body[data-screen=chats] .col-chats,body[data-screen=chat] .col-chat,body[data-screen=stats] .col-stats{display:flex}}
 
 /* Cabeçalhos */
 .ch-head,.cb-head,.st-head{padding:10px 14px;background:var(--sb);border-bottom:1px solid var(--b);flex-shrink:0}
@@ -148,14 +151,28 @@ button{font:inherit}
 /* Mobile tabbar */
 .mobile-tabbar{display:none}
 @media (max-width:900px){
+    html,body{height:100%;min-height:100vh}
     .ch-icon-btn{display:flex}
     body[data-screen=chats] #backBtn,body[data-screen=stats] #openStatsMobile{display:none}
-    .mobile-tabbar{display:grid;grid-template-columns:repeat(3,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--sb);border-top:1px solid var(--b);padding-bottom:env(safe-area-inset-bottom);z-index:90}
+    .app{display:flex;flex-direction:column;height:100dvh;height:100vh;width:100vw;overflow:hidden}
+    .app>.col{flex:1 1 auto;min-height:0;border:none;width:auto!important;min-width:0!important}
+    .app>.col:not(.col-chats):not(.col-chat):not(.col-stats){display:none}
+    body[data-screen=chats] .app>.col-chats,
+    body[data-screen=chat]  .app>.col-chat,
+    body[data-screen=stats] .app>.col-stats{flex:1 1 auto;display:flex;min-height:0}
+    .mobile-tabbar{display:grid;grid-template-columns:repeat(3,1fr);flex:0 0 auto;background:var(--sb);border-top:1px solid var(--b);padding:6px 4px calc(8px + env(safe-area-inset-bottom));z-index:90;min-height:64px}
     .mt-tab{background:transparent;border:none;color:var(--dm);padding:8px 4px 6px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:60px}
     .mt-tab.active{color:var(--g)}
     .col-chat{padding-bottom:env(safe-area-inset-bottom)}
-    .cb-composer{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
-    .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
+    .cb-composer{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+    .toast{bottom:calc(80px + env(safe-area-inset-bottom))}
+}
+@supports (padding: max(0px)){
+    @media (max-width:900px){
+        .mobile-tabbar{padding-bottom:max(8px, calc(env(safe-area-inset-bottom) + 24px))}
+        .cb-composer{padding-bottom:max(12px, calc(12px + env(safe-area-inset-bottom) + 24px))}
+        .toast{bottom:max(80px, calc(80px + env(safe-area-inset-bottom)))}
+    }
 }
 @media (min-width:901px) and (max-width:1100px){.app{grid-template-columns:minmax(240px,280px) 1fr minmax(240px,280px)}}
 
