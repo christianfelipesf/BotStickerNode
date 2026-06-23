@@ -4,46 +4,20 @@
 
 -- FOCO EM MODULACAO
 
+-- O SCRIPT É UPADO NA GITHUB E RODA NA VPS LINUX
 
+[FIX]verifique se o script reiniciou ou é so uma informacao, ele estava ativo nao reiniciei ele e ele exitiu conectado denovo mas nao as mensagens anteriores mas e pra corrigir caso ele reiniciou
+40ms
+0|BotStick | [12:54:33] 🤖 [INTERAÇÃO] Comando !config por BotSticker em 120363374777828089@g.us
+0|BotStick | [12:54:33]    └─ [12:54:33] [+ 0ms / total 0ms] cmd.!config #1 início — BotSticker → !config
+0|BotStick | [12:54:33]    └─ [12:54:33] [+  431ms / total 431ms] cmd.!config #2 fim — ok em 431ms
+0|BotStick | [12:54:58] 🤖 [INTERAÇÃO] Comando !set por BotSticker em 120363374777828089@g.us
+0|BotStick | [12:54:58]    └─ [12:54:58] [+ 0ms / total 0ms] cmd.!set #1 início — BotSticker → !set
+0|BotStick | [12:54:59]    └─ [12:54:59] [+  365ms / total 365ms] cmd.!set #2 fim — ok em 365ms
+0|BotStick | [12:56:40] 📰 [news] desativado pela config (newsEnabled=false).
+0|BotStick | [12:56:41]
+0|BotStick | 🟢 BOTSTICKER CONECTADO! (Versão: pull)
+0|BotStick |
 
-[DATABASE DA VPS]
-
-root@vps68131:~/BotStickerNode# cat database.json
-{
-  "config": {
-    "botName": "BotSticker",
-    "prefix": "!",
-    "showLogoInMenu": true,
-    "voiceEffects": true,
-    "geminiModel": "gemini-1.5-flash",
-    "summaryLimit": 20,
-    "aiPrompt": "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
-    "summaryPrompt": "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
-    "stickerPack": "BotStickerNode",
-    "stickerAuthor": "Bot",
-    "geminiApiKey": "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
-    "dashboardEnabled": true,
-    "dashboardPort": 3000,
-    "dashboardMaxLogs": 5000,
-    "dashboardHistoryHours": 72,
-    "adminCanControl": false,
-    "clearDefaultLimit": 10,
-    "newsSubreddits": [
-      "ShitpostBR"
-    ],
-    "newsPollIntervalMs": 300000,
-    "newsUserAgent": "BotStickerNode/1.0 (by /u/BotStickerNode)",
-    "newsSendDelayMs": 5000,
-    "newsMaxPerCycle": 1,
-    "newsShowMeta": false,
-    "newsMaxRetries": 3,
-    "newsRetryBaseDelayMs": 15000,
-    "linkgrupo": "https://chat.whatsapp.com/LbAzWNIRifxJCwaUjMNyNm?s=cl&p=a&mlu=0"
-  },
-  "stats": {
-    "restarts": 46,
-    "totalCommands": 211,
-    "_activityDate": "6/22/2026"
-  },
-  "groups": {}
-}root@vps68131:~/BotStickerNode#
+[FEATURE] Ativamento parcial do bot ele ativa porém verifica nos comandos se teve alguma reação, ele espera 10 segundos (configurado via database) se não teve nenhuma reação ele responde ao comando
+!ativarp !desativarp irá ser chamado de ativamento parcial  alguns comandos funcionarão como !play, !s etc mas comandos de admin não funcionarão ele nao respondera nada e caso use !ativar é diferente de !ativarp ou fica ativo um ou outro mas a dferença dele é que ele ira detectar se outro bot nao ja resagiu == respondeu o comando da pessoa

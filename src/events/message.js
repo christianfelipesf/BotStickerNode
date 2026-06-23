@@ -8,6 +8,7 @@ const dashboard = require('../dashboard/dashboard');
 
 const {
     isActiveGroup, activateGroup, deactivateGroup,
+    isPartialActive, activatePartial, deactivatePartial, getPartialWaitMs,
     getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
     readStats, incrementCommand, formatUptime,
@@ -27,7 +28,8 @@ const safeDashboardRememberGroup = (...args) => { try { dashboardRememberGroup(.
 
 const processedMessages = new Set();
 // Limpa periodicamente para evitar crescimento infinito da memória
-setInterval(() => processedMessages.clear(), 10 * 60 * 1000);
+const _processedMessagesInterval = setInterval(() => processedMessages.clear(), 10 * 60 * 1000);
+if (typeof _processedMessagesInterval.unref === 'function') _processedMessagesInterval.unref();
 
 // Ring buffer de chaves recentes por grupo (para !limpar deletar N últimas)
 const RECENT_BUFFER_LIMIT = 100;
@@ -48,6 +50,99 @@ function getRecentMessages(jid, limit) {
     const list = recentMessagesByGroup.get(jid) || [];
     return list.slice(-Math.max(1, Math.min(limit, list.length)));
 }
+
+// ============================================================
+// Ativamento Parcial — pendentes de resposta
+// Quando um grupo está em modo parcial (!ativarp), o bot:
+//   1) registra a mensagem-comando como "pendente"
+//   2) aguarda `partialWaitMs` ms checando se alguém reagiu à mensagem
+//   3) se ninguém reagiu nesse tempo E o comando for permitido, executa
+//   4) se outro bot (não este) reagiu OU o comando não é permitido, ignora
+// ============================================================
+const partialPending = new Map(); // key = `${jid}:${msgId}` -> { resolve, timer, botJid, commandName, isGroup }
+const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia', 'geral']);
+// Comandos admin/críticos nunca respondem em modo parcial, mesmo que categoria
+const PARTIAL_BLOCKED_COMMANDS = new Set([
+    'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
+    'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
+    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome'
+]);
+
+function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
+
+function _isPartialAllowed(cmd) {
+    if (!cmd) return false;
+    if (PARTIAL_BLOCKED_COMMANDS.has(cmd.name)) return false;
+    if (Array.isArray(cmd.aliases)) {
+        for (const a of cmd.aliases) if (PARTIAL_BLOCKED_COMMANDS.has(a)) return false;
+    }
+    return PARTIAL_ALLOWED_CATEGORIES.has(cmd.category);
+}
+
+function registerPartialPending(jid, msgId, commandName, botJid) {
+    if (!jid || !msgId) return;
+    const k = _partialKey(jid, msgId);
+    if (partialPending.has(k)) return;
+    let resolveFn;
+    const promise = new Promise(resolve => { resolveFn = resolve; });
+    partialPending.set(k, { resolve: resolveFn, botJid, commandName, jid, isGroup: jid?.endsWith('@g.us') });
+    return promise;
+}
+
+function consumePartialPending(jid, msgId) {
+    const k = _partialKey(jid, msgId);
+    const entry = partialPending.get(k);
+    if (!entry) return null;
+    partialPending.delete(k);
+    return entry;
+}
+
+function cancelPartialPending(jid, msgId) {
+    const k = _partialKey(jid, msgId);
+    const entry = partialPending.get(k);
+    if (entry && entry.timer) clearTimeout(entry.timer);
+    partialPending.delete(k);
+    if (entry && entry.resolve) entry.resolve({ reacted: true });
+}
+
+function notifyPartialReaction(jid, msgId, reactorJid) {
+    // Se o reactor NÃO for este bot, cancela o pendente (outro bot respondeu)
+    const k = _partialKey(jid, msgId);
+    const entry = partialPending.get(k);
+    if (!entry) return false;
+    try {
+        const reactorNorm = (reactorJid || '').split('@')[0].split(':')[0];
+        const botNorm = (entry.botJid || '').split('@')[0].split(':')[0];
+        if (reactorNorm && botNorm && reactorNorm === botNorm) return false;
+    } catch (_) {}
+    cancelPartialPending(jid, msgId);
+    return true;
+}
+
+function setPartialTimer(jid, msgId, ms) {
+    const k = _partialKey(jid, msgId);
+    const entry = partialPending.get(k);
+    if (!entry) return;
+    entry.timer = setTimeout(() => {
+        const cur = partialPending.get(k);
+        if (!cur) return;
+        partialPending.delete(k);
+        try { cur.resolve({ reacted: false }); } catch (_) {}
+    }, Math.max(0, ms || 0));
+}
+
+// Limpa pendentes com mais de 5 minutos para evitar leak caso reaction
+// nunca chegue e o timer falhe (defesa em profundidade).
+setInterval(() => {
+    const cutoff = Date.now() - 5 * 60 * 1000;
+    for (const [k, entry] of partialPending.entries()) {
+        if (entry.timer && entry.timer._idleStart && entry.timer._idleStart < cutoff) {
+            try { clearTimeout(entry.timer); } catch (_) {}
+            partialPending.delete(k);
+            try { entry.resolve && entry.resolve({ reacted: true }); } catch (_) {}
+        }
+    }
+}, 60 * 1000).unref();
 
 const GLOBAL_COOLDOWN = 1000;
 let lastBotResponse = 0;
@@ -89,6 +184,12 @@ module.exports = {
                     const { handleReaction } = require('../dashboard/dashboard');
                     handleReaction(targetId, emoji, sender, senderName);
                 }
+                // Notifica o sistema de ativamento parcial: se alguém (que não é este bot)
+                // reagiu a uma mensagem de comando pendente, cancela a execução.
+                try {
+                    const tgt = reactionMsg.key?.id;
+                    if (isGroup && tgt) notifyPartialReaction(from, tgt, sender);
+                } catch (_) {}
                 return;
             }
 
@@ -318,7 +419,38 @@ module.exports = {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            if (isGroup && !isActiveGroup(from) && !['ativar', 'status', 'dashboard', 'news', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat'].includes(cmd.name)) return;
+            // Comandos de controle de ativamento funcionam mesmo com bot inativo/parcial
+            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status'];
+            if (isGroup && !isActiveGroup(from) && !activationControlCmds.includes(cmd.name)) {
+                // Em grupo inativo E não-parcial, mantém comportamento original
+                if (!isPartialActive(from)) return;
+            }
+
+            // ============================================================
+            // ATIVAMENTO PARCIAL: se o grupo está em modo parcial,
+            // comandos admin ficam mudos e comandos de mídia só
+            // respondem após `partialWaitMs` sem reação de outro bot.
+            // ============================================================
+            if (isGroup && isPartialActive(from)) {
+                // Comandos admin nunca respondem em modo parcial
+                if (!_isPartialAllowed(cmd)) {
+                    console.log(`🤐 [PARCIAL] comando ${config.prefix}${commandName} bloqueado em ${from}`);
+                    return;
+                }
+
+                // Registrar pendente e esperar — se alguém reagir, cancela.
+                const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+                const waitMs = getPartialWaitMs();
+                const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
+                if (pendingPromise && waitMs > 0) {
+                    setPartialTimer(from, m.key.id, waitMs);
+                    const result = await pendingPromise;
+                    if (result && result.reacted) {
+                        console.log(`🤐 [PARCIAL] outro bot reagiu a !${commandName} em ${from}, ignorando`);
+                        return;
+                    }
+                }
+            }
 
             const groupMetadata = isGroup ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, {
@@ -326,7 +458,7 @@ module.exports = {
                 memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
                 ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
             });
-            const botActiveInGroup = isGroup && isActiveGroup(from);
+            const botActiveInGroup = isGroup && (isActiveGroup(from) || isPartialActive(from));
             if (botActiveInGroup || !isGroup) {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
@@ -406,5 +538,7 @@ module.exports = {
         }
     },
     trackRecentMessage,
-    getRecentMessages
+    getRecentMessages,
+    notifyPartialReaction,
+    isPartialActive
 };

@@ -48,6 +48,11 @@ db.exec(`
         activated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS active_groups_partial (
+        jid      TEXT PRIMARY KEY,
+        activated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS group_state (
         jid       TEXT PRIMARY KEY,
         muted     TEXT NOT NULL DEFAULT '[]',
@@ -136,6 +141,7 @@ const DEFAULT_CONFIG = {
     dashboardHistoryHours: 12,
     adminCanControl: false,
     clearDefaultLimit: 10,
+    partialWaitMs: 10000,
     newsSubreddits: ['ShitpostBR', 'pics'],
     newsPollIntervalMinutes: 15,
     newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -534,6 +540,8 @@ function isActiveGroup(jid) {
 }
 
 function activateGroup(jid) {
+    // Exclusão mútua: ativar total desativa o modo parcial
+    try { _agpDelete.run(jid); } catch (_) {}
     const r = _agInsert.run(jid, Date.now());
     return r.changes > 0;
 }
@@ -557,6 +565,7 @@ function deactivateGroup(jid) {
     }
 
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
+    try { _agpDelete.run(jid); } catch (_) {}
     clearChatHistory(jid);
     clearMuted(jid);
 
@@ -570,6 +579,66 @@ function listActiveGroups() {
         console.error('❌ Falha ao listar active_groups:', e.message);
         return [];
     }
+}
+
+// --- Active Groups PARCIAL (SQLite) ---
+// Modo "ativamento parcial": bot fica em "stand-by" e só reage
+// a comandos permitidos (mídia) após detectar que nenhum outro bot
+// respondeu a mensagem do usuário dentro de `partialWaitMs`.
+const _agpHas = db.prepare('SELECT 1 FROM active_groups_partial WHERE jid = ?');
+const _agpInsert = db.prepare('INSERT OR IGNORE INTO active_groups_partial (jid, activated_at) VALUES (?, ?)');
+const _agpDelete = db.prepare('DELETE FROM active_groups_partial WHERE jid = ?');
+const _agpList = db.prepare('SELECT jid FROM active_groups_partial');
+
+function isPartialActive(jid) {
+    if (!jid) return false;
+    try { return !!_agpHas.get(jid); } catch (_) { return false; }
+}
+
+function activatePartial(jid) {
+    if (!jid) return false;
+    try {
+        // Exclusão mútua: ativar parcial desativa o modo total
+        try { _agDelete.run(jid); } catch (_) {}
+        const r = _agpInsert.run(jid, Date.now());
+        return r.changes > 0;
+    } catch (e) {
+        console.error('❌ Falha ao ativar modo parcial:', e.message);
+        return false;
+    }
+}
+
+function deactivatePartial(jid) {
+    if (!jid) return false;
+    try {
+        const r = _agpDelete.run(jid);
+        return r.changes > 0;
+    } catch (e) {
+        console.error('❌ Falha ao desativar modo parcial:', e.message);
+        return false;
+    }
+}
+
+function listPartialGroups() {
+    try { return _agpList.all().map(r => r.jid); }
+    catch (e) { console.error('❌ Falha ao listar active_groups_partial:', e.message); return []; }
+}
+
+function getPartialWaitMs() {
+    try {
+        const cfg = readConfig();
+        const v = Number(cfg.partialWaitMs);
+        if (Number.isFinite(v) && v >= 0) return v;
+    } catch (_) {}
+    return 10000;
+}
+
+function setPartialWaitMs(ms) {
+    const v = Math.max(0, Math.min(600000, Math.floor(Number(ms) || 0)));
+    const j = readDB();
+    j.config.partialWaitMs = v;
+    scheduleJsonFlush();
+    return v;
 }
 
 // --- Dashboard Opt-in (per group) ---
@@ -1687,6 +1756,8 @@ process.on('SIGTERM', () => { flushNow(); process.exit(0); });
 module.exports = {
     readDB, writeDB,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
+    isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
+    getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
     readStats, incrementRestart, incrementCommand, formatUptime,
