@@ -53,9 +53,12 @@ const GLOBAL_COOLDOWN = 1000;
 let lastBotResponse = 0;
 const AUTO_VIEW_ONCE = true;
 
+const trace = require('../services/trace');
+
 module.exports = {
     handleMessageUpsert: async (sock, { messages, type }, { commands, config, startTime }) => {
         if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
+        const _evtStart = Date.now();
         try {
             const m = messages[0];
             if (!m.message || processedMessages.has(m.key.id)) return;
@@ -328,7 +331,8 @@ module.exports = {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
 
-            console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
+            const tsLabel = new Date().toLocaleString('pt-BR');
+            console.log(`🤖 [INTERAÇÃO] [${tsLabel}] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
 
             const context = {
@@ -340,6 +344,36 @@ module.exports = {
             };
 
             const t0 = Date.now();
+            const stepStart = t0;
+            let stepN = 0;
+            const fmtTs = () => new Date().toLocaleTimeString('pt-BR', { hour12: false });
+            const traceTag = `cmd.!${commandName}`;
+            const traceLog = (label, detail) => {
+                const now = Date.now();
+                const delta = now - stepStart;
+                const total = now - t0;
+                stepN += 1;
+                const detailPart = detail ? ` — ${detail}` : '';
+                console.log(`   └─ [${fmtTs()}] [+${String(delta).padStart(5,' ')}ms / total ${total}ms] ${traceTag} #${stepN} ${label}${detailPart}`);
+            };
+            const origLog = console.log.bind(console);
+            const origInfo = console.info?.bind(console);
+            const origWarn = console.warn?.bind(console);
+            console.log = (...a) => {
+                try {
+                    const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
+                    if (msg && !msg.includes('[INTERAÇÃO]') && !msg.startsWith('   └─')) {
+                        traceLog('log', msg);
+                        return;
+                    }
+                } catch (_) {}
+                return origLog(...a);
+            };
+            if (origInfo) console.info = (...a) => { try { traceLog('info', a.map(x => typeof x === 'string' ? x : String(x)).join(' ')); } catch (_) {} };
+            if (origWarn) console.warn = (...a) => { try { traceLog('warn', a.map(x => typeof x === 'string' ? x : String(x)).join(' ')); } catch (_) {} };
+
+            traceLog('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
+
             let result;
             try {
                 result = await cmd.execute(sock, m, context);
@@ -347,18 +381,28 @@ module.exports = {
                 const elapsed = Date.now() - t0;
                 const errText = `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`;
                 console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
+                traceLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
                 if (botActiveInGroup || !isGroup) {
                     safeDashboardLog('error', groupMetadata.subject, errText, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
+                console.log = origLog;
+                if (origInfo) console.info = origInfo;
+                if (origWarn) console.warn = origWarn;
                 throw cmdErr;
             }
+            console.log = origLog;
+            if (origInfo) console.info = origInfo;
+            if (origWarn) console.warn = origWarn;
+
             if (result !== undefined) lastBotResponse = result;
             const elapsed = Date.now() - t0;
+            traceLog('fim', `ok em ${elapsed}ms`);
             if (botActiveInGroup && elapsed >= 800) {
                 safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
             }
 
         } catch (e) {
+            console.error(trace.step('evt', 'messages.upsert ERRO', `${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''} (após ${Date.now()-_evtStart}ms)`));
             console.error('Erro ao processar mensagem:', e);
         }
     },
