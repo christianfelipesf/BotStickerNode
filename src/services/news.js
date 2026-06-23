@@ -23,6 +23,47 @@ function ts() {
 const newsLog = (...args) => console.log(`📰 [news][${ts()}]`, ...args);
 const newsErr = (...args) => console.error(`📰 [news][${ts()}]`, ...args);
 
+// Throttle para mensagens ruidosas: suprime logs idênticos (mesma chave) por N ms.
+// Use para evitar spam quando o mesmo cenário se repete.
+const _throttle = new Map();
+const THROTTLE_MS = 10 * 60 * 1000; // 10 min
+
+function newsLogOnce(key, ...args) {
+    const now = Date.now();
+    const last = _throttle.get(key) || 0;
+    if (now - last < THROTTLE_MS) return;
+    _throttle.set(key, now);
+    console.log(`📰 [news][${ts()}]`, ...args);
+}
+
+function newsErrOnce(key, ...args) {
+    const now = Date.now();
+    const last = _throttle.get(key) || 0;
+    if (now - last < THROTTLE_MS) return;
+    _throttle.set(key, now);
+    console.error(`📰 [news][${ts()}]`, ...args);
+}
+
+// Cache de posts problemáticos: se um post falhou em ser publicado (vídeo
+// sem URL acessível, JSON bloqueado, etc.), não tenta de novo por X tempo.
+const _postFailureUntil = new Map();
+const POST_FAILURE_COOLDOWN_MS = 30 * 60 * 1000; // 30 min
+
+function markPostFailed(postId) {
+    if (!postId) return;
+    _postFailureUntil.set(postId, Date.now() + POST_FAILURE_COOLDOWN_MS);
+}
+
+function isPostFailed(postId) {
+    if (!postId) return false;
+    const until = _postFailureUntil.get(postId) || 0;
+    if (Date.now() >= until) {
+        _postFailureUntil.delete(postId);
+        return false;
+    }
+    return true;
+}
+
 let sockRef = null;
 let pollTimer = null;
 let isShuttingDown = false;
@@ -311,7 +352,7 @@ async function fetchVideoFromJson(postId, userAgent) {
             }
         }
     }
-    newsErr(`JSON API: nenhum endpoint/UA retornou vídeo para ${postId}.`);
+    newsErrOnce(`json-no-video:${postId}`, `JSON API: nenhum endpoint/UA retornou vídeo para ${postId}.`);
     return null;
 }
 
@@ -478,7 +519,9 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
-    newsLog(`r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${!!(post.isVideoPost || media.isVideoPost)} isGif=${!!media.isGifPost} hasVideo=${!!media.video} hasImage=${!!media.image}`);
+    const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
+    // Log de diagnóstico só uma vez por post (não por grupo).
+    newsLogOnce(`diag:${post.id}`, `r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${isVideoPostFlag} hasVideo=${!!media.video}`);
     const maxRetries = Math.max(0, Number(cfg.newsMaxRetries) || 3);
     const retryBaseDelayMs = Math.max(1000, Number(cfg.newsRetryBaseDelayMs) || 15000);
     const retryOpts = {
@@ -504,7 +547,8 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 media.video = vUrl;
                 newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
             } else {
-                newsErr(`r/${sub}: post ${post.id} marcado como vídeo mas JSON API não retornou URL.`);
+                newsErrOnce(`json-fail:${post.id}`, `r/${sub}: post ${post.id} marcado como vídeo mas JSON API não retornou URL. Marcado como problemático por 30min.`);
+                markPostFailed(post.id);
             }
         }
     }
@@ -527,7 +571,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         // de imagem (que enviaria thumbnail estática como "imagem" no WhatsApp).
         // Envia apenas a thumbnail como imagem estática + caption normal (sem link).
         if (isVideoPostFlag && !media.video) {
-            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — enviando só thumbnail.`);
+            newsErrOnce(`video-fallback:${post.id}`, `r/${sub} post ${post.id}: vídeo sem URL acessível — enviando só thumbnail.`);
             try {
                 const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
                 if (dl && dl.buffer && dl.buffer.length > 0) {
@@ -726,6 +770,12 @@ async function pollOnce() {
         // SEMPRE pega o ÚLTIMO (primeiro do feed /new).
         const latest = posts[0];
         if (!latest || !latest.id) continue;
+
+        // Pula posts marcados como problemáticos (vídeo sem URL acessível).
+        if (isPostFailed(latest.id)) {
+            newsLog(`r/${sub}: pulando post ${latest.id} (marcado como problemático).`);
+            continue;
+        }
 
         // lastSeen[sub] agora guarda { id, imageUrl } do último publicado.
         // Dedupe por id E por URL de imagem (Reddit às vezes faz cross-post
