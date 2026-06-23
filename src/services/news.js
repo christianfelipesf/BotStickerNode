@@ -445,6 +445,8 @@ async function pollOnce() {
     const randomMode = !!cfg.newsRandomSub;
     const showMeta = !!cfg.newsShowMeta;
     const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
+    const staggerMs = Math.max(0, Number(cfg.newsFetchStaggerMs) || 30000);
+    const onePerCycle = !!cfg.newsOnePerCycle;
 
     const lastSeen = getNewsState(STATE_KEY, {}) || {};
 
@@ -456,7 +458,15 @@ async function pollOnce() {
         subsToCheck = [subs[Math.floor(Math.random() * subs.length)]];
     }
 
+    let firstSubOfCycle = true;
+    let publishedThisCycle = false;
+
     for (const sub of subsToCheck) {
+        if (onePerCycle && publishedThisCycle) {
+            console.log(`📰 [news] cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
+            break;
+        }
+
         // Cooldown por sub: pula este e tenta o próximo.
         const subCooldown = _subCooldownUntil.get(sub) || 0;
         if (Date.now() < subCooldown) {
@@ -464,6 +474,17 @@ async function pollOnce() {
             console.log(`📰 [news] r/${sub}: em cooldown por mais ${wait}s — pulando.`);
             continue;
         }
+
+        // Stagger entre subs: evita burst de requests que dispara 429 do Reddit.
+        if (!firstSubOfCycle && staggerMs > 0) {
+            console.log(`📰 [news] aguardando ${Math.round(staggerMs / 1000)}s antes de r/${sub}...`);
+            const steps = Math.ceil(staggerMs / 5000);
+            for (let i = 0; i < steps; i++) {
+                if (isShuttingDown) return;
+                await sleep(Math.min(5000, staggerMs - i * 5000));
+            }
+        }
+        firstSubOfCycle = false;
 
         let result = { __rateLimited: false, items: [] };
         try {
@@ -494,6 +515,7 @@ async function pollOnce() {
         setNewsState(STATE_KEY, lastSeen);
 
         console.log(`📰 [news] r/${sub}: novo último post ${latest.id} — publicando.`);
+        publishedThisCycle = true;
 
         for (const jid of groups) {
             if (isShuttingDown) break;
