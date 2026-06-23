@@ -56,39 +56,40 @@ function rerender(){if(!activeJid)return;lastDate='';chat.innerHTML='';(activeJi
 function reactionsHtml(rx){if(!rx||!Object.keys(rx).length)return'';const em=Array.from(new Set(Object.values(rx))),n=Object.keys(rx).length;return`<div class="msg-reactions">${em.join('')}${n>1?` <span>${n}</span>`:''}</div>`}
 function quotedHtml(q){const n=esc(q.name||(q.phone?'@'+q.phone:'Mensagem'));const inn=q.text?`<div class="msg-quote-text">${esc(q.text)}</div>`:q.hasMedia?`<div class="msg-quote-text">📎 Mídia</div>`:'';return`<div class="msg-quote"><div class="msg-quote-name">${n}</div>${inn}</div>`}
 function mediaHtml(m){if(!m)return'';if(m.type==='image')return`<div class="msg-media"><img src="${esc(m.url)}" loading="lazy"></div>`;if(m.type==='video')return`<div class="msg-media"><video src="${esc(m.url)}" controls></video></div>`;if(m.type==='audio')return`<div class="msg-media"><audio src="${esc(m.url)}" controls></audio></div>`;if(m.type==='sticker')return`<div class="msg-media"><img src="${esc(m.url)}" style="width:140px;height:140px;"></div>`;return''}
-function append(d){
-    const ds=new Date(d.timestamp||Date.now()).toLocaleDateString();
-    if(ds!==lastDate){chat.insertAdjacentHTML('beforeend',`<div class="msg-day-sep">${esc(ds===new Date().toLocaleDateString()?'Hoje':ds)}</div>`);lastDate=ds}
-    if(d.type==='action'||d.type==='error'){chat.insertAdjacentHTML('beforeend',`<div class="msg-system ${d.type==='error'?'msg-error':''}">${esc(d.text||'')}</div>`);play(d.type==='error'?soundError:soundAction);return}
-    const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const rx=reactionsHtml(d.reactions);
-    chat.insertAdjacentHTML('beforeend',`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" onclick="openReply(this)" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${m}${d.text?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`);
-    play(soundChat);
-}
+function msgHtml(d){const ds=new Date(d.timestamp||Date.now()).toLocaleDateString();let daySep='';if(ds!==lastDate){daySep=`<div class="msg-day-sep">${esc(ds===new Date().toLocaleDateString()?'Hoje':ds)}</div>`;lastDate=ds}if(d.type==='action'||d.type==='error'){play(d.type==='error'?soundError:soundAction);return daySep+`<div class="msg-system ${d.type==='error'?'msg-error':''}">${esc(d.text||'')}</div>`}const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const rx=reactionsHtml(d.reactions);return daySep+`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" onclick="openReply(this)" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${m}${d.text?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`}
+function append(d){chat.insertAdjacentHTML('beforeend',msgHtml(d));play(soundChat)}
+function rerenderBatch(){if(!activeJid)return;lastDate='';chat.innerHTML='';const list=activeJid===ALL?allMsgs():(msgsByJid[activeJid]||[]);if(!list.length)return;const frag=[];for(const d of list)frag.push(msgHtml(d));chat.insertAdjacentHTML('beforeend',frag.join(''));setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30);if(soundEnabled)play(soundChat)}
 window.openReply=el=>{if(!activeJid)return toast('Selecione um grupo');const tj=el.dataset.tj;if(!tj)return toast('Sem identificação de destino');setReply({toJid:tj,messageId:el.dataset.mid,senderJid:el.dataset.sj,fromMe:el.dataset.fm==='1',phone:el.dataset.ph,name:el.dataset.nm,preview:el.dataset.pv||(el.dataset.hm==='1'?'📎 Mídia':''),hasMedia:el.dataset.hm==='1'});messageInput.focus()};
 
 /* ========== Lista de chats ========== */
 function renderGroups(){
     const f=(groupSearch.value||'').toLowerCase().trim();
     const filtered=groups.filter(g=>!f||(g.subject||g.jid.split('@')[0]).toLowerCase().includes(f));
-    const ac=allMsgs().length;
-    const items=[`<li class="group-item ${activeJid===ALL?'active':''}" onclick="selAll()"><div class="group-avatar" style="background:var(--g);color:#00210e;">T</div><div class="group-meta"><div class="group-name">Todos</div><div class="group-sub">${ac} mensagem${ac!==1?'s':''}</div></div>${ac?`<div class="group-side"><div class="group-dot"></div><div class="group-badge">${ac>99?'99+':ac}</div></div>`:''}</li>`];
-    if(!filtered.length)items.push(`<li class="empty">Nenhum grupo com dashboard ativa ainda.<br><small>Use <code>!dashboard</code> em um grupo para ativá-lo.</small></li>`);
-    else for(const g of filtered){const s=g.subject||g.jid.split('@')[0];const c=(msgsByJid[g.jid]||[]).length;const r=(msgsByJid[g.jid]||[]).slice(-1)[0];const rec=r&&(Date.now()-(r.timestamp||0)<5*60*1000);const sub=r?(r.text?r.text.slice(0,40):(r.media?'📎 Mídia':`${c} mensagem${c!==1?'s':''}`)):`${c} mensagem${c!==1?'s':''}`;items.push(`<li class="group-item ${g.jid===activeJid?'active':''}" onclick="selG('${g.jid}')">${avatar(g)}<div class="group-meta"><div class="group-name">${esc(s)}</div><div class="group-sub">${esc(sub)}</div></div>${c?`<div class="group-side">${rec?'<div class="group-dot"></div>':''}<div class="group-badge">${c>99?'99+':c}</div></div>`:''}</li>`)}
-    groupList.innerHTML=items.join('');
+    let ac=0;for(const j of Object.keys(msgsByJid))ac+=(msgsByJid[j]||[]).length;
+    const frag=document.createDocumentFragment();
+    const all=document.createElement('li');
+    all.className='group-item'+(activeJid===ALL?' active':'');
+    all.innerHTML=`<div class="group-avatar" style="background:var(--g);color:#00210e;">T</div><div class="group-meta"><div class="group-name">Todos</div><div class="group-sub">${ac} mensagem${ac!==1?'s':''}</div></div>${ac?`<div class="group-side"><div class="group-dot"></div><div class="group-badge">${ac>99?'99+':ac}</div></div>`:''}`;
+    all.onclick=()=>selAll();
+    frag.appendChild(all);
+    if(!filtered.length){const e=document.createElement('li');e.className='empty';e.innerHTML='Nenhum grupo com dashboard ativa ainda.<br><small>Use <code>!dashboard</code> em um grupo para ativá-lo.</small>';frag.appendChild(e)}
+    else for(const g of filtered){const s=g.subject||g.jid.split('@')[0];const arr=msgsByJid[g.jid]||[];const c=arr.length;const r=arr.slice(-1)[0];const rec=r&&(Date.now()-(r.timestamp||0)<5*60*1000);const sub=r?(r.text?r.text.slice(0,40):(r.media?'📎 Mídia':`${c} mensagem${c!==1?'s':''}`)):`${c} mensagem${c!==1?'s':''}`;const li=document.createElement('li');li.className='group-item'+(g.jid===activeJid?' active':'');li.innerHTML=`${avatar(g)}<div class="group-meta"><div class="group-name">${esc(s)}</div><div class="group-sub">${esc(sub)}</div></div>${c?`<div class="group-side">${rec?'<div class="group-dot"></div>':''}<div class="group-badge">${c>99?'99+':c}</div></div>`:''}`;li.onclick=()=>selG(g.jid);frag.appendChild(li)}
+    groupList.innerHTML='';
+    groupList.appendChild(frag);
 }
 function setScreen(n){document.body.setAttribute('data-screen',n);if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.classList.toggle('active',b.dataset.tab===n)}
-window.selAll=()=>{activeJid=ALL;chatName.textContent='Todos os grupos';chatSub.textContent='Visão geral de todas as conversas';chatAvatar.innerHTML='<div class="group-avatar" style="background:var(--g);color:#00210e;">T</div>';clearReply();messageInput.disabled=sendBtn.disabled=false;$('attachBtn').disabled=false;setScreen('chat');rerender();renderGroups()};
-window.selG=jid=>{if(!jid)return;activeJid=jid;const g=groups.find(x=>x.jid===jid);const s=g?.subject||jid.split('@')[0];chatName.textContent=s;chatSub.textContent=jid.split('@')[0];chatAvatar.innerHTML=g?.pictureUrl?`<img class="group-avatar" src="${esc(g.pictureUrl)}">`:`<div class="group-avatar">${esc(initials(s))}</div>`;clearReply();messageInput.disabled=sendBtn.disabled=false;$('attachBtn').disabled=false;setScreen('chat');rerender();renderGroups()};
+window.selAll=()=>{activeJid=ALL;chatName.textContent='Todos os grupos';chatSub.textContent='Visão geral de todas as conversas';chatAvatar.innerHTML='<div class="group-avatar" style="background:var(--g);color:#00210e;">T</div>';clearReply();messageInput.disabled=sendBtn.disabled=false;$('attachBtn').disabled=false;setScreen('chat');rerenderBatch();renderGroups()};
+window.selG=jid=>{if(!jid)return;activeJid=jid;const g=groups.find(x=>x.jid===jid);const s=g?.subject||jid.split('@')[0];chatName.textContent=s;chatSub.textContent=jid.split('@')[0];chatAvatar.innerHTML=g?.pictureUrl?`<img class="group-avatar" src="${esc(g.pictureUrl)}">`:`<div class="group-avatar">${esc(initials(s))}</div>`;clearReply();messageInput.disabled=sendBtn.disabled=false;$('attachBtn').disabled=false;setScreen('chat');rerenderBatch();renderGroups()};
 groupSearch.addEventListener('input',renderGroups);
 backBtn.addEventListener('click',()=>{activeJid=null;setScreen('chats');chatName.textContent='Selecione um grupo';chatSub.textContent='—';chatAvatar.innerHTML='<div class="group-avatar">?</div>';chat.innerHTML='';renderGroups()});
 if(mobileBackFromStats)mobileBackFromStats.addEventListener('click',()=>setScreen(activeJid?'chat':'chats'));
 if(openStatsMobile)openStatsMobile.addEventListener('click',()=>{setScreen('stats');refreshSys()});
 
-if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.addEventListener('click',()=>{const t=b.dataset.tab;if(t==='chats'){activeJid=null;setScreen('chats');chat.innerHTML='';renderGroups()}else if(t==='chat'){if(!activeJid){activeJid=ALL;chatName.textContent='Todos';rerender();renderGroups()}setScreen('chat')}else if(t==='stats'){setScreen('stats');refreshSys()}});
+if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.addEventListener('click',()=>{const t=b.dataset.tab;if(t==='chats'){activeJid=null;setScreen('chats');chat.innerHTML='';renderGroups()}else if(t==='chat'){if(!activeJid){activeJid=ALL;chatName.textContent='Todos';rerenderBatch();renderGroups()}setScreen('chat')}else if(t==='stats'){setScreen('stats');refreshSys()}});
 
 /* ========== Socket ========== */
 socket.on('groups',list=>{groups=Array.isArray(list)?list:[];if(activeJid&&activeJid!==ALL&&groups.length&&!groups.find(g=>g.jid===activeJid))selAll();renderGroups()});
-socket.on('history',h=>{const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid)rerender();renderGroups()});
+socket.on('history',h=>{const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid){rerenderBatch();}renderGroups()});
 socket.on('msg',d=>{if(!d?.toJid)return;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if((msgsByJid[d.toJid]||[]).some(m=>`${m.toJid}|${m.messageId}|${m.type}`===k))return}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d);if(d.toJid===activeJid||activeJid===ALL){append(d);setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30)}renderGroups()});
 socket.on('reaction',({targetId})=>{const el=document.querySelector(`[data-mid="${targetId}"]`);if(el){const r=el.querySelector('.msg-reactions');if(r)r.remove()}});
 socket.on('connect',()=>{statusEl.innerText='online';statusEl.style.color='var(--g)'});
@@ -104,4 +105,4 @@ async function refreshSys(){try{const r=await fetch('/api/system',{cache:'no-sto
 setInterval(refreshSys,3000);refreshSys();
 
 /* Init */
-setScreen('chats');renderGroups();selAll();
+setScreen('chats');renderGroups();

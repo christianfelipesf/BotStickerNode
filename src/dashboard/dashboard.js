@@ -234,15 +234,15 @@ async function getGroupsSnapshot(options = {}) {
     } catch (_) {}
 
     const seen = new Set();
-    const out = [];
+    const tasks = [];
     for (const item of items) {
         const base = normalizeGroupItem(item);
         if (!base || seen.has(base.jid)) continue;
         seen.add(base.jid);
-        const info = await getGroupInfo(base, !!options.force);
-        if (info) out.push(info);
+        tasks.push(getGroupInfo(base, !!options.force));
     }
-
+    const results = await Promise.all(tasks);
+    const out = results.filter(Boolean);
     return out.sort((a, b) => String(a.subject).localeCompare(String(b.subject), 'pt-BR'));
 }
 
@@ -362,7 +362,26 @@ function init(config) {
             const history = loadDashboardHistory({ limit: HISTORY_SEND_LIMIT });
             socket.emit('history', history);
         } catch (_) {}
-        try { socket.emit('groups', await getGroupsSnapshot()); } catch (_) {}
+        try {
+            const quick = await getGroupsSnapshot({ force: false });
+            socket.emit('groups', quick);
+            socket.emit('groups:ready', true);
+            const cachedSet = new Set(quick.map(g => g.jid));
+            const items = groupsApi ? await groupsApi() : [];
+            const enrichTasks = [];
+            for (const item of items) {
+                const jid = typeof item === 'string' ? item : item?.jid;
+                if (!jid || cachedSet.has(jid)) continue;
+                enrichTasks.push(getGroupInfo(jid, false));
+            }
+            if (enrichTasks.length) {
+                Promise.all(enrichTasks).then(async () => {
+                    try {
+                        ioServer.emit('groups', await getGroupsSnapshot({ force: false }));
+                    } catch (_) {}
+                }).catch(() => {});
+            }
+        } catch (_) {}
     });
 
     try {
