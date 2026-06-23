@@ -1,7 +1,7 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const {
-    getMediaMessage, react, isViewOnce,
+    getMediaMessage, react, reactStatus, isViewOnce,
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed,
     isDashboardEnabled
@@ -24,16 +24,13 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         }).catch(() => null);
 
         if (!buffer) {
-            return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            return await reactStatus(sock, m, from, false, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
         const senderName = m.pushName || 'Usuário';
         let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
         const opts = { mentions: [sender], quoted: m };
 
-        // Log to Dashboard apenas quando o grupo tem dashboard ativo.
-        // Mídia revelada é considerada sensível — não vaza no chat do dashboard
-        // de outros grupos.
         const dashboardOn = isDashboardEnabled(from);
         const groupMetadata = from.endsWith('@g.us') ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
         const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
@@ -50,10 +47,10 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
         else if (isVideo) await sock.sendMessage(from, { video: buffer, caption: revealCaption }, opts);
         else await sock.sendMessage(from, { image: buffer, caption: revealCaption }, opts);
-        
-        return await react(sock, m, '🔓', lastBotResponse, GLOBAL_COOLDOWN);
-    } catch (error) { 
-        return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN); 
+
+        return await reactStatus(sock, m, from, true, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+    } catch (error) {
+        return await reactStatus(sock, m, from, false, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }
 }
 
@@ -63,41 +60,41 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         const quotedInfo = m.message.extendedTextMessage?.contextInfo;
         const quotedMsg = quotedInfo?.quotedMessage;
         let targetMsg = null;
-        
+
         if (quotedMsg) {
             mediaMessage = getMediaMessage(quotedMsg);
-            if (mediaMessage) targetMsg = { 
-                key: { 
-                    remoteJid: from, 
-                    id: quotedInfo.stanzaId, 
-                    participant: quotedInfo.participant || from 
-                }, 
-                message: mediaMessage, 
-                pushName: quotedInfo.pushName 
+            if (mediaMessage) targetMsg = {
+                key: {
+                    remoteJid: from,
+                    id: quotedInfo.stanzaId,
+                    participant: quotedInfo.participant || from
+                },
+                message: mediaMessage,
+                pushName: quotedInfo.pushName
             };
         } else {
             mediaMessage = getMediaMessage(m.message);
             if (mediaMessage) targetMsg = m;
         }
-        
+
         if (!mediaMessage || !targetMsg) {
-            return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
-        
+
         const isSticker = !!mediaMessage.stickerMessage;
         const isViewOnceMsg = isViewOnce(targetMsg.message);
-        
+
         lastBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
 
         if (isViewOnceMsg && action !== 'reveal') {
             lastBotResponse = await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, { 
-            logger: pino({ level: 'silent' }), 
-            reuploadRequest: sock.updateMediaMessage 
+        const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage
         });
-        
+
         if (!buffer) throw new Error();
 
         if (action === 'reveal' || action === 'toimg') {
@@ -105,7 +102,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 lastBotResponse = await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN);
                 if (action === 'reveal') return lastBotResponse;
             }
-            
+
             if (isSticker) {
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
                 await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: `✅ Convertido!` }, { quoted: m });
@@ -131,10 +128,10 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             if (mediaMessage.videoMessage) await sock.sendMessage(from, { video: processed, caption: `✅ Vídeo ${speed}x` }, { quoted: m });
             else await sock.sendMessage(from, { audio: processed, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
         }
-        
-        return await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
-    } catch (error) { 
-        return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN); 
+
+        return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+    } catch (error) {
+        return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }
 }
 

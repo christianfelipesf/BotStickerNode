@@ -9,20 +9,20 @@ module.exports = {
     category: 'mídia',
     description: 'Baixa áudio do YouTube',
     async execute(sock, m, { from, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react } = utils;
+        const { react, reactStatus } = utils;
         const q = fullArgsText.trim();
-        
+
         if (!q) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
-        
+
         let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
-        
+
         try {
             const searchResults = await yts(q);
-            const video = searchResults.videos[0]; 
-            
+            const video = searchResults.videos[0];
+
             if (!video) {
                 await sock.sendMessage(from, { text: '❌ Nenhum vídeo encontrado.' }, { quoted: m });
-                return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+                return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
             currentBotResponse = await react(sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
@@ -30,15 +30,13 @@ module.exports = {
             const tempName = `music_${Date.now()}.mp3`;
             const tempDir = path.join(process.cwd(), 'temp');
             const outPath = path.join(tempDir, tempName);
-            
+
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
             console.log(`🎵 [PLAY] Baixando: ${video.title}`);
-            
-            // Usando yt-dlp para baixar e converter. 
-            // Como yt-dlp faz o download e a conversão, usaremos o emoji de conversão logo após o download começar.
+
             const downloadCmd = `yt-dlp --no-warnings --extract-audio --audio-format mp3 --audio-quality 128K --output "${outPath}" "${video.url}"`;
-            
+
             await new Promise((resolve, reject) => {
                 const process = exec(downloadCmd, (error) => {
                     if (error) {
@@ -47,31 +45,30 @@ module.exports = {
                     }
                     resolve();
                 });
-                
-                // Simular mudança para emoji de conversão após alguns segundos (quando o download geralmente termina e a conversão começa)
+
                 setTimeout(async () => {
                     currentBotResponse = await react(sock, m, '🔄', currentBotResponse, GLOBAL_COOLDOWN);
                 }, 5000);
             });
 
-            if (fs.existsSync(outPath)) { 
-                await sock.sendMessage(from, { 
-                    audio: { url: outPath }, 
-                    mimetype: 'audio/mp4', 
-                    fileName: `${video.title}.mp3` 
-                }, { quoted: m }); 
-                
-                fs.unlinkSync(outPath); 
-                currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN); 
+            if (fs.existsSync(outPath)) {
+                await sock.sendMessage(from, {
+                    audio: { url: outPath },
+                    mimetype: 'audio/mp4',
+                    fileName: `${video.title}.mp3`
+                }, { quoted: m });
+
+                fs.unlinkSync(outPath);
+                currentBotResponse = await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             } else {
                 throw new Error('Arquivo não foi gerado');
             }
-        } catch (e) { 
+        } catch (e) {
             console.error('❌ [PLAY] Falha geral:', e);
             await sock.sendMessage(from, { text: '❌ Falha ao processar o áudio. Verifique se o yt-dlp está atualizado.' }, { quoted: m });
-            currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN); 
+            currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
         }
-        
+
         return currentBotResponse;
     }
 };

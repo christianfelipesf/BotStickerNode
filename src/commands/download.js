@@ -244,16 +244,16 @@ module.exports = {
                 if (allFiles.length > 1) await new Promise(r => setTimeout(r, 800));
             }
 
-            return await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
+            return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
 
         } catch (e) {
             console.error(`\x1b[31m[DOWNLOAD ERROR]\x1b[0m ${e.message}`);
             if (e.stack) console.error(`\x1b[2m${e.stack.split('\n').slice(1, 3).join('\n')}\x1b[0m`);
-            
+
             const partial = findDownloadedFiles(id);
             for (const f of partial) { try { fs.unlinkSync(f); } catch (_) {} }
-            
-            currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+
+            currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             await sock.sendMessage(from, {
                 text: `❌ *Falha no Download!*\n\n⚠️ _Este é um recurso experimental e pode falhar devido a proteções das redes sociais._\n\n💬 *Motivo:* ${e.message}\n\n💡 Tente novamente ou use um link diferente.`
             }, { quoted: m });
