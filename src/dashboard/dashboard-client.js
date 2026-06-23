@@ -89,7 +89,10 @@ if(mobileTabbar)for(const b of mobileTabbar.querySelectorAll('.mt-tab'))b.addEve
 
 /* ========== Socket ========== */
 socket.on('groups',list=>{groups=Array.isArray(list)?list:[];if(activeJid&&activeJid!==ALL&&groups.length&&!groups.find(g=>g.jid===activeJid))selAll();renderGroups()});
-socket.on('history',h=>{const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid){rerenderBatch();}renderGroups()});
+socket.on('history:start',()=>{window.__histPending=0;window.__histTotal=0});
+socket.on('history:chunk',h=>{window.__histPending=(window.__histPending||0)+1;const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid){rerenderBatch()}renderGroups()});
+socket.on('history:end',()=>{window.__histPending=0});
+socket.on('history',h=>{const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid){rerenderBatch()}renderGroups()});
 socket.on('msg',d=>{if(!d?.toJid)return;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if((msgsByJid[d.toJid]||[]).some(m=>`${m.toJid}|${m.messageId}|${m.type}`===k))return}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d);if(d.toJid===activeJid||activeJid===ALL){append(d);setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30)}renderGroups()});
 socket.on('reaction',({targetId})=>{const el=document.querySelector(`[data-mid="${targetId}"]`);if(el){const r=el.querySelector('.msg-reactions');if(r)r.remove()}});
 socket.on('connect',()=>{statusEl.innerText='online';statusEl.style.color='var(--g)'});

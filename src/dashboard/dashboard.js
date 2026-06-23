@@ -33,6 +33,9 @@ let logsTrimTimer = null;
 const mediaCache = new Map();
 const MAX_CACHE = 30;
 
+let groupsSnapshotCache = null;
+const GROUPS_CACHE_TTL = 30 * 1000;
+
 function safe(fn, fallback) {
     try { return fn(); } catch (e) { console.error('[dashboard]', e?.message || e); return fallback; }
 }
@@ -344,6 +347,14 @@ function init(config) {
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: `Endpoint nao encontrado: ${req.path}` }));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => res.type('javascript').sendFile(path.join(__dirname, 'dashboard-client.js')));
+    app.get('/media/:id', (req, res) => {
+        const id = req.params.id;
+        const data = readPersistedMedia(id);
+        if (!data) return res.status(404).end();
+        res.setHeader('Content-Type', data.mime);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.end(data.buffer);
+    });
     app.get('/favicon.ico', (req, res) => {
         const ico = path.join(__dirname, '..', 'media', 'favcon.png');
         if (fs.existsSync(ico)) return res.sendFile(ico);
@@ -360,26 +371,46 @@ function init(config) {
     ioServer.on('connection', async (socket) => {
         try {
             const history = loadDashboardHistory({ limit: HISTORY_SEND_LIMIT });
-            socket.emit('history', history);
+            const CHUNK = 15;
+            if (history.length <= CHUNK) {
+                socket.emit('history', history);
+            } else {
+                socket.emit('history:start', { total: history.length });
+                for (let i = 0; i < history.length; i += CHUNK) {
+                    socket.emit('history:chunk', history.slice(i, i + CHUNK));
+                }
+                socket.emit('history:end', { total: history.length });
+            }
         } catch (_) {}
         try {
-            const quick = await getGroupsSnapshot({ force: false });
-            socket.emit('groups', quick);
-            socket.emit('groups:ready', true);
-            const cachedSet = new Set(quick.map(g => g.jid));
-            const items = groupsApi ? await groupsApi() : [];
-            const enrichTasks = [];
-            for (const item of items) {
-                const jid = typeof item === 'string' ? item : item?.jid;
-                if (!jid || cachedSet.has(jid)) continue;
-                enrichTasks.push(getGroupInfo(jid, false));
-            }
-            if (enrichTasks.length) {
-                Promise.all(enrichTasks).then(async () => {
-                    try {
-                        ioServer.emit('groups', await getGroupsSnapshot({ force: false }));
-                    } catch (_) {}
-                }).catch(() => {});
+            const cachedGroups = groupsSnapshotCache && Date.now() - groupsSnapshotCache.at < GROUPS_CACHE_TTL
+                ? groupsSnapshotCache.list
+                : null;
+            if (cachedGroups) {
+                socket.emit('groups', cachedGroups);
+                socket.emit('groups:ready', true);
+            } else {
+                const quick = await getGroupsSnapshot({ force: false });
+                groupsSnapshotCache = { list: quick, at: Date.now() };
+                socket.emit('groups', quick);
+                socket.emit('groups:ready', true);
+                const cachedSet = new Set(quick.map(g => g.jid));
+                const items = groupsApi ? await groupsApi() : [];
+                const enrichTasks = [];
+                for (const item of items) {
+                    const jid = typeof item === 'string' ? item : item?.jid;
+                    if (!jid || cachedSet.has(jid)) continue;
+                    enrichTasks.push(getGroupInfo(jid, false));
+                }
+                if (enrichTasks.length) {
+                    Promise.all(enrichTasks).then(async () => {
+                        try {
+                            const fresh = await getGroupsSnapshot({ force: false });
+                            groupsSnapshotCache = { list: fresh, at: Date.now() };
+                            ioServer.emit('groups', fresh);
+                        } catch (_) {}
+                    }).catch(() => {});
+                }
             }
         } catch (_) {}
     });
@@ -387,6 +418,7 @@ function init(config) {
     try {
         httpServer = server;
         const publicUrl = String(config?.dashboardUrl || '').replace(/\/+$/, '');
+        ensureMediaDir();
         server.listen(port, '0.0.0.0', () => {
             console.log(`[dashboard] ativo em http://localhost:${port}`);
             if (publicUrl) console.log(`[dashboard] url pública: ${publicUrl}`);
@@ -474,6 +506,68 @@ function mediaForLog(media) {
     return { type: sendType, url: `data:${mime};base64,${media.dataBase64}` };
 }
 
+function mediaForLogSent(media, messageId) {
+    if (!media || !media.dataBase64) return null;
+    const sendType = media.sendType || media.type || 'document';
+    const mime = media.mime || (sendType === 'sticker' ? 'image/webp' : 'application/octet-stream');
+    if (!['image', 'video', 'audio', 'sticker'].includes(sendType)) return null;
+    if (messageId) {
+        try {
+            persistMedia(messageId, media.dataBase64, mime);
+            return { type: sendType, url: `/media/${encodeURIComponent(messageId)}`, mime, fileName: media.fileName || null };
+        } catch (_) {}
+    }
+    return { type: sendType, url: `data:${mime};base64,${media.dataBase64}`, mime, fileName: media.fileName || null };
+}
+
+const MEDIA_DIR = path.join(__dirname, '..', '..', 'temp', 'dashboard_media');
+function ensureMediaDir() {
+    try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch (_) {}
+}
+function persistMedia(messageId, dataBase64, mime) {
+    if (!messageId || !dataBase64) return null;
+    try {
+        ensureMediaDir();
+        const safeId = String(messageId).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const ext = (mime || '').split('/')[1] || 'bin';
+        const file = path.join(MEDIA_DIR, `${safeId}.${ext}`);
+        const buf = Buffer.from(dataBase64, 'base64');
+        fs.writeFileSync(file, buf);
+        return file;
+    } catch (_) { return null; }
+}
+function readPersistedMedia(messageId) {
+    if (!messageId) return null;
+    try {
+        ensureMediaDir();
+        const files = fs.readdirSync(MEDIA_DIR);
+        const safeId = String(messageId).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        for (const f of files) {
+            if (f.startsWith(safeId + '.')) {
+                const full = path.join(MEDIA_DIR, f);
+                const buf = fs.readFileSync(full);
+                const mime = 'image/' + (f.split('.').pop() || 'jpeg');
+                return { buffer: buf, mime };
+            }
+        }
+    } catch (_) {}
+    return null;
+}
+
+function mediaForLogRef(media, messageId) {
+    if (!media || !media.dataBase64) return null;
+    const sendType = media.sendType || media.type || 'document';
+    const mime = media.mime || (sendType === 'sticker' ? 'image/webp' : 'application/octet-stream');
+    if (!['image', 'video', 'audio', 'sticker'].includes(sendType)) return null;
+    if (messageId) {
+        try {
+            const pathOnDisk = persistMedia(messageId, media.dataBase64, mime);
+            if (pathOnDisk) return { type: sendType, url: `/media/${encodeURIComponent(messageId)}`, mime, fileName: media.fileName || null };
+        } catch (_) {}
+    }
+    return { type: sendType, url: `data:${mime};base64,${media.dataBase64}`, mime, fileName: media.fileName || null };
+}
+
 async function sendMediaMessage(toJid, text, media, opts = {}) {
     const buf = Buffer.from(media.dataBase64, 'base64');
     const caption = text ? String(text).slice(0, 1024) : undefined;
@@ -503,7 +597,7 @@ async function sendMediaMessage(toJid, text, media, opts = {}) {
 
 async function logSentMessage(toJid, text, media, sentId, quoted = null) {
     try {
-        const mediaInfo = mediaForLog(media);
+        const mediaInfo = mediaForLogSent(media, sentId);
         const fallbackText = mediaInfo && !text ? `[${getMediaLabel(mediaInfo.type)}]` : '';
         log('chat', await getGroupName(toJid),
             text ? String(text).slice(0, 4096) : fallbackText,
@@ -643,6 +737,7 @@ async function pushGroupsSnapshot(options = {}) {
         const effectiveForce = wantsForce && (now - lastForceRefreshAt > FORCE_REFRESH_COOLDOWN_MS);
         if (wantsForce) lastForceRefreshAt = now;
         const list = await getGroupsSnapshot({ force: effectiveForce });
+        groupsSnapshotCache = { list, at: Date.now() };
         ioServer.emit('groups', list);
     } catch (e) {
         console.error('[dashboard] pushGroupsSnapshot:', e?.message || e);
