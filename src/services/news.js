@@ -178,8 +178,25 @@ function extractSelftext(body) {
 }
 
 let _rateLimitedUntil = 0;
-let _consecutiveRateLimits = 0;
 const _subCooldownUntil = new Map();
+const _subConsecutiveRateLimits = new Map();
+
+function _bumpSubCooldown(sub) {
+    const n = (_subConsecutiveRateLimits.get(sub) || 0) + 1;
+    _subConsecutiveRateLimits.set(sub, n);
+    const baseWait = 120;
+    const waitMs = baseWait * Math.min(8, Math.pow(2, n - 1)) * 1000;
+    const prev = _subCooldownUntil.get(sub) || 0;
+    const subUntil = Date.now() + waitMs;
+    if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
+    _rateLimitedUntil = Math.max(_rateLimitedUntil, subUntil);
+    return { waitMs, attempt: n };
+}
+
+function _clearSubCooldown(sub) {
+    _subConsecutiveRateLimits.set(sub, 0);
+    _subCooldownUntil.delete(sub);
+}
 
 async function fetchSubredditFeed(sub, userAgent) {
     const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
@@ -194,31 +211,32 @@ async function fetchSubredditFeed(sub, userAgent) {
         if (res.status === 429 || res.status === 503) {
             const ra = parseInt(res.headers && res.headers['retry-after'], 10);
             const baseWait = (Number.isFinite(ra) && ra > 0 ? ra : 120);
-            _consecutiveRateLimits++;
-            const waitMs = baseWait * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
-            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            const n = (_subConsecutiveRateLimits.get(sub) || 0) + 1;
+            _subConsecutiveRateLimits.set(sub, n);
+            const waitMs = baseWait * Math.min(8, Math.pow(2, n - 1)) * 1000;
             const prev = _subCooldownUntil.get(sub) || 0;
             const subUntil = Date.now() + waitMs;
             if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
-            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${_consecutiveRateLimits})`);
+            _rateLimitedUntil = Math.max(_rateLimitedUntil, subUntil);
+            console.error(`📰 [news] r/${sub} feed respondeu status=${res.status} → aguardando ${Math.round(waitMs / 1000)}s (tentativa #${n})`);
             return { __rateLimited: true, items: [] };
         }
         if (res.status !== 200 || !res.data) {
             console.error(`📰 [news] r/${sub} feed respondeu status=${res.status}`);
             return { __rateLimited: false, items: [] };
         }
-        _consecutiveRateLimits = 0;
-        _subCooldownUntil.delete(sub);
+        _clearSubCooldown(sub);
         return { __rateLimited: false, items: parseRssItems(String(res.data)) };
     } catch (e) {
         const msg = String(e?.message || '').toLowerCase();
         if (msg.includes('429') || msg.includes('rate')) {
-            _consecutiveRateLimits++;
-            const waitMs = 120 * Math.min(8, Math.pow(2, _consecutiveRateLimits - 1)) * 1000;
-            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            const n = (_subConsecutiveRateLimits.get(sub) || 0) + 1;
+            _subConsecutiveRateLimits.set(sub, n);
+            const waitMs = 120 * Math.min(8, Math.pow(2, n - 1)) * 1000;
             const prev = _subCooldownUntil.get(sub) || 0;
             const subUntil = Date.now() + waitMs;
             if (subUntil > prev) _subCooldownUntil.set(sub, subUntil);
+            _rateLimitedUntil = Math.max(_rateLimitedUntil, subUntil);
             return { __rateLimited: true, items: [] };
         }
         throw e;
@@ -439,8 +457,6 @@ async function pollOnce() {
     }
 
     for (const sub of subsToCheck) {
-        if (Date.now() < _rateLimitedUntil) break;
-
         // Cooldown por sub: pula este e tenta o próximo.
         const subCooldown = _subCooldownUntil.get(sub) || 0;
         if (Date.now() < subCooldown) {
