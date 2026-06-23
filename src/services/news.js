@@ -265,35 +265,55 @@ function _clearSubCooldown(sub) {
 }
 
 // Quando o RSS não traz a URL direta do MP4 (post v.redd.it), busca via API JSON.
+// Tenta múltiplos endpoints porque o Reddit 403 para UAs genéricos em alguns.
 async function fetchVideoFromJson(postId, userAgent) {
     if (!postId) return null;
-    try {
-        const url = `https://www.reddit.com/comments/${encodeURIComponent(postId)}.json`;
-        const res = await axios.get(url, {
-            timeout: HTTP_TIMEOUT_MS,
-            headers: buildHeaders(userAgent),
-            responseType: 'text',
-            validateStatus: () => true,
-            transformResponse: [(data) => data]
-        });
-        if (res.status !== 200 || !res.data) {
-            newsErr(`JSON API para ${postId} retornou status=${res.status}`);
-            return null;
+    const ua = String(userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    const headers = {
+        'User-Agent': ua,
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache'
+    };
+
+    const endpoints = [
+        `https://www.reddit.com/comments/${encodeURIComponent(postId)}.json`,
+        `https://old.reddit.com/comments/${encodeURIComponent(postId)}.json`,
+        `https://i.reddit.com/comments/${encodeURIComponent(postId)}.json`
+    ];
+
+    for (const url of endpoints) {
+        try {
+            const res = await axios.get(url, {
+                timeout: HTTP_TIMEOUT_MS,
+                headers,
+                responseType: 'text',
+                validateStatus: () => true,
+                transformResponse: [(data) => data]
+            });
+            if (res.status !== 200 || !res.data) {
+                newsErr(`JSON API ${url} status=${res.status}`);
+                continue;
+            }
+            let data;
+            try { data = JSON.parse(res.data); } catch (e) {
+                newsErr(`JSON API ${url}: resposta não é JSON`);
+                continue;
+            }
+            const post = Array.isArray(data) && data[0]?.data?.children?.[0]?.data;
+            if (!post) {
+                newsErr(`JSON API ${url}: estrutura inesperada`);
+                continue;
+            }
+            const v = post?.secure_media?.reddit_video || post?.media?.reddit_video;
+            if (v && v.fallback_url) return String(v.fallback_url);
+            if (v && v.dash_url) return String(v.dash_url);
+            newsErr(`JSON API ${url}: sem reddit_video (domain=${post.domain || '?'})`);
+        } catch (e) {
+            newsErr(`JSON API ${url} falhou:`, e?.message || e);
         }
-        const data = JSON.parse(res.data);
-        const post = Array.isArray(data) && data[0]?.data?.children?.[0]?.data;
-        if (!post) {
-            newsErr(`JSON API para ${postId}: estrutura inesperada.`);
-            return null;
-        }
-        const v = post?.secure_media?.reddit_video || post?.media?.reddit_video;
-        if (v && v.fallback_url) return String(v.fallback_url);
-        newsErr(`JSON API para ${postId}: sem reddit_video.fallback_url (domain=${post.domain || '?'})`);
-        return null;
-    } catch (e) {
-        newsErr(`JSON API para ${postId} falhou:`, e?.message || e);
-        return null;
     }
+    return null;
 }
 
 async function fetchSubredditFeed(sub, userAgent) {
@@ -506,10 +526,21 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     if (media.image) {
         // Se é post de vídeo e o JSON não retornou URL, NÃO cai no fallback
         // de imagem (que enviaria thumbnail estática como "imagem" no WhatsApp).
-        // Pula direto para enviar só o texto com link.
+        // Envia a thumbnail como imagem estática + legenda com link para o post,
+        // assim o usuário vê que existe conteúdo e pode clicar para acessar.
         if (isVideoPostFlag && !media.video) {
-            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — pulando envio de mídia.`);
-            return;
+            newsErr(`r/${sub} post ${post.id}: vídeo sem URL acessível — enviando thumbnail + link.`);
+            try {
+                const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
+                if (dl && dl.buffer && dl.buffer.length > 0) {
+                    const textPayload = `${caption ? caption + '\n\n' : ''}🎬 *Vídeo:* ${post.permalink || post.url || `https://redd.it/${post.id}`}`;
+                    const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg', caption: textPayload };
+                    return await sendMessageSafe(sock, jid, payload, retryOpts);
+                }
+            } catch (_) {}
+            // Fallback final: só texto
+            const textPayload = `${caption ? caption + '\n\n' : ''}🎬 *Vídeo:* ${post.permalink || post.url || `https://redd.it/${post.id}`}`;
+            return await sendMessageSafe(sock, jid, { text: textPayload }, retryOpts);
         }
         try {
             const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
