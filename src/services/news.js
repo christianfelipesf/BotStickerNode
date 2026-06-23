@@ -40,6 +40,20 @@ function normalizeSubreddit(name) {
     return String(name || '').trim().replace(/^r\//i, '').replace(/^\//, '').replace(/\/$/, '').toLowerCase();
 }
 
+// Normaliza URL de mídia removendo query strings de qualidade/tamanho.
+// Reddit devolve a mesma imagem em qualidades diferentes via ?width=NNN.
+// Removemos tudo depois do "?" para deduplicar versões da mesma imagem.
+function normalizeMediaUrl(url) {
+    if (!url) return '';
+    try {
+        const u = new URL(String(url));
+        u.search = '';
+        return u.toString();
+    } catch (_) {
+        return String(url).split('?')[0].split('#')[0];
+    }
+}
+
 function dedupeSubreddits(list) {
     const out = [];
     const seen = new Set();
@@ -535,17 +549,26 @@ async function pollOnce() {
         const latest = posts[0];
         if (!latest || !latest.id) continue;
 
-        // lastSeen[sub] agora guarda **um único ID** (o último publicado).
-        // Se for igual ao atual, não republica.
-        const previousId = lastSeen[sub] || null;
-        if (previousId === latest.id) {
-            newsLog(`r/${sub}: sem post novo (último já postado: ${latest.id}).`);
+        // lastSeen[sub] agora guarda { id, imageUrl } do último publicado.
+        // Dedupe por id E por URL de imagem (Reddit às vezes faz cross-post
+        // com IDs diferentes mas mesma imagem — sem isso, duplicaria).
+        const previous = lastSeen[sub] || null;
+        const currentImage = normalizeMediaUrl((latest.media && (latest.media.image || latest.media.thumbnail)) || '');
+        const previousImage = (previous && typeof previous === 'object') ? (previous.imageUrl || '') : '';
+        const previousId = (previous && typeof previous === 'object') ? previous.id : (typeof previous === 'string' ? previous : null);
+
+        const sameById = previousId === latest.id;
+        const sameByImage = !!currentImage && currentImage === previousImage;
+
+        if (sameById || sameByImage) {
+            const reason = sameById ? `id ${latest.id}` : `imagem duplicada`;
+            newsLog(`r/${sub}: sem post novo (${reason} já postado).`);
             continue;
         }
 
-        // Persiste o ID **antes** de enviar. Assim, mesmo se o envio falhar
-        // (rate-limit, queda do bot), o próximo poll não vai republicar o mesmo.
-        lastSeen[sub] = latest.id;
+        // Persiste o estado **antes** de enviar. Assim, mesmo se o envio falhar
+        // (rate-limit, queda do bot), o próximo poll não vai republicar.
+        lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
         setNewsState(STATE_KEY, lastSeen);
 
         newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
