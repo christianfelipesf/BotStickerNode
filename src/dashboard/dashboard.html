@@ -1,159 +1,98 @@
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
-    <title>{{BOT_NAME}}</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#0b141a">
-    <link rel="icon" type="image/jpeg" href="/favicon.ico">
-    <link rel="stylesheet" href="/dashboard.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b141a">
+<title>{{BOT_NAME}}</title>
+<link rel="icon" type="image/jpeg" href="/favicon.ico">
+<link rel="stylesheet" href="/dashboard.css">
 </head>
-<body>
-    <div class="app" id="app">
-        <!-- Coluna 1 — Chats -->
-        <aside class="col col-chats" id="colChats">
-            <header class="ch-head">
-                <div class="ch-head-row">
-                    <img class="ch-avatar ch-avatar-bot" src="https://ui-avatars.com/api/?name={{BOT_NAME_ENCODED}}&background=128c7e&color=fff&size=64" alt="">
-                    <div class="ch-head-info">
-                        <div class="ch-bot-name">{{BOT_NAME}}</div>
-                        <div class="ch-bot-status" id="status">conectando…</div>
-                    </div>
-                    <button class="ch-icon-btn" id="mobileBackFromStats" title="Voltar" aria-label="Voltar">‹</button>
+<body data-screen="chats">
+<div class="app">
+    <aside class="col col-chats">
+        <header class="ch-head">
+            <div class="ch-head-row">
+                <img class="ch-avatar" src="https://ui-avatars.com/api/?name={{BOT_NAME_ENCODED}}&background=128c7e&color=fff&size=64" alt="">
+                <div style="flex:1;min-width:0">
+                    <div class="ch-bot-name">{{BOT_NAME}}</div>
+                    <div class="ch-bot-status" id="status">conectando…</div>
                 </div>
-                <div class="ch-toolbar">
-                    <input id="groupSearch" type="search" placeholder="🔎 Buscar grupo" autocomplete="off">
-                    <div class="ch-toolbar-btns">
-                        <button id="push-btn" class="sb-btn" onclick="togglePush()" title="Push">PUSH</button>
-                        <button id="notif-btn" class="sb-btn" onclick="toggleSound()" title="Som">SOM</button>
-                        <button class="sb-btn" onclick="setTheme('light')" title="Claro">☀</button>
-                        <button class="sb-btn" onclick="setTheme('dark')" title="Escuro">🌙</button>
-                        <button class="sb-btn" onclick="setTheme('oled')" title="OLED">⬛</button>
-                    </div>
-                </div>
-            </header>
-            <ul id="groupList" class="group-list">
-                <li class="empty">Nenhum grupo com dashboard ativa ainda.<br><small>Use <code>!dashboard</code> em um grupo para ativá-lo.</small></li>
-            </ul>
-        </aside>
+                <button class="ch-icon-btn" id="mobileBackFromStats" title="Voltar" aria-label="Voltar">‹</button>
+            </div>
+            <input id="groupSearch" type="search" placeholder="🔎 Buscar grupo" autocomplete="off">
+            <div class="ch-toolbar-btns">
+                <button id="push-btn" class="sb-btn" onclick="togglePush()">PUSH</button>
+                <button id="notif-btn" class="sb-btn" onclick="toggleSound()">SOM</button>
+                <button class="sb-btn" onclick="setTheme('light')" title="Claro">☀</button>
+                <button class="sb-btn" onclick="setTheme('dark')" title="Escuro">🌙</button>
+                <button class="sb-btn" onclick="setTheme('oled')" title="OLED">⬛</button>
+            </div>
+        </header>
+        <ul id="groupList" class="group-list"><li class="empty">Carregando…</li></ul>
+    </aside>
 
-        <!-- Coluna 2 — Mensagens -->
-        <main class="col col-chat" id="colChat">
-            <header class="cb-head" id="chatHeader">
-                <div class="cb-left">
-                    <button class="ch-icon-btn ch-back" id="backBtn" title="Voltar" aria-label="Voltar">‹</button>
-                    <div class="ch-avatar" id="chatAvatar">?</div>
-                    <div class="cb-info">
-                        <div class="cb-name" id="chatName">Selecione um grupo</div>
-                        <div class="cb-sub" id="chatSub">—</div>
-                    </div>
-                </div>
-                <div class="cb-right">
-                    <button class="ch-icon-btn cb-stats-btn" id="openStatsMobile" title="Estatísticas" aria-label="Estatísticas">📊</button>
-                </div>
-            </header>
-            <div id="chat" class="cb-body"></div>
-            <div class="cb-composer" id="composer">
-                <div class="reply-bar" id="replyBar">
-                    <div class="rb-info">
-                        <div class="rb-name" id="replyName"></div>
-                        <div class="rb-text" id="replyText"></div>
-                    </div>
-                    <button class="rb-close" onclick="clearReply()" aria-label="Cancelar resposta">✕</button>
-                </div>
-                <div class="attachments" id="attachments"></div>
-                <div class="cb-input-row">
-                    <button class="icon-btn" id="attachBtn" title="Anexar mídia" aria-label="Anexar mídia">＋</button>
-                    <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,audio/*,application/*">
-                    <div class="cb-input-wrap">
-                        <textarea id="messageInput" placeholder="Mensagem" rows="1" disabled></textarea>
-                    </div>
-                    <button class="send-btn" id="sendBtn" onclick="sendCurrent()" disabled aria-label="Enviar">➤</button>
+    <main class="col col-chat">
+        <header class="cb-head">
+            <div class="cb-left">
+                <button class="ch-icon-btn ch-back" id="backBtn" title="Voltar" aria-label="Voltar">‹</button>
+                <div class="ch-avatar" id="chatAvatar">?</div>
+                <div style="min-width:0">
+                    <div class="cb-name" id="chatName">Selecione um grupo</div>
+                    <div class="cb-sub" id="chatSub">—</div>
                 </div>
             </div>
-        </main>
-
-        <!-- Coluna 3 — Status / Estatísticas -->
-        <aside class="col col-stats" id="colStats">
-            <header class="st-head">
-                <div class="st-title">📊 Estatísticas</div>
-                <div class="st-actions">
-                    <button class="ch-icon-btn" id="toggleStatsPanel" title="Recolher/Expandir" aria-label="Recolher painel">»</button>
+            <button class="ch-icon-btn" id="openStatsMobile" title="Estatísticas" aria-label="Estatísticas">📊</button>
+        </header>
+        <div id="chat" class="cb-body"></div>
+        <div class="cb-composer" id="composer">
+            <div class="reply-bar" id="replyBar">
+                <div class="rb-info">
+                    <div class="rb-name" id="replyName"></div>
+                    <div class="rb-text" id="replyText"></div>
                 </div>
-            </header>
-            <div class="st-body" id="statsBody">
-                <div class="st-card" data-card="bot">
-                    <div class="st-card-title">🤖 Bot</div>
-                    <div class="st-grid">
-                        <div class="st-kv"><div class="st-k">Estado</div><div class="st-v" id="sysBotState">—</div></div>
-                        <div class="st-kv"><div class="st-k">PID</div><div class="st-v" id="sysPid">—</div></div>
-                        <div class="st-kv"><div class="st-k">Reinícios</div><div class="st-v" id="sysRestarts">—</div></div>
-                        <div class="st-kv"><div class="st-k">Comandos</div><div class="st-v" id="sysCommands">—</div></div>
-                    </div>
-                </div>
-
-                <div class="st-card" data-card="cpu">
-                    <div class="st-card-title">⚡ CPU</div>
-                    <div class="st-meter">
-                        <div class="st-bar" id="cpuBar"></div>
-                        <div class="st-meter-label" id="cpuLabel">—</div>
-                    </div>
-                    <div class="st-meta" id="cpuMeta">—</div>
-                </div>
-
-                <div class="st-card" data-card="ram">
-                    <div class="st-card-title">🧠 Memória (RAM)</div>
-                    <div class="st-meter">
-                        <div class="st-bar" id="ramBar"></div>
-                        <div class="st-meter-label" id="ramLabel">—</div>
-                    </div>
-                    <div class="st-meta" id="ramMeta">—</div>
-                </div>
-
-                <div class="st-card" data-card="proc">
-                    <div class="st-card-title">💾 Processo Node</div>
-                    <div class="st-grid">
-                        <div class="st-kv"><div class="st-k">RSS</div><div class="st-v" id="procRss">—</div></div>
-                        <div class="st-kv"><div class="st-k">Heap</div><div class="st-v" id="procHeap">—</div></div>
-                        <div class="st-kv"><div class="st-k">Node</div><div class="st-v" id="sysNode">—</div></div>
-                        <div class="st-kv"><div class="st-k">Plataforma</div><div class="st-v" id="sysPlatform">—</div></div>
-                    </div>
-                </div>
-
-                <div class="st-card" data-card="uptime">
-                    <div class="st-card-title">⏱️ Uptime</div>
-                    <div class="st-big" id="sysUptime">—</div>
-                </div>
-
-                <div class="st-card" data-card="groups">
-                    <div class="st-card-title">🏘️ Grupos</div>
-                    <div class="st-grid">
-                        <div class="st-kv"><div class="st-k">Total monitorados</div><div class="st-v" id="sysGroupsTotal">—</div></div>
-                        <div class="st-kv"><div class="st-k">Ativados (total)</div><div class="st-v" id="sysGroupsActive">—</div></div>
-                        <div class="st-kv"><div class="st-k">Modo parcial</div><div class="st-v" id="sysGroupsPartial">—</div></div>
-                    </div>
-                </div>
-
-                <div class="st-card st-card-logs" data-card="logs">
-                    <div class="st-card-title">📜 Logs recentes</div>
-                    <div class="st-logs" id="sysLogs">carregando…</div>
-                </div>
+                <button class="rb-close" onclick="clearReply()" aria-label="Cancelar resposta">✕</button>
             </div>
-        </aside>
-    </div>
+            <div class="attachments" id="attachments"></div>
+            <div class="cb-input-row">
+                <button class="icon-btn" id="attachBtn" title="Anexar mídia" aria-label="Anexar">＋</button>
+                <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,audio/*,application/*">
+                <div class="cb-input-wrap">
+                    <textarea id="messageInput" placeholder="Mensagem" rows="1" disabled></textarea>
+                </div>
+                <button class="send-btn" id="sendBtn" onclick="sendCurrent()" disabled aria-label="Enviar">➤</button>
+            </div>
+        </div>
+    </main>
 
-    <!-- Mobile: barra inferior (navegação entre telas) -->
-    <nav class="mobile-tabbar" id="mobileTabbar" aria-label="Navegação">
-        <button class="mt-tab active" data-tab="chats" aria-label="Conversas">💬<span>Chats</span></button>
-        <button class="mt-tab" data-tab="chat" aria-label="Conversa aberta">📨<span>Conversa</span></button>
-        <button class="mt-tab" data-tab="stats" aria-label="Estatísticas">📊<span>Status</span></button>
-    </nav>
+    <aside class="col col-stats" id="colStats">
+        <header class="st-head">
+            <div class="st-title">📊 Estatísticas</div>
+            <button class="ch-icon-btn" id="toggleStatsPanel" title="Recolher painel" aria-label="Recolher painel" style="display:flex">»</button>
+        </header>
+        <div class="st-body" id="statsBody">
+            <div class="st-card"><div class="st-card-title">🤖 Bot</div><div class="st-grid"><div class="st-kv"><div class="st-k">Estado</div><div class="st-v" id="sysBotState">—</div></div><div class="st-kv"><div class="st-k">PID</div><div class="st-v" id="sysPid">—</div></div><div class="st-kv"><div class="st-k">Reinícios</div><div class="st-v" id="sysRestarts">—</div></div><div class="st-kv"><div class="st-k">Comandos</div><div class="st-v" id="sysCommands">—</div></div></div></div>
+            <div class="st-card"><div class="st-card-title">⚡ CPU</div><div class="st-meter"><div class="st-bar" id="cpuBar"></div><div class="st-meter-label" id="cpuLabel">—</div></div><div class="st-meta" id="cpuMeta">—</div></div>
+            <div class="st-card"><div class="st-card-title">🧠 Memória</div><div class="st-meter"><div class="st-bar" id="ramBar"></div><div class="st-meter-label" id="ramLabel">—</div></div><div class="st-meta" id="ramMeta">—</div></div>
+            <div class="st-card"><div class="st-card-title">💾 Processo Node</div><div class="st-grid"><div class="st-kv"><div class="st-k">RSS</div><div class="st-v" id="procRss">—</div></div><div class="st-kv"><div class="st-k">Heap</div><div class="st-v" id="procHeap">—</div></div><div class="st-kv"><div class="st-k">Node</div><div class="st-v" id="sysNode">—</div></div><div class="st-kv"><div class="st-k">Plataforma</div><div class="st-v" id="sysPlatform">—</div></div></div></div>
+            <div class="st-card"><div class="st-card-title">⏱️ Uptime</div><div class="st-big" id="sysUptime">—</div></div>
+            <div class="st-card"><div class="st-card-title">🏘️ Grupos</div><div class="st-grid"><div class="st-kv"><div class="st-k">Total</div><div class="st-v" id="sysGroupsTotal">—</div></div><div class="st-kv"><div class="st-k">Ativados</div><div class="st-v" id="sysGroupsActive">—</div></div><div class="st-kv"><div class="st-k">Parcial</div><div class="st-v" id="sysGroupsPartial">—</div></div><div class="st-kv"><div class="st-k">Conectado</div><div class="st-v" id="sysGroupsConn">—</div></div></div></div>
+            <div class="st-card"><div class="st-card-title">📜 Logs recentes</div><div class="st-logs" id="sysLogs">carregando…</div></div>
+        </div>
+    </aside>
+</div>
 
-    <div class="toast" id="toast"></div>
-    <audio id="sound-chat" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" preload="auto"></audio>
-    <audio id="sound-action" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
-    <audio id="sound-error" src="https://assets.mixkit.co/active_storage/sfx/2955/2955-preview.mp3" preload="auto"></audio>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="/dashboard-client.js"></script>
+<nav class="mobile-tabbar" id="mobileTabbar" aria-label="Navegação">
+    <button class="mt-tab" data-tab="chats" aria-label="Conversas">💬<span>Chats</span></button>
+    <button class="mt-tab" data-tab="chat" aria-label="Conversa">📨<span>Conversa</span></button>
+    <button class="mt-tab" data-tab="stats" aria-label="Estatísticas">📊<span>Status</span></button>
+</nav>
+
+<div class="toast" id="toast"></div>
+<audio id="sound-chat" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" preload="auto"></audio>
+<audio id="sound-action" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+<audio id="sound-error" src="https://assets.mixkit.co/active_storage/sfx/2955/2955-preview.mp3" preload="auto"></audio>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/dashboard-client.js"></script>
 </body>
 </html>
