@@ -821,6 +821,15 @@ const _dlTrimByCount = db.prepare(`
 `);
 const _dlCount = db.prepare(`SELECT COUNT(*) as c FROM dashboard_logs`);
 const _dlUpdateReactions = db.prepare(`UPDATE dashboard_logs SET reactions = ? WHERE to_jid = ? AND message_id = ? AND type = ?`);
+const _dlUpdateMedia = db.prepare(`UPDATE dashboard_logs SET media_json = ? WHERE to_jid = ? AND message_id = ? AND type = ?`);
+const _dlSelectWithDataMedia = db.prepare(`
+    SELECT to_jid, message_id, type, media_json
+    FROM dashboard_logs
+    WHERE media_json LIKE '%data:image%'
+       OR media_json LIKE '%data:video%'
+       OR media_json LIKE '%data:audio%'
+    LIMIT ?
+`);
 const _dlClear = db.prepare(`DELETE FROM dashboard_logs`);
 
 function insertDashboardLog(data) {
@@ -929,6 +938,23 @@ function updateDashboardLogReactions(toJid, messageId, type, reactions) {
         console.error('❌ [dashboard_logs] reactions:', e.message);
         return false;
     }
+}
+
+function updateDashboardLogMedia(toJid, messageId, type, mediaJson) {
+    if (!toJid || !messageId) return false;
+    try {
+        const r = _dlUpdateMedia.run(mediaJson, toJid, messageId, type || 'chat');
+        return r.changes > 0;
+    } catch (e) {
+        console.error('❌ [dashboard_logs] media update:', e.message);
+        return false;
+    }
+}
+
+function selectDashboardLogsWithInlineMedia(limit = 500) {
+    try {
+        return _dlSelectWithDataMedia.all(limit);
+    } catch (_) { return []; }
 }
 
 function clearDashboardLogs() {
@@ -1786,7 +1812,8 @@ module.exports = {
     getNewsState, setNewsState, clearNewsState, clearAllNewsState,
     canAdminControl,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
-    updateDashboardLogReactions, clearDashboardLogs, getDashboardLogByMessageId,
+    updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
+    clearDashboardLogs, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     flushNow
 };

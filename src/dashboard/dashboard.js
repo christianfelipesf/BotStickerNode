@@ -12,6 +12,8 @@ const {
     trimDashboardLogs,
     countDashboardLogs,
     updateDashboardLogReactions,
+    updateDashboardLogMedia,
+    selectDashboardLogsWithInlineMedia,
     clearDashboardLogs,
     upsertDashboardGroupInfo,
     getDashboardGroupInfo,
@@ -419,6 +421,7 @@ function init(config) {
         httpServer = server;
         const publicUrl = String(config?.dashboardUrl || '').replace(/\/+$/, '');
         ensureMediaDir();
+        try { migrateInlineMedia(); } catch (_) {}
         server.listen(port, '0.0.0.0', () => {
             console.log(`[dashboard] ativo em http://localhost:${port}`);
             if (publicUrl) console.log(`[dashboard] url pública: ${publicUrl}`);
@@ -520,6 +523,22 @@ function mediaForLogSent(media, messageId) {
     return { type: sendType, url: `data:${mime};base64,${media.dataBase64}`, mime, fileName: media.fileName || null };
 }
 
+function mediaForLogReceived(media, messageId) {
+    if (!media) return null;
+    const type = media.type;
+    if (!['image', 'video', 'audio', 'sticker'].includes(type)) return null;
+    if (media.url && media.url.startsWith('data:') && messageId) {
+        const m = /^data:([^;]+);base64,(.+)$/.exec(media.url);
+        if (m) {
+            try {
+                persistMedia(messageId, m[2], m[1]);
+                return { type, url: `/media/${encodeURIComponent(messageId)}`, mime: m[1] };
+            } catch (_) {}
+        }
+    }
+    return media;
+}
+
 const MEDIA_DIR = path.join(__dirname, '..', '..', 'temp', 'dashboard_media');
 function ensureMediaDir() {
     try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch (_) {}
@@ -552,6 +571,35 @@ function readPersistedMedia(messageId) {
         }
     } catch (_) {}
     return null;
+}
+
+function migrateInlineMedia() {
+    try {
+        ensureMediaDir();
+        const rows = selectDashboardLogsWithInlineMedia(1000);
+        let migrated = 0;
+        for (const row of rows) {
+            try {
+                const media = JSON.parse(row.media_json);
+                if (!media || !media.url || !media.url.startsWith('data:')) continue;
+                const m = /^data:([^;]+);base64,(.+)$/.exec(media.url);
+                if (!m) continue;
+                const mime = m[1];
+                const b64 = m[2];
+                if (row.message_id) {
+                    persistMedia(row.message_id, b64, mime);
+                    const newMedia = { ...media };
+                    newMedia.url = `/media/${encodeURIComponent(row.message_id)}`;
+                    newMedia.mime = mime;
+                    updateDashboardLogMedia(row.to_jid, row.message_id, row.type, JSON.stringify(newMedia));
+                    migrated++;
+                }
+            } catch (_) {}
+        }
+        if (migrated > 0) console.log(`🧹 [dashboard] migrou ${migrated} mídia(s) inline para disco`);
+    } catch (e) {
+        console.error('[dashboard] migrateInlineMedia:', e?.message || e);
+    }
 }
 
 function mediaForLogRef(media, messageId) {
@@ -828,5 +876,6 @@ module.exports = {
     setGroupsApi, pushGroupsSnapshot, rememberGroupInfo,
     setStartTime,
     handleReaction,
-    resetDashboard, setMaxLogs, stop
+    resetDashboard, setMaxLogs, stop,
+    mediaForLogReceived, mediaForLogSent
 };

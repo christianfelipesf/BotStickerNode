@@ -36,10 +36,17 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
         const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
 
         if (dashboardOn) {
-            const mediaInfo = {
-                type: mediaType,
-                url: `data:${isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg')};base64,${buffer.toString('base64')}`
-            };
+            const dataBase64 = buffer.toString('base64');
+            const mime = isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg');
+            let mediaInfo;
+            try {
+                mediaInfo = require('../dashboard/dashboard').mediaForLogReceived(
+                    { type: mediaType, url: `data:${mime};base64,${dataBase64}` },
+                    m.key?.id
+                );
+            } catch (_) {
+                mediaInfo = { type: mediaType, url: `data:${mime};base64,${dataBase64}` };
+            }
 
             require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0], mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
         }

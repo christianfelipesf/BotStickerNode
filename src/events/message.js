@@ -21,10 +21,12 @@ const {
 const dashboardCacheMedia = dashboard.cacheMedia;
 const dashboardPushGroups = dashboard.pushGroupsSnapshot;
 const dashboardRememberGroup = dashboard.rememberGroupInfo;
+const dashboardMediaForLogReceived = dashboard.mediaForLogReceived;
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
 const safeDashboardCache = (...args) => { try { dashboardCacheMedia(...args); } catch (_) {} };
 const safeDashboardRememberGroup = (...args) => { try { dashboardRememberGroup(...args); } catch (_) {} };
+const safeDashboardMediaReceived = (...args) => { try { return dashboardMediaForLogReceived(...args); } catch (_) { return null; } };
 
 const processedMessages = new Set();
 // Limpa periodicamente para evitar crescimento infinito da memória
@@ -376,12 +378,13 @@ module.exports = {
                 }
 
                 const logType = hidden ? 'viewonce' : 'chat';
+                const mediaForDb = safeDashboardMediaReceived(mediaInfo, m.key.id) || mediaInfo;
                 safeDashboardLog(logType,
                     groupMetadata.subject,
                     text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),
                     senderName,
                     sender.split('@')[0],
-                    mediaInfo,
+                    mediaForDb,
                     {
                         toJid: from,
                         messageId: m.key.id,
