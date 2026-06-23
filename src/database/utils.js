@@ -674,6 +674,26 @@ function setNewsState(key, value) {
     }
 }
 
+function clearNewsState(key) {
+    try {
+        db.prepare('DELETE FROM news_state WHERE key = ?').run(key);
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao limpar news_state:', e.message);
+        return false;
+    }
+}
+
+function clearAllNewsState() {
+    try {
+        db.prepare('DELETE FROM news_state').run();
+        return true;
+    } catch (e) {
+        console.error('❌ Falha ao limpar todo news_state:', e.message);
+        return false;
+    }
+}
+
 // ============================================================
 // Dashboard Logs (persistente em SQLite)
 // Esquema:
@@ -1676,7 +1696,7 @@ module.exports = {
     isMuted, addMuted, removeMuted, listMuted, clearMuted,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,
-    getNewsState, setNewsState,
+    getNewsState, setNewsState, clearNewsState, clearAllNewsState,
     canAdminControl,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
     updateDashboardLogReactions, clearDashboardLogs, getDashboardLogByMessageId,

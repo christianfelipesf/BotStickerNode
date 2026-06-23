@@ -105,7 +105,7 @@ function parseRssItems(xml) {
         const id = idFromRedditUrl(link) || stripHtml(idRaw);
         if (!id) continue;
 
-        const media = extractMedia(body);
+        const media = extractMedia(body, link);
         const selftext = extractSelftext(body);
 
         items.push({
@@ -126,7 +126,7 @@ function idFromRedditUrl(url) {
     return m ? m[1] : '';
 }
 
-function extractMedia(body) {
+function extractMedia(body, link = '') {
     let thumbnail = '';
     let contentHtml = '';
     let directImage = '';
