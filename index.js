@@ -35,6 +35,9 @@ initLogger();
 // --- Configuração Global ---
 const config = readConfig();
 
+// Expõe serviços para que comandos (ex: set.js) possam controlá-los em runtime.
+global.__botServices = { news, dashboard };
+
 // Iniciar Dashboard (Modular) - totalmente isolado
 try {
     dashboard.init(config);
@@ -103,7 +106,15 @@ async function startBot() {
 
     try { dashboard.attachSock(sock); } catch (_) {}
     try { dashboard.pushGroupsSnapshot(); } catch (_) {}
-    try { news.attachSock(sock); news.start(); } catch (_) {}
+    try {
+        const curCfg = readConfig();
+        if (curCfg.newsEnabled !== false) {
+            news.attachSock(sock);
+            news.start();
+        } else {
+            console.log('📰 [news] desativado pela config (newsEnabled=false).');
+        }
+    } catch (_) {}
 
     sock.ev.on('creds.update', saveCreds);
 

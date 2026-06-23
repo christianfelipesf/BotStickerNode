@@ -28,7 +28,7 @@ module.exports = {
             }
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
-            else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle') config[p] = v.toLowerCase() === 'true';
+            else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle') config[p] = v.toLowerCase() === 'true';
             else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsPollIntervalMs' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
             else if (p === 'newsSubreddits') {
                 const raw = String(v || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
@@ -57,7 +57,24 @@ module.exports = {
             // Refresh local config and AI
             const newConfig = readConfig();
             setupAI(newConfig);
-            
+
+            // Controle runtime do news (start/stop sem reiniciar o bot).
+            if (p === 'newsEnabled') {
+                const svc = (typeof global !== 'undefined' && global.__botServices && global.__botServices.news) || null;
+                if (svc) {
+                    try {
+                        if (newConfig.newsEnabled === false) {
+                            svc.stop();
+                        } else {
+                            svc.stop();
+                            svc.start();
+                        }
+                    } catch (e) {
+                        console.error('[set] falha ao alternar news:', e?.message || e);
+                    }
+                }
+            }
+
             let currentBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
             await sock.sendMessage(from, { text: `✅ *${p}* atualizado!` }, { quoted: m });
             return currentBotResponse;
