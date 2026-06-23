@@ -539,7 +539,6 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     // Se é post de vídeo mas não temos URL direta, busca via JSON API.
     // (post.isVideoPost OU media.isVideoPost — `isVideoPost` é colocado dentro
     // de media pelo extractMedia.)
-    const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
     if (isVideoPostFlag && post.id) {
         if (!media.video || !isVideoUrl(media.video)) {
             const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
