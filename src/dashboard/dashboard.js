@@ -29,6 +29,31 @@ const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
 let logsTrimTimer = null;
 
+const INFO_TXT_PATH = path.join(__dirname, '..', '..', 'info.txt');
+let infoTxtCache = { content: '', mtimeMs: 0, exists: false };
+const INFO_TXT_TTL_MS = 5000;
+let infoTxtLoadedAt = 0;
+
+function loadInfoTxt({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && now - infoTxtLoadedAt < INFO_TXT_TTL_MS && infoTxtLoadedAt > 0) {
+        return infoTxtCache;
+    }
+    try {
+        const stat = fs.statSync(INFO_TXT_PATH);
+        if (!force && stat.mtimeMs === infoTxtCache.mtimeMs && infoTxtLoadedAt > 0) {
+            infoTxtLoadedAt = now;
+            return infoTxtCache;
+        }
+        const raw = fs.readFileSync(INFO_TXT_PATH, 'utf8');
+        infoTxtCache = { content: raw, mtimeMs: stat.mtimeMs, exists: true, size: stat.size };
+    } catch (_) {
+        infoTxtCache = { content: '', mtimeMs: 0, exists: false, size: 0 };
+    }
+    infoTxtLoadedAt = now;
+    return infoTxtCache;
+}
+
 const mediaCache = new Map();
 const MAX_CACHE = 30;
 
@@ -242,6 +267,21 @@ function init(config) {
         }
     });
     app.get('/api/health', (req, res) => res.json({ ok: !!sockRef }));
+    app.get('/api/info', (req, res) => {
+        try {
+            const force = req.query && (req.query.fresh === '1' || req.query.reload === '1');
+            const data = loadInfoTxt({ force: !!force });
+            res.json({
+                ok: true,
+                exists: !!data.exists,
+                content: data.content || '',
+                mtimeMs: data.mtimeMs || 0,
+                size: data.size || 0
+            });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: `Endpoint nao encontrado: ${req.path}` }));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => res.type('javascript').sendFile(path.join(__dirname, 'dashboard-client.js')));

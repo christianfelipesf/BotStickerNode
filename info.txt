@@ -6,3 +6,152 @@
 
 -- O SCRIPT É UPADO NA GITHUB E RODA NA VPS LINUX
 
+Objetivo: Redesenhar completamente a interface mobile e desktop do monitor do bot, inspirando-se na experiência do WhatsApp Web, Telegram e Discord, com foco em usabilidade, responsividade e aproveitamento de espaço.
+
+DESKTOP
+
+Substituir o layout atual por um sistema de 3 colunas:
+
+* Coluna esquerda: Lista de conversas/grupos.
+* Coluna central: Área principal de mensagens.
+* Coluna direita: Painel de monitoramento e estatísticas do bot.
+
+Estrutura desejada:
+
+┌────────┬──────────────────────┬─────────┐
+│ Chats  │       Mensagens      │ Status  │
+│        │                      │         │
+│ Grupo1 │                      │ CPU     │
+│ Grupo2 │                      │ RAM     │
+│ Grupo3 │                      │ Uptime  │
+│        │                      │ Logs    │
+└────────┴──────────────────────┴─────────┘
+
+Requisitos da coluna de chats:
+
+* Barra de pesquisa fixa.
+* Avatar do grupo.
+* Nome do grupo.
+* Quantidade de mensagens.
+* Indicador de atividade recente.
+* Destaque visual para conversa selecionada.
+
+Requisitos da área de mensagens:
+
+* Ocupar a maior parte da tela.
+* Mensagens centralizadas visualmente.
+* Balões maiores e mais modernos.
+* Melhor aproveitamento do espaço horizontal.
+* Campo de envio fixo no rodapé.
+* Scroll suave.
+* Layout semelhante ao WhatsApp Web.
+
+Requisitos do painel de status:
+
+* CPU.
+* RAM.
+* Uptime.
+* Quantidade de grupos.
+* Quantidade de mensagens processadas.
+* Logs recentes.
+* Possibilidade de recolher/expandir.
+
+VISUAL
+
+Misturar elementos visuais do Discord e WhatsApp:
+
+* Sidebar escura.
+* Área de conversa limpa.
+* Indicadores coloridos de status.
+* Cards modernos.
+* Bordas suaves.
+* Cantos arredondados.
+
+Utilizar:
+
+border-radius: 12px;
+
+Paleta recomendada:
+
+* Fundo principal: #111b21
+* Sidebar: #0b141a
+* Cards: #202c33
+* Verde de destaque: #25d366
+* Azul para ações e informações.
+
+MOBILE
+
+Não utilizar o layout de 3 colunas.
+
+Implementar navegação em telas, semelhante ao WhatsApp e Telegram.
+
+Tela 1 — Lista de Conversas
+
+Conversas
+──────────────
+Grupo A
+Grupo B
+Grupo C
+
+Características:
+
+* Barra de pesquisa.
+* Avatar dos grupos.
+* Contador de mensagens.
+* Rolagem otimizada.
+
+Ao tocar em uma conversa:
+
+Tela 2 — Conversa
+
+← Grupo A
+
+mensagem
+mensagem
+mensagem
+
+──────────────
+[ Digite uma mensagem ]
+
+Características:
+
+* Cabeçalho fixo.
+* Área de mensagens em tela cheia.
+* Campo de envio fixo no rodapé.
+* Navegação por botão voltar.
+
+Tela 3 — Estatísticas
+
+Acessível por:
+
+* Menu lateral.
+* Botão flutuante.
+* Aba inferior.
+
+Exibir:
+
+* CPU.
+* RAM.
+* Uptime.
+* Logs.
+* Informações do bot.
+
+RESPONSIVIDADE
+
+Desktop:
+
+* 3 colunas.
+* Painel de status visível.
+
+Tablet:
+
+* Painel de status recolhível.
+
+Mobile:
+
+* Navegação por telas.
+* Apenas uma tela visível por vez.
+* Sem múltiplas colunas simultâneas.
+
+Objetivo final:
+Criar uma interface moderna, profissional, rápida e responsiva para monitoramento de bot Node.js, inspirada em WhatsApp Web, Telegram e Discord, com excelente experiência tanto no desktop quanto no celular.

@@ -489,3 +489,78 @@ socket.on('reset', () => {
 
 // Abrir direto no chat "Todos" ao carregar a página
 selectAllChat();
+
+// --- info.txt (painel de instruções) ---
+const infoOverlay = document.getElementById('infoOverlay');
+const infoBody = document.getElementById('infoBody');
+const infoMeta = document.getElementById('infoMeta');
+let infoLoaded = false;
+
+function fmtBytes(n) {
+    if (!n && n !== 0) return '0 B';
+    const u = ['B','KB','MB','GB'];
+    let i = 0; let v = n;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${u[i]}`;
+}
+
+function fmtTs(ms) {
+    if (!ms) return '—';
+    try { return new Date(ms).toLocaleString('pt-BR'); } catch (_) { return '—'; }
+}
+
+async function loadInfo({ force = false } = {}) {
+    if (!infoBody) return;
+    infoMeta.textContent = 'carregando…';
+    try {
+        const qs = force ? '?fresh=1' : '';
+        const res = await fetch('/api/info' + qs, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'falha');
+        if (!data.exists) {
+            infoBody.textContent = '(info.txt não encontrado na raiz do projeto)';
+            infoMeta.textContent = 'arquivo ausente';
+            infoLoaded = true;
+            return;
+        }
+        infoBody.textContent = data.content || '(vazio)';
+        infoMeta.textContent = `${fmtBytes(data.size)} • atualizado ${fmtTs(data.mtimeMs)}`;
+        infoLoaded = true;
+    } catch (e) {
+        infoMeta.textContent = 'erro ao carregar: ' + (e && e.message || e);
+        infoBody.textContent = '';
+    }
+}
+
+function openInfo() {
+    if (!infoOverlay) return;
+    infoOverlay.classList.add('show');
+    infoOverlay.setAttribute('aria-hidden', 'false');
+    if (!infoLoaded) loadInfo({ force: false });
+    setTimeout(() => { try { infoBody.scrollTop = 0; } catch (_) {} }, 30);
+}
+
+function closeInfo() {
+    if (!infoOverlay) return;
+    infoOverlay.classList.remove('show');
+    infoOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function reloadInfo() {
+    loadInfo({ force: true }).then(() => {
+        try { showToast('🔄 info.txt recarregado'); } catch (_) {}
+    });
+}
+
+window.openInfo = openInfo;
+window.closeInfo = closeInfo;
+window.reloadInfo = reloadInfo;
+
+if (infoOverlay) {
+    infoOverlay.addEventListener('click', (e) => {
+        if (e.target === infoOverlay) closeInfo();
+    });
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && infoOverlay && infoOverlay.classList.contains('show')) closeInfo();
+});
