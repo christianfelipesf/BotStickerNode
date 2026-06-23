@@ -838,11 +838,27 @@ async function pollOnce() {
     }
 }
 
+// Lê newsPollIntervalMinutes (em minutos) e retorna ms.
+// Aceita número simples (45 = 45 min), ou string com sufixo ("45m", "1h", "60s", "2700000ms").
 function parseIntervalMs(v) {
+    if (v == null) return 15 * 60 * 1000;
+    if (typeof v === 'string') {
+        const m = String(v).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/);
+        if (m) {
+            const num = parseFloat(m[1]);
+            const unit = m[2] || 'm';
+            if (unit === 'ms') return Math.round(num);
+            if (unit === 's') return Math.round(num * 1000);
+            if (unit === 'm') return Math.round(num * 60 * 1000);
+            if (unit === 'h') return Math.round(num * 60 * 60 * 1000);
+        }
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) return n;
+        return 15 * 60 * 1000;
+    }
     const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) return 5 * 60 * 1000;
-    if (n < 1000) return n * 1000;
-    return n;
+    if (!Number.isFinite(n) || n <= 0) return 15 * 60 * 1000;
+    return Math.round(n * 60 * 1000);
 }
 
 function start() {
@@ -851,7 +867,7 @@ function start() {
     sendQueue.length = 0;
     isProcessing = false;
     const cfg = readConfig();
-    const ms = Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMs));
+    const ms = Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMinutes));
     pollTimer = setInterval(() => {
         pollOnce().catch(e => newsErr(`poll: ${e?.message || e}`));
     }, ms);

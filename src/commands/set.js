@@ -29,7 +29,25 @@ module.exports = {
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
             else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle') config[p] = v.toLowerCase() === 'true';
-            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsPollIntervalMs' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
+            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
+            else if (p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs') {
+                // Aceita: "45" (minutos), "45m", "60s", "1h", "2700000ms" ou ms puro.
+                // Mantém compat com o nome antigo newsPollIntervalMs.
+                const m = String(v || '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/);
+                if (!m) {
+                    await sock.sendMessage(from, { text: `❌ Formato inválido. Use: ${config.prefix}set newsPollIntervalMinutes 45m  (ou 60s, 1h)` }, { quoted: m });
+                    return lastBotResponse;
+                }
+                const num = parseFloat(m[1]);
+                const unit = m[2] || 'm';
+                let totalMs;
+                if (unit === 'ms') totalMs = Math.round(num);
+                else if (unit === 's') totalMs = Math.round(num * 1000);
+                else if (unit === 'm') totalMs = Math.round(num * 60 * 1000);
+                else if (unit === 'h') totalMs = Math.round(num * 60 * 60 * 1000);
+                // Compat: se usuário usou o nome antigo, mantém ms; senão grava em ms também.
+                config[p] = totalMs;
+            }
             else if (p === 'newsSubreddits') {
                 const raw = String(v || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
                 const seen = new Set();
@@ -67,19 +85,18 @@ module.exports = {
             setupAI(newConfig);
 
             // Controle runtime do news (start/stop sem reiniciar o bot).
-            if (p === 'newsEnabled') {
+            // Aplica em mudanças de newsEnabled OU newsPollIntervalMinutes OU newsSubreddits.
+            if (p === 'newsEnabled' || p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs' || p === 'newsSubreddits') {
                 const svc = (typeof global !== 'undefined' && global.__botServices && global.__botServices.news) || null;
-                if (svc) {
+                if (svc && newConfig.newsEnabled !== false) {
                     try {
-                        if (newConfig.newsEnabled === false) {
-                            svc.stop();
-                        } else {
-                            svc.stop();
-                            svc.start();
-                        }
+                        svc.stop();
+                        svc.start();
                     } catch (e) {
-                        console.error('[set] falha ao alternar news:', e?.message || e);
+                        console.error('[set] falha ao reiniciar news:', e?.message || e);
                     }
+                } else if (svc && newConfig.newsEnabled === false) {
+                    try { svc.stop(); } catch (e) { console.error('[set] stop news:', e?.message || e); }
                 }
             }
 

@@ -137,7 +137,7 @@ const DEFAULT_CONFIG = {
     adminCanControl: false,
     clearDefaultLimit: 10,
     newsSubreddits: ['ShitpostBR', 'pics'],
-    newsPollIntervalMs: 15 * 60 * 1000,
+    newsPollIntervalMinutes: 15,
     newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     newsSendDelayMs: 8000,
     newsFetchStaggerMs: 30000,
