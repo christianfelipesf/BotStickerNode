@@ -26,7 +26,7 @@ function toast(m,ms=2200){toastEl.textContent=m;toastEl.classList.add('show');cl
 function play(a){if(soundEnabled&&a)try{a.currentTime=0;a.play().catch(()=>{})}catch(_){}}
 
 /* ========== Tema / som / push ========== */
-function setTheme(t){document.documentElement.setAttribute('data-theme',t==='oled'?'dark':t);localStorage.setItem('wa_theme',t)}
+function setTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('wa_theme',t)}
 setTheme(localStorage.getItem('wa_theme')||'dark');
 if(soundEnabled){notifBtn.innerText='SOM ON';notifBtn.classList.add('active')}
 if(pushEnabled){pushBtn.innerText='PUSH ON';pushBtn.classList.add('active')}
