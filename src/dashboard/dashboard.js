@@ -21,6 +21,7 @@ const {
 let ioServer = null;
 let sockRef = null;
 let groupsApi = null;
+let httpServer = null;
 const MAX_LOGS = 200;
 const HISTORY_SEND_LIMIT = 100;
 const groupInfoCache = new Map();
@@ -266,7 +267,12 @@ function init(config) {
     });
 
     try {
-        server.listen(port, '0.0.0.0', () => console.log(`[dashboard] ativo em http://localhost:${port}`));
+        httpServer = server;
+        const publicUrl = String(config?.dashboardUrl || '').replace(/\/+$/, '');
+        server.listen(port, '0.0.0.0', () => {
+            console.log(`[dashboard] ativo em http://localhost:${port}`);
+            if (publicUrl) console.log(`[dashboard] url pública: ${publicUrl}`);
+        });
         groupsRefreshTimer = setInterval(() => {
             pushGroupsSnapshot({ force: false }).catch(() => {});
         }, 10 * 60 * 1000);
@@ -584,9 +590,29 @@ function resetDashboard() {
     return { removedLogs, newLimit: currentMaxLogs };
 }
 
+function stop() {
+    return new Promise((resolve) => {
+        let pending = 0;
+        if (ioServer) {
+            pending++;
+            try { ioServer.close(() => { pending--; if (pending === 0) resolve(); }); } catch (_) { pending--; }
+        }
+        if (httpServer) {
+            pending++;
+            try { httpServer.close(() => { pending--; if (pending === 0) resolve(); }); } catch (_) { pending--; }
+        }
+        if (groupsRefreshTimer) { try { clearInterval(groupsRefreshTimer); groupsRefreshTimer = null; } catch (_) {} }
+        if (logsTrimTimer) { try { clearInterval(logsTrimTimer); logsTrimTimer = null; } catch (_) {} }
+        ioServer = null;
+        httpServer = null;
+        if (pending === 0) resolve();
+        else setTimeout(resolve, 2000);
+    });
+}
+
 module.exports = {
     init, log, attachSock, cacheMedia,
     setGroupsApi, pushGroupsSnapshot, rememberGroupInfo,
     handleReaction,
-    resetDashboard, setMaxLogs
+    resetDashboard, setMaxLogs, stop
 };

@@ -51,6 +51,14 @@ module.exports = {
                 }
                 config[p] = out;
             }
+            else if (p === 'dashboardUrl') {
+                const u = String(v || '').trim();
+                if (!/^https?:\/\/.+/i.test(u)) {
+                    await sock.sendMessage(from, { text: `❌ URL inválida. Use o formato: ${config.prefix}set dashboardUrl https://seu-dominio.com` }, { quoted: m });
+                    return lastBotResponse;
+                }
+                config[p] = u.replace(/\/+$/, '');
+            }
             else config[p] = v;
             
             writeConfig(config);

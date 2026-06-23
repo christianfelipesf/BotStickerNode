@@ -120,6 +120,7 @@ const DEFAULT_CONFIG = {
     botName: "BotSticker",
     prefix: "!",
     newsEnabled: true,
+    dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
     geminiModel: "gemini-1.5-flash",
