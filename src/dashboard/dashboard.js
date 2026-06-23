@@ -1,5 +1,6 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const express = require('express');
 const { Server } = require('socket.io');
@@ -29,31 +30,6 @@ const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
 let logsTrimTimer = null;
 
-const INFO_TXT_PATH = path.join(__dirname, '..', '..', 'info.txt');
-let infoTxtCache = { content: '', mtimeMs: 0, exists: false };
-const INFO_TXT_TTL_MS = 5000;
-let infoTxtLoadedAt = 0;
-
-function loadInfoTxt({ force = false } = {}) {
-    const now = Date.now();
-    if (!force && now - infoTxtLoadedAt < INFO_TXT_TTL_MS && infoTxtLoadedAt > 0) {
-        return infoTxtCache;
-    }
-    try {
-        const stat = fs.statSync(INFO_TXT_PATH);
-        if (!force && stat.mtimeMs === infoTxtCache.mtimeMs && infoTxtLoadedAt > 0) {
-            infoTxtLoadedAt = now;
-            return infoTxtCache;
-        }
-        const raw = fs.readFileSync(INFO_TXT_PATH, 'utf8');
-        infoTxtCache = { content: raw, mtimeMs: stat.mtimeMs, exists: true, size: stat.size };
-    } catch (_) {
-        infoTxtCache = { content: '', mtimeMs: 0, exists: false, size: 0 };
-    }
-    infoTxtLoadedAt = now;
-    return infoTxtCache;
-}
-
 const mediaCache = new Map();
 const MAX_CACHE = 30;
 
@@ -82,6 +58,36 @@ function attachSock(sock) {
 }
 
 function setGroupsApi(api) { groupsApi = api; }
+
+let processStartTime = Date.now();
+let cpuUsage = { user: 0, system: 0 };
+let lastCpuSnapshot = null;
+
+function setStartTime(ts) {
+    if (Number.isFinite(ts) && ts > 0) processStartTime = ts;
+}
+
+function readCpuUsage() {
+    const cpus = os.cpus();
+    let user = 0, sys = 0, idle = 0, total = 0;
+    for (const c of cpus) {
+        const t = c.times || {};
+        user += t.user || 0;
+        sys += t.sys || 0;
+        idle += t.idle || 0;
+        total += (t.user || 0) + (t.nice || 0) + (t.sys || 0) + (t.idle || 0) + (t.irq || 0);
+    }
+    if (lastCpuSnapshot && total > lastCpuSnapshot.total) {
+        const dTotal = total - lastCpuSnapshot.total;
+        const dIdle = idle - lastCpuSnapshot.idle;
+        const usedPct = dTotal > 0 ? Math.max(0, Math.min(100, ((dTotal - dIdle) / dTotal) * 100)) : 0;
+        cpuUsage = { userPct: usedPct, cores: cpus.length };
+    } else {
+        cpuUsage = { userPct: 0, cores: cpus.length };
+    }
+    lastCpuSnapshot = { user, sys, idle, total };
+    return cpuUsage;
+}
 
 function isValidGroupJid(jid) {
     return typeof jid === 'string'
@@ -267,16 +273,69 @@ function init(config) {
         }
     });
     app.get('/api/health', (req, res) => res.json({ ok: !!sockRef }));
-    app.get('/api/info', (req, res) => {
+    app.get('/api/system', (req, res) => {
         try {
-            const force = req.query && (req.query.fresh === '1' || req.query.reload === '1');
-            const data = loadInfoTxt({ force: !!force });
+            const totalMem = os.totalmem();
+            const freeMem = os.freemem();
+            const usedMem = totalMem - freeMem;
+            const mem = {
+                totalBytes: totalMem,
+                usedBytes: usedMem,
+                freeBytes: freeMem,
+                usedPct: totalMem > 0 ? (usedMem / totalMem) * 100 : 0
+            };
+            const cpu = readCpuUsage();
+            const procMem = process.memoryUsage();
+            const proc = {
+                rssBytes: procMem.rss || 0,
+                heapUsedBytes: procMem.heapUsed || 0,
+                heapTotalBytes: procMem.heapTotal || 0
+            };
+            const upMs = Date.now() - processStartTime;
+            const days = Math.floor(upMs / (24 * 3600 * 1000));
+            const hrs = Math.floor((upMs % (24 * 3600 * 1000)) / 3600000);
+            const mins = Math.floor((upMs % 3600000) / 60000);
+            const secs = Math.floor((upMs % 60000) / 1000);
+            const uptimeStr = `${days}d ${hrs}h ${mins}m ${secs}s`;
+
+            let totalGroups = 0;
+            let activeGroups = 0;
+            let partialGroups = 0;
+            let totalCommands = 0;
+            let totalRestarts = 0;
+            try {
+                const utils = require('../database/utils');
+                totalCommands = (utils.readStats() || {}).totalCommands || 0;
+                totalRestarts = (utils.readStats() || {}).restarts || 0;
+                const ag = (utils.listActiveGroups() || []).length;
+                const pg = (utils.listPartialGroups() || []).length;
+                activeGroups = ag;
+                partialGroups = pg;
+                totalGroups = ag + pg;
+            } catch (_) {}
+
             res.json({
                 ok: true,
-                exists: !!data.exists,
-                content: data.content || '',
-                mtimeMs: data.mtimeMs || 0,
-                size: data.size || 0
+                host: os.hostname(),
+                platform: os.platform(),
+                arch: os.arch(),
+                cpus: os.cpus().length,
+                cpuModel: (os.cpus()[0] || {}).model || 'unknown',
+                nodeVersion: process.version,
+                pid: process.pid,
+                uptimeMs: upMs,
+                uptimeStr,
+                cpu,
+                memory: mem,
+                process: proc,
+                bot: {
+                    connected: !!sockRef,
+                    totalGroups,
+                    activeGroups,
+                    partialGroups,
+                    totalCommands,
+                    totalRestarts
+                }
             });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -653,6 +712,7 @@ function stop() {
 module.exports = {
     init, log, attachSock, cacheMedia,
     setGroupsApi, pushGroupsSnapshot, rememberGroupInfo,
+    setStartTime,
     handleReaction,
     resetDashboard, setMaxLogs, stop
 };

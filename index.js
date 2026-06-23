@@ -81,6 +81,7 @@ try {
 } catch (e) {}
 
 const startTime = Date.now();
+try { dashboard.setStartTime(startTime); } catch (_) {}
 const _restartNumber = incrementRestart();
 try {
     const utils = require('./src/database/utils');
