@@ -20,15 +20,15 @@ function run(cmd) {
 }
 
 async function getGitInfo() {
-    const [branch, short, status] = await Promise.all([
+    const [branch, short, subject] = await Promise.all([
         run('git rev-parse --abbrev-ref HEAD'),
         run('git rev-parse --short HEAD'),
-        run('git status --porcelain')
+        run('git log -1 --pretty=%s')
     ]);
     return {
         branch: branch.out || '?',
         short: short.out || '?',
-        dirty: status.out.trim().length > 0
+        subject: subject.out || ''
     };
 }
 
@@ -44,12 +44,19 @@ module.exports = {
         }
         await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
 
-        const info = await getGitInfo();
+        const before = await getGitInfo();
         const r = await run('git pull');
         const ok = r.ok;
+        const after = ok ? await getGitInfo() : before;
+        const pulled = ok && before.short !== after.short;
+        const beforeLabel = (before.subject || before.short).split('\n')[0].trim();
+        const afterLabel = (after.subject || after.short).split('\n')[0].trim();
+        const commitLine = pulled
+            ? `🔖 \`${before.subject ? beforeLabel : before.short}\` ➜ \`${afterLabel}\``
+            : `🔖 \`${afterLabel}\` (sem alteração)`;
         const txt = ok
-            ? `✅ Atualizado!\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${r.out || 'Sem alterações.'}`
-            : `❌ Falha no git pull\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${r.err || r.out || 'erro'}`;
+            ? `✅ Atualizado!\n🌿 ${after.branch}\n${commitLine}`
+            : `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${r.err || r.out || 'erro'}`;
         await sock.sendMessage(from, { text: txt }, { quoted: m });
         return await react(sock, m, ok ? '✅' : '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }

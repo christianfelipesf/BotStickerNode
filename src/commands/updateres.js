@@ -20,15 +20,15 @@ function run(cmd) {
 }
 
 async function getGitInfo() {
-    const [branch, short, status] = await Promise.all([
+    const [branch, short, subject] = await Promise.all([
         run('git rev-parse --abbrev-ref HEAD'),
         run('git rev-parse --short HEAD'),
-        run('git status --porcelain')
+        run('git log -1 --pretty=%s')
     ]);
     return {
         branch: branch.out || '?',
         short: short.out || '?',
-        dirty: status.out.trim().length > 0
+        subject: subject.out || ''
     };
 }
 
@@ -44,14 +44,21 @@ module.exports = {
         }
         await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
 
-        const info = await getGitInfo();
+        const before = await getGitInfo();
         const pull = await run('git pull');
         if (!pull.ok) {
-            await sock.sendMessage(from, { text: `❌ Falha no git pull\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${pull.err || pull.out || 'erro'}` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${pull.err || pull.out || 'erro'}` }, { quoted: m });
             return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        const txt = `✅ Atualizado e reiniciando!\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${pull.out || 'Sem alterações.'}`;
+        const after = await getGitInfo();
+        const pulled = before.short !== after.short;
+        const beforeLabel = (before.subject || before.short).split('\n')[0].trim();
+        const afterLabel = (after.subject || after.short).split('\n')[0].trim();
+        const commitLine = pulled
+            ? `🔖 \`${before.subject ? beforeLabel : before.short}\` ➜ \`${afterLabel}\``
+            : `🔖 \`${afterLabel}\` (sem alteração)`;
+        const txt = `✅ Atualizado e reiniciando!\n🌿 ${after.branch}\n${commitLine}`;
         await sock.sendMessage(from, { text: txt }, { quoted: m });
         await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
 
