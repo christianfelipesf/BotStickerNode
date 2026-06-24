@@ -186,11 +186,11 @@ const DEFAULT_CONFIG = {
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
-    geminiModel: "gemini-1.5-flash",
+    geminiModel: "gemini-3.1-flash-lite",
     summaryLimit: 20,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
-    stickerPack: "BotStickerNode",
+    stickerPack: "Antigravity Bot",
     stickerAuthor: "Bot",
     geminiApiKey: "AQ.Ab8RN6Jmde0aO8GI6R8Me_sxO4OO7DzECVb5l9Lyz0MCQ6sn6g",
     dashboardEnabled: true,
@@ -1943,5 +1943,7 @@ module.exports = {
     clearDashboardLogs, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     flushNow,
-    checkpointWal
+    checkpointWal,
+    DEFAULT_CONFIG,
+    getDefaultConfig: () => ({ ...DEFAULT_CONFIG })
 };

@@ -17,10 +17,51 @@ module.exports = {
         const v = args.slice(1).join(' ');
         
         if (!p) {
-            await sock.sendMessage(from, { text: `❌ Use: ${config.prefix}set <parâmetro> <valor>` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Use: ${config.prefix}set <parâmetro> <valor>\n💡 Veja todas as opções: \`${config.prefix}set help\`` }, { quoted: m });
             return lastBotResponse;
         }
         
+        if (p === 'help' || p === 'list' || p === '?') {
+            const defaults = (typeof utils.getDefaultConfig === 'function')
+                ? utils.getDefaultConfig()
+                : (() => {
+                    try { return require('../database/utils').DEFAULT_CONFIG; } catch (_) { return null; }
+                })();
+            if (!defaults) {
+                await sock.sendMessage(from, { text: '❌ Não foi possível carregar a lista de configurações.' }, { quoted: m });
+                return lastBotResponse;
+            }
+
+            const typeOf = (val) => {
+                if (Array.isArray(val)) return 'array';
+                if (typeof val === 'number') return Number.isInteger(val) ? 'inteiro' : 'número';
+                if (typeof val === 'boolean') return 'booleano';
+                if (typeof val === 'string') return 'texto';
+                return typeof val;
+            };
+
+            const allKeys = Object.keys(defaults).sort();
+            const current = config || {};
+            const lines = [`⚙️ *Configurações editáveis (${allKeys.length})*`, ''];
+            for (const k of allKeys) {
+                const def = defaults[k];
+                const t = typeOf(def);
+                const has = Object.prototype.hasOwnProperty.call(current, k) || k === 'prefix';
+                let extra = '';
+                if (t === 'inteiro' || t === 'número') extra = ' (aceita sufixos ms/s/m/h em alguns casos)';
+                else if (t === 'booleano') extra = ' (true/false)';
+                else if (t === 'array') extra = ' (valores separados por vírgula ou espaço)';
+                else if (k === 'dashboardUrl') extra = ' (http(s)://...)';
+                lines.push(`• *${k}* — _${t}_${extra}`);
+            }
+            lines.push('');
+            lines.push(`Uso: \`${config.prefix}set <parâmetro> <valor>\``);
+            lines.push(`Ex.: \`${config.prefix}set botName Antigravity Bot\``);
+            lines.push(`Veja o valor atual: \`${config.prefix}set <parâmetro>\` (sem valor)`);
+            await sock.sendMessage(from, { text: lines.join('\n') }, { quoted: m });
+            return lastBotResponse;
+        }
+
         if (config[p] !== undefined || p === 'prefix') {
             if (!v) {
                 await sock.sendMessage(from, { text: `📝 *${p}* atual: ${config[p]}` }, { quoted: m });
