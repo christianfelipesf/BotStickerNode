@@ -88,6 +88,56 @@
         }).join('');
     }
 
+    async function addFiles(files) {
+        let added = 0;
+        for (let f of Array.from(files || [])) {
+            if (!f) continue;
+            if (f.size > 16 * 1024 * 1024) { toast('Arquivo > 16MB'); continue; }
+            f = await resizeImg(f);
+            const detected = detectType(f);
+            const opts = allowedTypes({ type: f.type });
+            const sendType = (opts[0] ? opts[0].id : detected);
+            const dataUrl = await fileToUrl(f);
+            state.pendingAttachments.push({
+                dataBase64: dataUrl.split(',')[1],
+                detectedType: detected,
+                sendType,
+                type: sendType,
+                mime: f.type,
+                fileName: f.name,
+                previewUrl: dataUrl,
+                ptt: detected === 'audio' && sendType === 'audio'
+            });
+            added++;
+        }
+        if (added) renderAtts();
+    }
+
+    async function handlePaste(e) {
+        const cd = e.clipboardData || window.clipboardData;
+        if (!cd || !cd.items) return;
+        const files = [];
+        for (const it of cd.items) {
+            if (it.kind !== 'file') continue;
+            const blob = it.getAsFile ? it.getAsFile() : null;
+            if (!blob) continue;
+            const t = (blob.type || '').toLowerCase();
+            if (!t.startsWith('image/')) continue;
+            const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+            const ext = (t.split('/')[1] || 'png').replace('jpeg', 'jpg');
+            files.push(new File([blob], `print-${stamp}.${ext}`, { type: blob.type || 'image/png', lastModified: Date.now() }));
+        }
+        if (!files.length) return;
+        e.preventDefault();
+        if (!state.activeJid) { toast('Selecione um grupo'); return; }
+        toast('📋 Imagem colada');
+        await addFiles(files);
+    }
+
+    function bindPaste() {
+        document.addEventListener('paste', handlePaste);
+    }
+
     function bind() {
         const attachBtn = document.getElementById('attachBtn');
         const fileInput = D.refs.fileInput;
@@ -99,28 +149,10 @@
         });
 
         fileInput.addEventListener('change', async () => {
-            for (let f of Array.from(fileInput.files || [])) {
-                if (f.size > 16 * 1024 * 1024) { toast('Arquivo > 16MB'); continue; }
-                f = await resizeImg(f);
-                const detected = detectType(f);
-                const opts = allowedTypes({ type: f.type });
-                const sendType = (opts[0] ? opts[0].id : detected);
-                const dataUrl = await fileToUrl(f);
-                state.pendingAttachments.push({
-                    dataBase64: dataUrl.split(',')[1],
-                    detectedType: detected,
-                    sendType,
-                    type: sendType,
-                    mime: f.type,
-                    fileName: f.name,
-                    previewUrl: dataUrl,
-                    ptt: detected === 'audio' && sendType === 'audio'
-                });
-            }
+            await addFiles(fileInput.files);
             fileInput.value = '';
-            renderAtts();
         });
     }
 
-    D.upload = { bind, renderAtts, changeAttType, removeAtt, detectType };
+    D.upload = { bind, bindPaste, addFiles, renderAtts, changeAttType, removeAtt, detectType };
 })(window.Dashboard = window.Dashboard || {});

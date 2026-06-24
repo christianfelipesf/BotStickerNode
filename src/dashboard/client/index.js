@@ -9,6 +9,7 @@
         // Bind UI handlers
         D.ui.bind();
         D.upload.bind();
+        D.upload.bindPaste();
         D.reply.bind();
         D.socket.bind();
 
