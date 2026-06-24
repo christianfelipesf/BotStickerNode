@@ -36,7 +36,7 @@ module.exports = {
     name: 'update',
     aliases: ['upgrade', 'atualizar', 'atualiza', 'pull', 'updateall'],
     category: 'admin',
-    description: 'Atualiza o bot via git pull (use "all" para sobrescrever alterações locais)',
+    description: 'Roda git pull e reinicia o bot via pm2',
     async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN, fullArgsText, commandName, args }) {
         const { react } = utils;
         if (!isOwner(sock, m, utils)) {
@@ -53,23 +53,11 @@ module.exports = {
             || firstArg === 'all'
             || firstArg === '--all';
 
-        // Reação imediata: o bot entendeu o comando e vai executar
         lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
-        // Emoji da etapa em andamento: baixando atualizações
         lastBotResponse = await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
 
         const before = await getGitInfo();
-        let r;
-        if (allMode) {
-            const fetchR = await run('git fetch --all --prune');
-            const resetR = await run(`git reset --hard origin/${before.branch}`);
-            const cleanR = await run('git clean -fdx');
-            r = (fetchR.ok && resetR.ok)
-                ? { ok: true, out: [fetchR.out, resetR.out, cleanR.out].filter(Boolean).join('\n'), err: null }
-                : { ok: false, out: resetR.out || fetchR.out, err: resetR.err || fetchR.err || cleanR.err };
-        } else {
-            r = await run('git pull');
-        }
+        const r = await run('git pull');
         const ok = r.ok;
         const after = ok ? await getGitInfo() : before;
         const pulled = ok && before.short !== after.short;
@@ -78,15 +66,14 @@ module.exports = {
         const commitLine = pulled
             ? `🔖 \`${before.subject ? beforeLabel : before.short}\` ➜ \`${afterLabel}\``
             : `🔖 \`${afterLabel}\` (sem alteração)`;
-        const head = allMode ? '♻️ Atualizado, reiniciando!' : '✅ Atualizado!';
+        const head = '✅ Atualizado!';
         let txt = ok
-            ? `${head}\n🌿 ${after.branch}\n${commitLine}`
-            : `❌ Falha no git ${allMode ? 'fetch/reset' : 'pull'}\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${r.err || r.out || 'erro'}`;
+            ? `${head}\n🌿 ${after.branch}\n${commitLine}\n🔁 Reiniciando via pm2...`
+            : `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${r.err || r.out || 'erro'}`;
 
-        if (ok && allMode) {
+        if (ok) {
             try {
                 exec('pm2 restart all', { windowsHide: true, detached: true }, () => {});
-                txt += '\n🔁 Reiniciando via pm2...';
             } catch (e) {
                 txt += `\n⚠️ pm2 restart falhou: ${e?.message || e}`;
                 console.error('[update] pm2 restart falhou:', e?.message || e);
