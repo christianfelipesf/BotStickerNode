@@ -841,6 +841,18 @@ function shouldEmit(data) {
 
 function log(type, group, text, name = null, phone = null, media = null, extra = {}) {
     try {
+        // Gera messageId determinístico a partir do conteúdo quando não vier,
+        // para que o UNIQUE INDEX (to_jid, message_id, type) deduplique
+        // logs idênticos (ex.: mensagens de ação geradas em sequência rápida).
+        let messageId = extra.messageId || null;
+        if (!messageId) {
+            const seed = `${type}|${extra.toJid || ''}|${text || ''}|${extra.attachment?.fileName || ''}`;
+            let h = 0;
+            for (let i = 0; i < seed.length; i++) {
+                h = (h * 31 + seed.charCodeAt(i)) | 0;
+            }
+            messageId = 'synthetic-' + (h >>> 0).toString(36);
+        }
         const logData = {
             type,
             group: group || 'Sistema',
@@ -852,7 +864,7 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
             timestamp: Date.now(),
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             toJid: extra.toJid || null,
-            messageId: extra.messageId || null,
+            messageId,
             quoted: extra.quoted || null,
             hidden: !!extra.hidden,
             ephemeral: !!extra.ephemeral,

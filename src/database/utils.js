@@ -68,6 +68,23 @@ try {
     console.error('[database] VACUUM inicial falhou:', e?.message || e);
 }
 
+// Limpa logs de ação órfãos do boot anterior (código antigo do !dump
+// que inseria `dashboard.log('action', ...)` sem messageId, gerando
+// duplicatas que reaparecem a cada reinicialização). Idempotente.
+try {
+    const removed = db.prepare(`
+        DELETE FROM dashboard_logs
+        WHERE message_id IS NULL OR message_id = ''
+    `).run();
+    if (removed.changes > 0) {
+        console.log(`🧹 [database] limpou ${removed.changes} log(s) órfão(s) sem message_id`);
+        try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
+        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+    }
+} catch (e) {
+    console.error('[database] limpeza de órfãos falhou:', e?.message || e);
+}
+
 function checkpointWal() {
     // TRUNCATE: faz checkpoint E zera o arquivo bot.db-wal após sucesso.
     // Mais agressivo que PASSIVE mas ainda leve (não espera leitores).
