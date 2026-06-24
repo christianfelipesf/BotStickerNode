@@ -57,8 +57,29 @@ function reactionsHtml(rx){if(!rx||!Object.keys(rx).length)return'';const em=Arr
 function quotedHtml(q){const n=esc(q.name||(q.phone?'@'+q.phone:'Mensagem'));const inn=q.text?`<div class="msg-quote-text">${esc(q.text)}</div>`:q.hasMedia?`<div class="msg-quote-text">📎 Mídia</div>`:'';return`<div class="msg-quote"><div class="msg-quote-name">${n}</div>${inn}</div>`}
 function mediaHtml(m){if(!m)return'';if(m.type==='image')return`<div class="msg-media"><img src="${esc(m.url)}" loading="lazy"></div>`;if(m.type==='video')return`<div class="msg-media"><video src="${esc(m.url)}" controls></video></div>`;if(m.type==='audio')return`<div class="msg-media"><audio src="${esc(m.url)}" controls></audio></div>`;if(m.type==='sticker')return`<div class="msg-media"><img src="${esc(m.url)}" style="width:140px;height:140px;"></div>`;if(m.type==='document')return`<div class="msg-media"><a class="msg-doc" href="${esc(m.url)}" download="${esc(m.fileName||'arquivo')}"><span class="msg-doc-icon">📎</span><span class="msg-doc-info"><span class="msg-doc-name">${esc(m.fileName||'arquivo')}</span><span class="msg-doc-meta">${esc(m.mime||'')} · ${Math.max(1,Math.round((m.sizeBytes||0)/1024))} KB</span></span><span class="msg-doc-dl">Baixar</span></a></div>`;return''}
 function attachmentHtml(a){if(!a||!a.fileName)return'';return mediaHtml({type:'document',url:a.downloadUrl||`/api/files/download/${encodeURIComponent(a.fileName)}?dir=temp`,fileName:a.fileName,mime:a.mime||'',sizeBytes:a.sizeBytes||0})}
-function msgHtml(d){const ds=new Date(d.timestamp||Date.now()).toLocaleDateString();let daySep='';if(ds!==lastDate){daySep=`<div class="msg-day-sep">${esc(ds===new Date().toLocaleDateString()?'Hoje':ds)}</div>`;lastDate=ds}if((d.type==='action'||d.type==='error')&&!d.attachment){play(d.type==='error'?soundError:soundAction);return daySep+`<div class="msg-system ${d.type==='error'?'msg-error':''}">${esc(d.text||'')}</div>`}const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const att=d.attachment?attachmentHtml(d.attachment):'';const rx=reactionsHtml(d.reactions);const note=d.type==='action'?`<div class="msg-system-inline">${esc(d.text||'')}</div>`:'';return daySep+`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" onclick="openReply(this)" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${note}${m}${att}${d.text&&d.type!=='action'?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`}
+function msgHtml(d){const ds=new Date(d.timestamp||Date.now()).toLocaleDateString();let daySep='';if(ds!==lastDate){daySep=`<div class="msg-day-sep">${esc(ds===new Date().toLocaleDateString()?'Hoje':ds)}</div>`;lastDate=ds}if((d.type==='action'||d.type==='error')&&!d.attachment){play(d.type==='error'?soundError:soundAction);return daySep+`<div class="msg-system ${d.type==='error'?'msg-error':''}">${esc(d.text||'')}</div>`}return daySep+msgBubbleHtml(d)}
+function msgBubbleHtml(d){const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const att=d.attachment?attachmentHtml(d.attachment):'';const rx=reactionsHtml(d.reactions);const note=d.type==='action'?`<div class="msg-system-inline">${esc(d.text||'')}</div>`:'';return`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" onclick="openReply(this)" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${note}${m}${att}${d.text&&d.type!=='action'?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`}
 function append(d){chat.insertAdjacentHTML('beforeend',msgHtml(d));play(soundChat)}
+function rerenderOne(messageId){
+    const el=document.querySelector(`.msg-bubble[data-mid="${CSS.escape(messageId)}"]`);
+    if(!el) return;
+    const tj=el.dataset.tj;
+    const list=(msgsByJid[tj]||[]);
+    const d=list.find(x=>x.messageId===messageId);
+    if(!d) return;
+    const wrapper=el.closest('.msg-wrapper');
+    if(!wrapper) return;
+    // Salva posição de scroll para não pular
+    const prevHeight=chat.scrollHeight;
+    const prevTop=chat.scrollTop;
+    const tmp=document.createElement('div');
+    tmp.innerHTML=msgBubbleHtml(d).trim();
+    const newWrapper=tmp.firstElementChild;
+    if(!newWrapper) return;
+    wrapper.replaceWith(newWrapper);
+    // Mantém scroll próximo
+    chat.scrollTop=prevTop+(chat.scrollHeight-prevHeight);
+}
 function rerenderBatch(){if(!activeJid)return;lastDate='';chat.innerHTML='';const list=activeJid===ALL?allMsgs():(msgsByJid[activeJid]||[]);if(!list.length)return;const frag=[];for(const d of list)frag.push(msgHtml(d));chat.insertAdjacentHTML('beforeend',frag.join(''));setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30);if(soundEnabled)play(soundChat)}
 window.openReply=el=>{if(!activeJid)return toast('Selecione um grupo');const tj=el.dataset.tj;if(!tj)return toast('Sem identificação de destino');setReply({toJid:tj,messageId:el.dataset.mid,senderJid:el.dataset.sj,fromMe:el.dataset.fm==='1',phone:el.dataset.ph,name:el.dataset.nm,preview:el.dataset.pv||(el.dataset.hm==='1'?'📎 Mídia':''),hasMedia:el.dataset.hm==='1'});messageInput.focus()};
 
@@ -95,7 +116,33 @@ socket.on('history:chunk',h=>{window.__histPending=(window.__histPending||0)+1;c
 socket.on('history:end',()=>{window.__histPending=0});
 socket.on('history',h=>{const seen=new Set();for(const j of Object.keys(msgsByJid))for(const m of msgsByJid[j])if(m.messageId)seen.add(`${m.toJid}|${m.messageId}|${m.type}`);for(const d of(h||[])){if(!d?.toJid)continue;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if(seen.has(k))continue;seen.add(k)}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d)}if(activeJid){rerenderBatch()}renderGroups()});
 socket.on('msg',d=>{if(!d?.toJid)return;if(d.messageId){const k=`${d.toJid}|${d.messageId}|${d.type}`;if((msgsByJid[d.toJid]||[]).some(m=>`${m.toJid}|${m.messageId}|${m.type}`===k))return}(msgsByJid[d.toJid]=msgsByJid[d.toJid]||[]).push(d);if(d.toJid===activeJid||activeJid===ALL){append(d);setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30)}renderGroups()});
-socket.on('reaction',({targetId})=>{const el=document.querySelector(`[data-mid="${targetId}"]`);if(el){const r=el.querySelector('.msg-reactions');if(r)r.remove()}});
+socket.on('reaction',(p)=>{
+    if(!p||!p.targetId) return;
+    // Encontra a mensagem em memória e atualiza o map de reações
+    const targetJid=p.targetJid;
+    const list=msgsByJid[targetJid]||[];
+    const idx=list.findIndex(m=>m.messageId===p.targetId&&m.type===(p.targetType||m.type));
+    if(idx>=0){
+        const updatedReactions=(p.reactions&&typeof p.reactions==='object')?p.reactions:{};
+        list[idx].reactions=Object.keys(updatedReactions).length?updatedReactions:undefined;
+        // Re-renderiza apenas essa bolha (mantém posição de scroll)
+        rerenderOne(p.targetId);
+    }
+    // Fallback: se não achou no array (cliente não tinha essa msg no histórico),
+    // tenta atualizar o DOM direto
+    const el=document.querySelector(`.msg-bubble[data-mid="${CSS.escape(p.targetId)}"]`);
+    if(el){
+        const old=el.querySelector('.msg-reactions');
+        const reactions=(p.reactions&&typeof p.reactions==='object')?p.reactions:null;
+        const newHtml=reactionsHtml(reactions);
+        if(old&&newHtml) old.outerHTML=newHtml;
+        else if(old&&!newHtml) old.remove();
+        else if(!old&&newHtml){
+            const meta=el.querySelector('.msg-meta');
+            if(meta) meta.insertAdjacentHTML('beforebegin',newHtml);
+        }
+    }
+});
 socket.on('connect',()=>{statusEl.innerText='online';statusEl.style.color='var(--g)'});
 socket.on('disconnect',()=>{statusEl.innerText='reconectando…';statusEl.style.color='#ff8182'});
 socket.on('reset',()=>{msgsByJid={};lastDate='';chat.innerHTML='';if(activeJid)rerender();renderGroups();toast('🧹 Dashboard resetado')});

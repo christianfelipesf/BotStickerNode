@@ -903,6 +903,7 @@ function handleReaction(targetId, emoji, senderJid, senderName) {
         const msg = getDashboardLogByMessageId(targetId);
         let targetJid = null;
         let targetType = null;
+        let reactions = {};
         if (msg) {
             if (!msg.reactions) msg.reactions = {};
             if (emoji) {
@@ -912,10 +913,11 @@ function handleReaction(targetId, emoji, senderJid, senderName) {
             }
             targetJid = msg.toJid;
             targetType = msg.type;
+            reactions = { ...msg.reactions };
             try { updateDashboardLogReactions(targetJid, targetId, targetType, msg.reactions); } catch (_) {}
         }
         if (ioServer) {
-            ioServer.emit('reaction', { targetId, emoji, senderJid, senderName });
+            ioServer.emit('reaction', { targetId, targetJid, targetType, emoji, senderJid, senderName, reactions });
         }
     } catch (e) {
         console.error('[dashboard] handleReaction:', e.message);
@@ -948,13 +950,35 @@ function setMaxLogs(n) {
 
 function resetDashboard() {
     let removedLogs = 0;
+    let removedMediaFiles = 0;
+    let removedTempFiles = 0;
     try { removedLogs = clearDashboardLogs(); } catch (e) { console.error('[dashboard] reset clearLogs:', e.message); }
     try { mediaCache.clear(); } catch (_) {}
+    // Limpa mídia persistida do dashboard (temp/dashboard_media/*.bin)
+    try {
+        if (fs.existsSync(MEDIA_DIR)) {
+            for (const f of fs.readdirSync(MEDIA_DIR)) {
+                try { fs.unlinkSync(path.join(MEDIA_DIR, f)); removedMediaFiles++; } catch (_) {}
+            }
+        }
+    } catch (_) {}
+    // Limpa temp/*.zip|txt restantes de dumps/logs (mantém o diretório)
+    try {
+        const tempRoot = path.join(process.cwd(), 'temp');
+        if (fs.existsSync(tempRoot)) {
+            for (const f of fs.readdirSync(tempRoot)) {
+                if (f === 'dashboard_media') continue;
+                if (/^(dump_|logs_)\d/i.test(f)) {
+                    try { fs.unlinkSync(path.join(tempRoot, f)); removedTempFiles++; } catch (_) {}
+                }
+            }
+        }
+    } catch (_) {}
     setMaxLogs(200);
     if (ioServer) {
         try { ioServer.emit('reset', { ts: Date.now() }); } catch (_) {}
     }
-    return { removedLogs, newLimit: currentMaxLogs };
+    return { removedLogs, removedMediaFiles, removedTempFiles, newLimit: currentMaxLogs };
 }
 
 function stop() {
