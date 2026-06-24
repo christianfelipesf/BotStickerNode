@@ -617,6 +617,43 @@ function apiHandler(fn) {
     };
 }
 
+function startAccessLog() {
+    try {
+        const dir = path.join(process.cwd(), 'logs');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, 'access.log');
+        accessLogStream = fs.createWriteStream(file, { flags: 'a', encoding: 'utf8' });
+        console.log(`[dashboard] access log → ${file}`);
+    } catch (e) {
+        console.error('[dashboard] falha ao abrir access log:', e.message);
+        accessLogStream = null;
+    }
+}
+
+function getClientIp(req) {
+    try {
+        const xf = req.headers['x-forwarded-for'];
+        if (typeof xf === 'string' && xf.length > 0) {
+            return xf.split(',')[0].trim();
+        }
+        return req.socket?.remoteAddress || req.ip || null;
+    } catch (_) { return null; }
+}
+
+function accessLogMiddleware(req, res, next) {
+    const start = Date.now();
+    const ip = getClientIp(req) || '-';
+    const ua = (req.headers['user-agent'] || '-').toString().replace(/[\r\n\t]+/g, ' ');
+    const referer = (req.headers['referer'] || req.headers['referer'] || '-').toString().replace(/[\r\n\t]+/g, ' ');
+    res.on('finish', () => {
+        if (!accessLogStream) return;
+        const ts = new Date().toISOString();
+        const line = `[${ts}] ${ip} ${req.method} ${req.originalUrl || req.url} ${res.statusCode} ${Date.now() - start}ms ua="${ua}" ref="${referer}"\n`;
+        try { accessLogStream.write(line); } catch (_) {}
+    });
+    next();
+}
+
 function buildQuotedPayload(quotedId, quotedParticipant, cached, fallbackText) {
     let label = fallbackText || 'Mensagem';
     if (cached) {
