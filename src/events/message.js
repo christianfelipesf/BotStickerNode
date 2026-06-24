@@ -73,7 +73,10 @@ const PARTIAL_BLOCKED_COMMANDS = new Set([
 ]);
 // Comandos que controlam o próprio modo de ativamento (sempre funcionam,
 // inclusive dentro do modo parcial — senão o usuário não consegue desligar).
-const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status']);
+// `dashboard`/`dash`/`painel` entram aqui porque ligam/desligam o log do
+// painel — são independentes de !ativar e devem funcionar mesmo em grupos
+// onde o bot nunca foi ativado.
+const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']);
 
 function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
 
@@ -432,8 +435,10 @@ module.exports = {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            // Comandos de controle de ativamento funcionam mesmo com bot inativo/parcial
-            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status'];
+            // Comandos de controle de ativamento funcionam mesmo com bot inativo/parcial.
+            // `dashboard`/`dash`/`painel` ligam/desligam o log do painel — funcionam
+            // mesmo em grupos onde o bot nunca foi ativado (!ativar).
+            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel'];
             if (isGroup && !isActiveGroup(from) && !activationControlCmds.includes(cmd.name)) {
                 // Em grupo inativo E não-parcial, mantém comportamento original
                 if (!isPartialActive(from)) return;

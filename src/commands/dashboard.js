@@ -30,6 +30,8 @@ module.exports = {
         }
 
         const next = !isDashboardEnabled(from);
+        // Reação imediata: o bot entendeu o comando e vai executar
+        lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
         const ok = setDashboardEnabled(from, next);
         if (!ok) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
