@@ -90,6 +90,15 @@
 <audio id="sound-action" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
 <audio id="sound-error" src="https://assets.mixkit.co/active_storage/sfx/2955/2955-preview.mp3" preload="auto"></audio>
 <script src="/socket.io/socket.io.js"></script>
-<script src="/dashboard-client.js"></script>
+<!-- Dashboard client modular (ordem importa: utils/state primeiro, index.js por último) -->
+<script src="/dashboard-client/utils.js"></script>
+<script src="/dashboard-client/state.js"></script>
+<script src="/dashboard-client/render.js"></script>
+<script src="/dashboard-client/upload.js"></script>
+<script src="/dashboard-client/reply.js"></script>
+<script src="/dashboard-client/ui.js"></script>
+<script src="/dashboard-client/stats.js"></script>
+<script src="/dashboard-client/socket.js"></script>
+<script src="/dashboard-client/index.js"></script>
 </body>
 </html>
