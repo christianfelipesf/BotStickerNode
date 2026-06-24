@@ -428,8 +428,18 @@ function init(config) {
         res.end(data.buffer);
     });
     app.get('/favicon.ico', (req, res) => {
-        const ico = path.join(__dirname, '..', 'media', 'favcon.png');
-        if (fs.existsSync(ico)) return res.sendFile(ico);
+        const mediaDir = path.join(__dirname, '..', 'media');
+        const candidates = ['favcon.png', 'favcon.jpg', 'favcon.ico'];
+        for (const name of candidates) {
+            const full = path.join(mediaDir, name);
+            if (fs.existsSync(full)) {
+                const ext = name.split('.').pop().toLowerCase();
+                const mime = ext === 'jpg' ? 'image/jpeg' : 'image/' + ext;
+                res.setHeader('Content-Type', mime);
+                res.setHeader('Cache-Control', 'public, max-age=300');
+                return res.sendFile(full);
+            }
+        }
         res.status(204).end();
     });
     app.get('/', (req, res) => res.type('html').send(getHtml(config.botName || 'Bot')));

@@ -31,7 +31,7 @@ module.exports = {
 
         const lines = terminalLog.getLast(15);
         const header = [
-            `# BotStickerNode — últimos ${lines.length} logs do terminal`,
+            `# Antigravity Bot — últimos ${lines.length} logs do terminal`,
             `# Gerado em: ${stamp.toLocaleString('pt-BR')}`,
             `# Buffer: ${terminalLog.getBufferSize()}/${terminalLog.getRingMax()} (mais recentes)`,
             `# Arquivo diário: ${path.join(terminalLog.getLogsDir(), `terminal_${stamp.toISOString().slice(0,10)}.log`)}`,

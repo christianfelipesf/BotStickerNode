@@ -180,7 +180,7 @@ db.exec(`
 // database.json (configuração editável)
 // ============================================================
 const DEFAULT_CONFIG = {
-    botName: "BotSticker",
+    botName: "Antigravity Bot",
     prefix: "!",
     newsEnabled: true,
     dashboardUrl: "https://botantigravity.duckdns.org",
