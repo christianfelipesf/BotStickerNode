@@ -32,6 +32,34 @@ db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
+db.pragma('wal_autocheckpoint = 1000');
+
+// auto_vacuum precisa estar setado ANTES do VACUUM para que o banco passe
+// a devolver páginas livres ao disco após DELETEs. Como não estava
+// configurado até agora, o `bot.db` ficava inflado (DELETE/TRIM marca
+// páginas como livres mas não devolve ao SO). Detectamos uma vez e migramos.
+try {
+    const av = Number(db.pragma('auto_vacuum', { simple: true }));
+    if (av === 0) {
+        db.pragma('auto_vacuum = INCREMENTAL');
+        const beforeBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+        db.exec('VACUUM;');
+        const afterBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+        const beforeMb = (beforeBytes / 1048576).toFixed(2);
+        const afterMb = (afterBytes / 1048576).toFixed(2);
+        if (beforeBytes !== afterBytes) {
+            console.log(`🧹 [database] VACUUM inicial: ${beforeMb} MB → ${afterMb} MB (auto_vacuum=INCREMENTAL ativo)`);
+        }
+    }
+} catch (e) {
+    console.error('[database] VACUUM inicial falhou:', e?.message || e);
+}
+
+function checkpointWal() {
+    // TRUNCATE: faz checkpoint E zera o arquivo bot.db-wal após sucesso.
+    // Mais agressivo que PASSIVE mas ainda leve (não espera leitores).
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+}
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -913,12 +941,20 @@ function getDashboardLogByMessageId(messageId) {
 
 function trimDashboardLogs({ maxAgeMs = 0, maxRows = 5000 } = {}) {
     try {
+        const before = _dlCount.get().c;
         if (maxAgeMs > 0) {
             const cutoff = Date.now() - maxAgeMs;
             _dlTrimByAge.run(cutoff);
         }
         if (maxRows > 0) {
             _dlTrimByCount.run(maxRows);
+        }
+        const after = _dlCount.get().c;
+        const removed = before - after;
+        // Devolve até 500 páginas (~2 MB) ao disco quando houve trim significativo.
+        // incremental_vacuum é leve e não bloqueia o banco.
+        if (removed > 20) {
+            try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
         }
     } catch (e) {
         console.error('❌ [dashboard_logs] trim:', e.message);
@@ -961,6 +997,9 @@ function clearDashboardLogs() {
     try {
         const before = _dlCount.get().c;
         _dlClear.run();
+        // Devolve espaço ao disco após reset total
+        try { db.pragma('incremental_vacuum(2000)'); } catch (_) {}
+        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
         return before;
     } catch (e) {
         console.error('❌ [dashboard_logs] clear:', e.message);
@@ -1202,6 +1241,9 @@ function flushMessagesSync() {
             }
         });
         tx(toInsert);
+        // Se houve trims (cada jid só trim se já existiam mais que `limit`),
+        // devolver páginas livres ao disco de forma leve.
+        try { db.pragma('incremental_vacuum(200)'); } catch (_) {}
     } catch (e) {
         console.error('❌ Falha ao gravar messages:', e.message);
     }
@@ -1868,5 +1910,6 @@ module.exports = {
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
     clearDashboardLogs, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
-    flushNow
+    flushNow,
+    checkpointWal
 };

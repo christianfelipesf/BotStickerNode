@@ -509,6 +509,8 @@ function init(config) {
                 const c = countDashboardLogs();
                 if (c > maxRows || (maxAgeMs > 0 && c > 0)) {
                     trimDashboardLogs({ maxAgeMs, maxRows });
+                    // Checkpoint passivo do WAL pra evitar bot.db-wal inflado
+                    try { require('../database/utils').checkpointWal(); } catch (_) {}
                 }
             } catch (_) {}
         }, trimIntervalMs);
