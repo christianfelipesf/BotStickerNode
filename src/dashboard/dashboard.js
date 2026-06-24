@@ -262,13 +262,16 @@ function init(config) {
     startAccessLog();
     app.use(accessLogMiddleware);
     app.use((req, res, next) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Referrer-Policy', 'no-referrer');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
         next();
     });
-    app.use(express.json({ limit: '80mb' }));
+    app.use(express.json({ limit: '20mb' }));
 
     app.post('/api/reply', apiHandler(sendReply));
     app.post('/api/send', apiHandler(sendDirect));
@@ -277,7 +280,8 @@ function init(config) {
             const list = await getGroupsSnapshot();
             res.json({ ok: true, groups: list });
         } catch (e) {
-            res.status(500).json({ ok: false, error: e.message });
+            console.error('[dashboard] /api/groups:', e?.message || e);
+            res.status(500).json({ ok: false, error: 'Erro interno' });
         }
     });
     app.get('/api/health', (req, res) => res.json({ ok: !!sockRef }));
@@ -324,7 +328,7 @@ function init(config) {
 
     app.get('/api/files', (req, res) => {
         try { res.json({ ok: true, files: listDumpFiles() }); }
-        catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+        catch (e) { console.error('[dashboard] /api/files:', e?.message || e); res.status(500).json({ ok: false, error: 'Erro interno' }); }
     });
 
     app.get('/api/files/download/:name', (req, res) => {
@@ -342,7 +346,8 @@ function init(config) {
             const stat = fs.statSync(resolved);
             if (!stat.isFile()) return res.status(404).end();
             res.setHeader('Content-Length', stat.size);
-            res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+            const safeName = name.replace(/[\r\n"\\]/g, '_');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
             fs.createReadStream(resolved).pipe(res);
         } catch (e) {
             res.status(500).end();
@@ -416,7 +421,7 @@ function init(config) {
             res.status(500).json({ ok: false, error: e.message });
         }
     });
-    app.use('/api', (req, res) => res.status(404).json({ ok: false, error: `Endpoint nao encontrado: ${req.path}` }));
+    app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Endpoint nao encontrado' }));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => {
         // Compatibilidade retroativa: serve o bundle index.js dos módulos
@@ -566,44 +571,23 @@ function getClientIp(req) {
     } catch (_) { return null; }
 }
 
-function startAccessLog() {
+function isJidAllowed(jid) {
+    if (!jid || typeof jid !== 'string') return false;
     try {
-        const dir = path.join(process.cwd(), 'logs');
-        fs.mkdirSync(dir, { recursive: true });
-        const file = path.join(dir, 'access.log.json');
-        accessLogStream = fs.createWriteStream(file, { flags: 'a', encoding: 'utf8' });
-        console.log(`[dashboard] access log → ${file}`);
-    } catch (e) {
-        console.error('[dashboard] falha ao abrir access log:', e.message);
-        accessLogStream = null;
-    }
-}
-
-function writeAccessLog(entry) {
-    if (!accessLogStream) return;
-    try {
-        accessLogStream.write(JSON.stringify(entry) + '\n');
+        if (groupsSnapshotCache && Array.isArray(groupsSnapshotCache.list)) {
+            if (groupsSnapshotCache.list.some(g => g && g.jid === jid)) return true;
+        }
     } catch (_) {}
-}
-
-function accessLogMiddleware(req, res, next) {
-    const start = Date.now();
-    const ua = req.headers['user-agent'] || null;
-    const ip = getClientIp(req);
-    const referer = req.headers['referer'] || req.headers['referrer'] || null;
-    res.on('finish', () => {
-        writeAccessLog({
-            ts: new Date().toISOString(),
-            ip,
-            method: req.method,
-            path: req.originalUrl || req.url,
-            status: res.statusCode,
-            durationMs: Date.now() - start,
-            ua,
-            referer
-        });
-    });
-    next();
+    try {
+        if (groupsApi) {
+            const items = groupsApi();
+            if (Array.isArray(items) && items.some(it => {
+                const id = typeof it === 'string' ? it : it?.jid;
+                return id === jid;
+            })) return true;
+        }
+    } catch (_) {}
+    return false;
 }
 
 function apiHandler(fn) {
@@ -612,7 +596,8 @@ function apiHandler(fn) {
             const r = await fn(req.body || {});
             res.status(r && r.ok ? 200 : 400).json(r);
         } catch (e) {
-            res.status(500).json({ ok: false, error: e?.message || 'erro' });
+            console.error('[dashboard] api error:', e?.message || e);
+            res.status(500).json({ ok: false, error: 'Erro interno' });
         }
     };
 }
@@ -630,11 +615,13 @@ function startAccessLog() {
     }
 }
 
-function getClientIp(req) {
+function getClientIp(req, trustProxy) {
     try {
-        const xf = req.headers['x-forwarded-for'];
-        if (typeof xf === 'string' && xf.length > 0) {
-            return xf.split(',')[0].trim();
+        if (trustProxy) {
+            const xf = req.headers['x-forwarded-for'];
+            if (typeof xf === 'string' && xf.length > 0) {
+                return xf.split(',')[0].trim();
+            }
         }
         return req.socket?.remoteAddress || req.ip || null;
     } catch (_) { return null; }
@@ -642,7 +629,8 @@ function getClientIp(req) {
 
 function accessLogMiddleware(req, res, next) {
     const start = Date.now();
-    const ip = getClientIp(req) || '-';
+    const trustProxy = !!(req.app && req.app.get && req.app.get('trust proxy'));
+    const ip = getClientIp(req, trustProxy) || '-';
     const ua = (req.headers['user-agent'] || '-').toString().replace(/[\r\n\t]+/g, ' ');
     const referer = (req.headers['referer'] || req.headers['referer'] || '-').toString().replace(/[\r\n\t]+/g, ' ');
     res.on('finish', () => {
@@ -875,6 +863,7 @@ async function sendReply(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
     const { toJid, text, quotedId, quotedParticipant, quotedFromMe, quotedText, media } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
+    if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
     const hasText = !!(text && String(text).trim().length > 0);
     const hasMedia = !!(media && media.dataBase64 && (media.type || media.sendType));
@@ -918,6 +907,7 @@ async function sendDirect(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
     const { toJid, text, media } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
+    if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
     const hasText = !!(text && String(text).trim().length > 0);
     const hasMedia = !!(media && media.dataBase64 && (media.type || media.sendType));
