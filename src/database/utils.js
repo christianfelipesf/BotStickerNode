@@ -40,6 +40,7 @@ db.pragma('wal_autocheckpoint = 1000');
 // páginas como livres mas não devolve ao SO). Detectamos uma vez e migramos.
 try {
     const av = Number(db.pragma('auto_vacuum', { simple: true }));
+    let vacuumedNow = false;
     if (av === 0) {
         db.pragma('auto_vacuum = INCREMENTAL');
         const beforeBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
@@ -49,8 +50,20 @@ try {
         const afterMb = (afterBytes / 1048576).toFixed(2);
         if (beforeBytes !== afterBytes) {
             console.log(`🧹 [database] VACUUM inicial: ${beforeMb} MB → ${afterMb} MB (auto_vacuum=INCREMENTAL ativo)`);
+            vacuumedNow = true;
         }
     }
+    // Log sempre visível para confirmar estado do banco a cada boot.
+    const avFinal = Number(db.pragma('auto_vacuum', { simple: true }));
+    const pageCount = Number(db.pragma('page_count', { simple: true }));
+    const pageSize = Number(db.pragma('page_size', { simple: true }));
+    const freelist = Number(db.pragma('freelist_count', { simple: true }));
+    const totalBytes = pageCount * pageSize;
+    const avLabel = avFinal === 0 ? 'NONE' : avFinal === 1 ? 'FULL' : 'INCREMENTAL';
+    const sizeKb = (totalBytes / 1024).toFixed(1);
+    const freeKb = (freelist * pageSize / 1024).toFixed(1);
+    const note = vacuumedNow ? '' : (avFinal === 2 ? ' (já migrado)' : '');
+    console.log(`💾 [database] auto_vacuum=${avLabel}, ${pageCount}×${pageSize}B = ${sizeKb} KB, freelist=${freeKb} KB${note}`);
 } catch (e) {
     console.error('[database] VACUUM inicial falhou:', e?.message || e);
 }
