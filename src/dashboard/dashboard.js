@@ -31,6 +31,7 @@ const groupInfoCache = new Map();
 const GROUP_INFO_TTL = 60 * 1000;
 let groupsRefreshTimer = null;
 let logsTrimTimer = null;
+let accessLogStream = null;
 
 const mediaCache = new Map();
 const MAX_CACHE = 30;
@@ -258,6 +259,8 @@ function init(config) {
     const app = express();
     const server = http.createServer(app);
 
+    startAccessLog();
+    app.use(accessLogMiddleware);
     app.use((req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -551,6 +554,56 @@ function init(config) {
         console.error('[dashboard] falha ao iniciar HTTP:', e.message);
     }
     return ioServer;
+}
+
+function getClientIp(req) {
+    try {
+        const xf = req.headers['x-forwarded-for'];
+        if (typeof xf === 'string' && xf.length > 0) {
+            return xf.split(',')[0].trim();
+        }
+        return req.socket?.remoteAddress || req.ip || null;
+    } catch (_) { return null; }
+}
+
+function startAccessLog() {
+    try {
+        const dir = path.join(process.cwd(), 'logs');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, 'access.log.json');
+        accessLogStream = fs.createWriteStream(file, { flags: 'a', encoding: 'utf8' });
+        console.log(`[dashboard] access log → ${file}`);
+    } catch (e) {
+        console.error('[dashboard] falha ao abrir access log:', e.message);
+        accessLogStream = null;
+    }
+}
+
+function writeAccessLog(entry) {
+    if (!accessLogStream) return;
+    try {
+        accessLogStream.write(JSON.stringify(entry) + '\n');
+    } catch (_) {}
+}
+
+function accessLogMiddleware(req, res, next) {
+    const start = Date.now();
+    const ua = req.headers['user-agent'] || null;
+    const ip = getClientIp(req);
+    const referer = req.headers['referer'] || req.headers['referrer'] || null;
+    res.on('finish', () => {
+        writeAccessLog({
+            ts: new Date().toISOString(),
+            ip,
+            method: req.method,
+            path: req.originalUrl || req.url,
+            status: res.statusCode,
+            durationMs: Date.now() - start,
+            ua,
+            referer
+        });
+    });
+    next();
 }
 
 function apiHandler(fn) {
@@ -1031,10 +1084,11 @@ function stop() {
             pending++;
             try { httpServer.close(() => { pending--; if (pending === 0) resolve(); }); } catch (_) { pending--; }
         }
-        if (groupsRefreshTimer) { try { clearInterval(groupsRefreshTimer); groupsRefreshTimer = null; } catch (_) {} }
-        if (logsTrimTimer) { try { clearInterval(logsTrimTimer); logsTrimTimer = null; } catch (_) {} }
-        ioServer = null;
-        httpServer = null;
+if (groupsRefreshTimer) { try { clearInterval(groupsRefreshTimer); groupsRefreshTimer = null; } catch (_) {} }
+    if (logsTrimTimer) { try { clearInterval(logsTrimTimer); logsTrimTimer = null; } catch (_) {} }
+    if (accessLogStream) { try { accessLogStream.end(); } catch (_) {} accessLogStream = null; }
+    ioServer = null;
+    httpServer = null;
         if (pending === 0) resolve();
         else setTimeout(resolve, 2000);
     });
