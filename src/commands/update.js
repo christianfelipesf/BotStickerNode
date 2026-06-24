@@ -34,7 +34,7 @@ async function getGitInfo() {
 
 module.exports = {
     name: 'update',
-    aliases: ['atualizar', 'pull', 'updateall'],
+    aliases: ['upgrade', 'atualizar', 'atualiza', 'pull', 'updateall'],
     category: 'admin',
     description: 'Atualiza o bot via git pull (use "all" para sobrescrever alterações locais)',
     async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN, fullArgsText, commandName }) {
@@ -75,7 +75,7 @@ module.exports = {
         const commitLine = pulled
             ? `🔖 \`${before.subject ? beforeLabel : before.short}\` ➜ \`${afterLabel}\``
             : `🔖 \`${afterLabel}\` (sem alteração)`;
-        const head = allMode ? '♻️ Atualização completa (reset --hard)!' : '✅ Atualizado!';
+        const head = allMode ? '♻️ Atualizado, reiniciando!' : '✅ Atualizado!';
         let txt = ok
             ? `${head}\n🌿 ${after.branch}\n${commitLine}`
             : `❌ Falha no git ${allMode ? 'fetch/reset' : 'pull'}\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${r.err || r.out || 'erro'}`;
@@ -83,7 +83,7 @@ module.exports = {
         if (ok && allMode) {
             try {
                 exec('pm2 restart all', { windowsHide: true, detached: true }, () => {});
-                txt += '\n♻️ Reiniciando via pm2...';
+                txt += '\n🔁 Reiniciando via pm2...';
             } catch (e) {
                 txt += `\n⚠️ pm2 restart falhou: ${e?.message || e}`;
                 console.error('[update] pm2 restart falhou:', e?.message || e);
