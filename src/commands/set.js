@@ -13,8 +13,36 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
         }
         
-        const p = args[0]; 
+        const rawP = args[0];
         const v = args.slice(1).join(' ');
+
+        const defaults = (typeof utils.getDefaultConfig === 'function')
+            ? utils.getDefaultConfig()
+            : (() => { try { return require('../database/utils').DEFAULT_CONFIG; } catch (_) { return null; } })();
+        const knownKeys = defaults ? Object.keys(defaults) : [];
+        const knownKeySet = new Set(knownKeys);
+        const lowerMap = new Map(knownKeys.map(k => [k.toLowerCase(), k]));
+        const p = rawP ? (knownKeySet.has(rawP) ? rawP : (lowerMap.get(String(rawP).toLowerCase()) || rawP)) : rawP;
+
+        const findClosest = (q) => {
+            if (!q || !knownKeys.length) return null;
+            const ql = String(q).toLowerCase();
+            let best = null, bestDist = Infinity;
+            for (const k of knownKeys) {
+                const kl = k.toLowerCase();
+                let d = 0;
+                if (kl === ql) return k;
+                if (kl.startsWith(ql) || kl.includes(ql) || ql.includes(kl)) d = 1;
+                else {
+                    const m = Math.min(kl.length, ql.length);
+                    let diff = Math.abs(kl.length - ql.length);
+                    for (let i = 0; i < m; i++) if (kl[i] !== ql[i]) diff++;
+                    d = diff + 2;
+                }
+                if (d < bestDist) { bestDist = d; best = k; }
+            }
+            return bestDist <= 3 ? best : null;
+        };
         
         if (!p) {
             await sock.sendMessage(from, { text: `❌ Use: ${config.prefix}set <parâmetro> <valor>\n💡 Veja todas as opções: \`${config.prefix}set help\`` }, { quoted: m });
@@ -22,11 +50,6 @@ module.exports = {
         }
         
         if (p === 'help' || p === 'list' || p === '?') {
-            const defaults = (typeof utils.getDefaultConfig === 'function')
-                ? utils.getDefaultConfig()
-                : (() => {
-                    try { return require('../database/utils').DEFAULT_CONFIG; } catch (_) { return null; }
-                })();
             if (!defaults) {
                 await sock.sendMessage(from, { text: '❌ Não foi possível carregar a lista de configurações.' }, { quoted: m });
                 return lastBotResponse;
@@ -41,12 +64,10 @@ module.exports = {
             };
 
             const allKeys = Object.keys(defaults).sort();
-            const current = config || {};
             const lines = [`⚙️ *Configurações editáveis (${allKeys.length})*`, ''];
             for (const k of allKeys) {
                 const def = defaults[k];
                 const t = typeOf(def);
-                const has = Object.prototype.hasOwnProperty.call(current, k) || k === 'prefix';
                 let extra = '';
                 if (t === 'inteiro' || t === 'número') extra = ' (aceita sufixos ms/s/m/h em alguns casos)';
                 else if (t === 'booleano') extra = ' (true/false)';
@@ -154,7 +175,9 @@ module.exports = {
             await sock.sendMessage(from, { text: `✅ *${p}* atualizado!` }, { quoted: m });
             return currentBotResponse;
         } else {
-            await sock.sendMessage(from, { text: `❌ Parâmetro inválido!` }, { quoted: m });
+            const suggested = findClosest(p);
+            const tip = suggested ? `\n💡 Você quis dizer \`${suggested}\`?` : `\n💡 Veja a lista: \`${config.prefix}set help\``;
+            await sock.sendMessage(from, { text: `❌ Parâmetro *${p}* inválido!${tip}` }, { quoted: m });
             return lastBotResponse;
         }
     }
