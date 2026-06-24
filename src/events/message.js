@@ -68,6 +68,7 @@ const PARTIAL_BLOCKED_COMMANDS = new Set([
     'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
     'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
     'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome',
+    'log', 'logs', 'logsterminal', 'terminallog',
     'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai'
 ]);
 // Comandos que controlam o próprio modo de ativamento (sempre funcionam,

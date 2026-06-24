@@ -23,6 +23,7 @@ const {
 // Modulos Isolados (Refatoração AI.txt)
 const { initLogger } = require('./src/services/logger');
 const trace = require('./src/services/trace');
+const terminalLog = require('./src/services/terminalLog');
 const { loadCommands, commands } = require('./src/commands/loader');
 const { handleGroupParticipantsUpdate } = require('./src/events/group');
 const { handleMessageUpsert } = require('./src/events/message');
@@ -35,6 +36,9 @@ initLogger();
 
 // Adiciona [hh:mm:ss] em cada console.log/info/warn/error
 trace.patch();
+
+// Captura últimos 50 console.* em ring buffer + arquivo diário (logs/terminal_YYYY-MM-DD.log)
+terminalLog.init();
 
 // --- Configuração Global ---
 const config = readConfig();

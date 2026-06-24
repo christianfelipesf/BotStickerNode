@@ -278,6 +278,73 @@ function init(config) {
         }
     });
     app.get('/api/health', (req, res) => res.json({ ok: !!sockRef }));
+
+    const FILES_DIRS = [
+        { root: path.join(process.cwd(), 'logs'), label: 'logs', includeExts: /\.(log|txt|json|csv)$/i },
+        { root: path.join(process.cwd(), 'temp'), label: 'temp', includeExts: /\.(zip|txt|json|csv|log|tar|gz|7z|rar|pdf|webp|png|jpg|jpeg|mp4|webm|opus|mp3|m4a)$/i }
+    ];
+
+    function listDumpFiles() {
+        const out = [];
+        for (const dir of FILES_DIRS) {
+            let entries = [];
+            try {
+                if (!fs.existsSync(dir.root)) continue;
+                entries = fs.readdirSync(dir.root, { withFileTypes: true })
+                    .filter(d => d.isFile())
+                    .filter(d => !d.name.startsWith('.') && d.name !== 'dashboard_media');
+            } catch (_) { continue; }
+            for (const ent of entries) {
+                try {
+                    const full = path.join(dir.root, ent.name);
+                    if (dir.includeExts && !dir.includeExts.test(ent.name)) continue;
+                    const stat = fs.statSync(full);
+                    const resolved = path.resolve(full);
+                    const logsRoot = path.resolve(FILES_DIRS[0].root);
+                    const tempRoot = path.resolve(FILES_DIRS[1].root);
+                    const safeBase = resolved.startsWith(logsRoot) ? logsRoot : (resolved.startsWith(tempRoot) ? tempRoot : null);
+                    if (!safeBase) continue;
+                    out.push({
+                        name: ent.name,
+                        dir: dir.label,
+                        sizeBytes: stat.size,
+                        sizeKb: Math.max(1, Math.round(stat.size / 1024)),
+                        mtime: stat.mtimeMs,
+                        downloadUrl: `/api/files/download/${encodeURIComponent(ent.name)}?dir=${encodeURIComponent(dir.label)}`
+                    });
+                } catch (_) {}
+            }
+        }
+        out.sort((a, b) => b.mtime - a.mtime);
+        return out.slice(0, 50);
+    }
+
+    app.get('/api/files', (req, res) => {
+        try { res.json({ ok: true, files: listDumpFiles() }); }
+        catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    });
+
+    app.get('/api/files/download/:name', (req, res) => {
+        try {
+            const name = String(req.params.name || '');
+            if (!/^[A-Za-z0-9._\-]+$/.test(name)) return res.status(400).end();
+            const dirLabel = String(req.query.dir || 'logs');
+            const dirCfg = FILES_DIRS.find(d => d.label === dirLabel);
+            if (!dirCfg) return res.status(404).end();
+            const full = path.join(dirCfg.root, name);
+            const resolved = path.resolve(full);
+            const root = path.resolve(dirCfg.root);
+            if (!resolved.startsWith(root + path.sep) && resolved !== root) return res.status(403).end();
+            if (!fs.existsSync(resolved)) return res.status(404).end();
+            const stat = fs.statSync(resolved);
+            if (!stat.isFile()) return res.status(404).end();
+            res.setHeader('Content-Length', stat.size);
+            res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+            fs.createReadStream(resolved).pipe(res);
+        } catch (e) {
+            res.status(500).end();
+        }
+    });
     app.get('/api/system', (req, res) => {
         try {
             const totalMem = os.totalmem();
@@ -755,6 +822,7 @@ function log(type, group, text, name = null, phone = null, media = null, extra =
             name,
             phone,
             media,
+            attachment: extra.attachment || null,
             timestamp: Date.now(),
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             toJid: extra.toJid || null,

@@ -140,6 +140,19 @@ button{font:inherit}
 .st-logs .log-tag.action{background:var(--bl);color:#002030}
 .st-logs .log-tag.error{background:var(--er);color:#2a0000}
 .st-logs .log-tag.system{background:var(--dm);color:#111b21}
+.st-files{max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.st-files .file-row{display:flex;align-items:center;gap:8px;background:var(--pn2);border:1px solid var(--b);border-radius:8px;padding:6px 10px;font-size:12px}
+.st-files .file-row .fr-icon{font-size:18px;line-height:1}
+.st-files .file-row .fr-info{flex:1;min-width:0}
+.st-files .file-row .fr-name{font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-files .file-row .fr-meta{color:var(--dm);font-size:11px}
+.st-files .file-row a.fr-dl{background:var(--g);color:#00210e;border-radius:6px;padding:3px 10px;font-weight:700;font-size:11px;text-decoration:none;white-space:nowrap}
+.msg-attachment{display:flex;align-items:center;gap:8px;margin-top:6px;padding:6px 10px;background:var(--pn2);border:1px solid var(--b);border-radius:8px;font-size:12px;max-width:100%}
+.msg-attachment .ma-icon{font-size:18px;line-height:1}
+.msg-attachment .ma-info{flex:1;min-width:0}
+.msg-attachment .ma-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg-attachment .ma-meta{color:var(--dm);font-size:11px}
+.msg-attachment a.ma-dl{background:var(--g);color:#00210e;border-radius:6px;padding:3px 10px;font-weight:700;font-size:11px;text-decoration:none;white-space:nowrap}
 
 /* Botões de ícone */
 .ch-icon-btn{background:transparent;color:var(--dm);border:none;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:18px;display:none;align-items:center;justify-content:center;flex-shrink:0}
