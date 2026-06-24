@@ -51,9 +51,15 @@ module.exports = {
             return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        await run('pm2 restart all');
-        const txt = `✅ Atualizado e reiniciado!\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${pull.out || 'Sem alterações.'}`;
+        const txt = `✅ Atualizado e reiniciando!\n🌿 ${info.branch} • 🔖 ${info.short}\n\n${pull.out || 'Sem alterações.'}`;
         await sock.sendMessage(from, { text: txt }, { quoted: m });
-        return await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
+        await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
+
+        setTimeout(() => {
+            try { exec('pm2 restart all', { windowsHide: true, detached: true }, () => {}); }
+            catch (e) { console.error('⚠️ [updateres] pm2 restart falhou:', e.message); }
+        }, 500);
+
+        return lastBotResponse;
     }
 };
