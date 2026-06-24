@@ -42,7 +42,10 @@ module.exports = {
         if (!isOwner(sock, m, utils)) {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
         }
-        await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
+        // Reação imediata: o bot entendeu o comando e vai executar
+        lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
+        // Emoji da etapa em andamento: baixando atualizações
+        lastBotResponse = await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
 
         const before = await getGitInfo();
         const r = await run('git pull');

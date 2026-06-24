@@ -42,6 +42,10 @@ module.exports = {
         if (!isOwner(sock, m, utils)) {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
         }
+        // Reação imediata: o bot entendeu o comando e vai executar
+        lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
+        // Emoji da etapa em andamento: reiniciando
+        lastBotResponse = await react(sock, m, '🔄', lastBotResponse, GLOBAL_COOLDOWN);
         const info = await getGitInfo();
         const r = await run('pm2 restart all');
         const ok = r.ok;
