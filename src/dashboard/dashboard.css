@@ -173,6 +173,8 @@ button{font:inherit}
     .mobile-tabbar{display:grid;grid-template-columns:repeat(3,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--sb);border-top:1px solid var(--b);padding:6px 4px calc(8px + env(safe-area-inset-bottom));z-index:90;min-height:60px}
     .mt-tab{background:transparent;border:none;color:var(--dm);padding:8px 4px 6px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:56px}
     .mt-tab.active{color:var(--g)}
+    /* Reservar espaço para o tabbar fixo em todas as colunas no mobile */
+    .col-chats,.col-stats{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
     .col-chat{padding-bottom:env(safe-area-inset-bottom)}
     .cb-composer{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
     .toast{bottom:calc(92px + env(safe-area-inset-bottom))}
@@ -180,6 +182,7 @@ button{font:inherit}
 @supports (padding: max(0px)){
     @media (max-width:768px){
         .mobile-tabbar{padding-bottom:max(8px, calc(env(safe-area-inset-bottom) + 16px))}
+        .col-chats,.col-stats{padding-bottom:max(76px, calc(76px + env(safe-area-inset-bottom) + 16px))}
         .cb-composer{padding-bottom:max(76px, calc(76px + env(safe-area-inset-bottom) + 16px))}
         .toast{bottom:max(92px, calc(92px + env(safe-area-inset-bottom)))}
     }
