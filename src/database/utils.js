@@ -1841,8 +1841,10 @@ function canAdminControl() {
 
 function getVersion() {
     try {
-        return execFileSync('git', ['log', '-1', '--format=%s'], { windowsHide: true }).toString().trim();
-    } catch (e) {
+        // Formato: "abc1234 commit subject" — mais útil que só o subject
+        const out = execFileSync('git', ['log', '-1', '--format=%h %s'], { windowsHide: true }).toString().trim();
+        return out || 'v1.0.0';
+    } catch (_) {
         return 'v1.0.0';
     }
 }

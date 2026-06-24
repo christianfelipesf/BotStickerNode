@@ -61,7 +61,7 @@ try {
 
 // Inicializar Inteligência Artificial e Comandos
 setupAI(config);
-loadCommands();
+const _cmdSummary = loadCommands({ verbose: false });
 
 // --- Tratamento de Erros Globais ---
 process.on('uncaughtException', (err) => {
@@ -77,12 +77,18 @@ process.on('unhandledRejection', (reason) => {
     try { dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`); } catch (_) {}
 });
 
-// Detectar FFmpeg no sistema
+// FFmpeg: detecção consolidada no boot summary abaixo (mais visível)
+let _ffmpeg = '?';
 try {
     const finder = process.platform === 'win32' ? 'where' : 'which';
-    const systemFfmpeg = execFileSync(finder, ['ffmpeg'], { windowsHide: true }).toString().split(/\r?\n/)[0].trim();
-    if (systemFfmpeg) ffmpeg.setFfmpegPath(systemFfmpeg);
-} catch (e) {}
+    const out = execFileSync(finder, ['ffmpeg'], { windowsHide: true }).toString().split(/\r?\n/)[0].trim();
+    if (out) {
+        ffmpeg.setFfmpegPath(out);
+        _ffmpeg = out.split(/[\\/]/).pop();
+    } else {
+        _ffmpeg = 'não encontrado';
+    }
+} catch (_) { _ffmpeg = 'não encontrado'; }
 
 const startTime = Date.now();
 try { dashboard.setStartTime(startTime); } catch (_) {}
@@ -96,6 +102,29 @@ try {
         `🔄 Reinício #${_restartNumber} — v${_version} • ${_ts} • Comandos acumulados: ${_stats.totalCommands || 0}`,
         'Sistema', '—');
 } catch (_) {}
+
+/* ========== Boot summary (uma linha por componente, status real) ========== */
+
+const _utils = require('./src/database/utils');
+const _dashOk = !!dashboard && typeof dashboard.init === 'function';
+const _aiOk = !!_utils.getModel && !!_utils.getModel();
+const _sockDir = fs.existsSync('session') ? '✓' : '✗';
+const _nodeVer = process.version;
+const _os = `${process.platform} ${process.arch}`;
+
+console.log('');
+console.log('═'.repeat(60));
+console.log(`🤖  ${config.botName.toUpperCase()} • v${_utils.getVersion()} • Reinício #${_restartNumber}`);
+console.log('═'.repeat(60));
+console.log(`  📦 comandos     ${_cmdSummary.loaded}/${_cmdSummary.total} carregados • ${_cmdSummary.aliases} aliases${_cmdSummary.errors ? ' • ' + _cmdSummary.errors + ' ERRO(s)' : ''}`);
+console.log(`  💾 database     ${_utils.countDashboardLogs()} logs • bot.db OK`);
+console.log(`  🌐 dashboard    ${_dashOk ? '✓ módulo ok' : '✗ falhou'} na porta ${config.dashboardPort}`);
+console.log(`  🤖 IA Gemini    ${_aiOk ? '✓ ativa (' + (config.geminiModel || 'default') + ')' : '✗ sem API key'}`);
+console.log(`  📰 news         ${config.newsEnabled !== false ? '✓ ativo' : '✗ desativado'}`);
+console.log(`  🎬 ffmpeg       ${_ffmpeg}`);
+console.log(`  🔐 sessão       ${_sockDir} ${_sockDir === '✓' ? 'salva' : 'QR necessário'}`);
+console.log(`  ⚙️  plataforma   ${_os} • Node ${_nodeVer}`);
+console.log('═'.repeat(60));
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -120,9 +149,8 @@ async function startBot() {
         if (curCfg.newsEnabled !== false) {
             news.attachSock(sock);
             news.start();
-        } else {
-            console.log('📰 [news] desativado pela config (newsEnabled=false).');
         }
+        // news desativado é mostrado no boot summary (não loga aqui)
     } catch (_) {}
 
     sock.ev.on('creds.update', saveCreds);
