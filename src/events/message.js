@@ -303,25 +303,35 @@ module.exports = {
                             reuploadRequest: sock.updateMediaMessage
                         }).catch(() => null);
 
-                        if (buffer) {
-                            const type = mediaMsg.imageMessage ? 'image' :
-                                         mediaMsg.videoMessage ? 'video' :
-                                         mediaMsg.audioMessage ? 'audio' :
-                                         mediaMsg.stickerMessage ? 'sticker' : null;
+                        const innerKey = mediaMsg ? Object.keys(mediaMsg).find(k => /Message$/.test(k)) : null;
+                        const inner = innerKey ? mediaMsg[innerKey] : null;
+                        const type = mediaMsg?.imageMessage ? 'image' :
+                                     mediaMsg?.videoMessage ? 'video' :
+                                     mediaMsg?.audioMessage ? 'audio' :
+                                     mediaMsg?.stickerMessage ? 'sticker' :
+                                     mediaMsg?.documentMessage ? 'document' : null;
+                        const mime = inner?.mimetype || (type === 'document' ? 'application/octet-stream' : 'application/octet-stream');
 
-                            if (type) {
-                                const innerKey = Object.keys(mediaMsg)[0];
-                                const inner = mediaMsg[innerKey];
-                                const mime = inner.mimetype || 'application/octet-stream';
-                                const isVO = !!inner.viewOnce;
-                                mediaInfo = {
+                        if (type) {
+                            if (buffer) {
+                                const isVO = type !== 'document' && !!inner.viewOnce;
+                                const persisted = safeDashboardMediaReceived({
                                     type,
                                     url: `data:${mime};base64,${buffer.toString('base64')}`
-                                };
+                                }, m.key.id);
+                                if (persisted) {
+                                    mediaInfo = persisted;
+                                } else {
+                                    mediaInfo = { type, url: `data:${mime};base64,${buffer.toString('base64')}` };
+                                }
                                 if (type === 'image' || type === 'video' || type === 'audio') {
                                     hidden = isVO;
                                 }
-                                // Cache para hidratação de citações futuras
+                                if (type === 'document') {
+                                    mediaInfo.fileName = inner.fileName || 'documento';
+                                    mediaInfo.mime = mime;
+                                    mediaInfo.sizeBytes = inner.fileLength || buffer.length;
+                                }
                                 try {
                                     safeDashboardCache(m.key.id, {
                                         bufferBase64: buffer.toString('base64'),
@@ -332,17 +342,12 @@ module.exports = {
                                         fromJid: from
                                     });
                                 } catch (_) {}
-                            }
-                        } else {
-                            const type = mediaMsg.imageMessage ? 'image' :
-                                         mediaMsg.videoMessage ? 'video' :
-                                         mediaMsg.audioMessage ? 'audio' :
-                                         mediaMsg.stickerMessage ? 'sticker' : null;
-                            if (type) {
-                                mediaInfo = {
-                                    type,
-                                    url: null
-                                };
+                            } else {
+                                mediaInfo = { type, url: null };
+                                if (type === 'document') {
+                                    mediaInfo.fileName = inner?.fileName || 'documento';
+                                    mediaInfo.mime = mime;
+                                }
                             }
                         }
                     } catch (e) {
@@ -379,7 +384,7 @@ module.exports = {
                 }
 
                 const logType = hidden ? 'viewonce' : 'chat';
-                const mediaForDb = safeDashboardMediaReceived(mediaInfo, m.key.id) || mediaInfo;
+                const mediaForDb = mediaInfo;
                 safeDashboardLog(logType,
                     groupMetadata.subject,
                     text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),

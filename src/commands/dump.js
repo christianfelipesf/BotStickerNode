@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
-const dashboard = require('../dashboard/dashboard');
 
 module.exports = {
     name: 'dump',
@@ -78,27 +77,6 @@ module.exports = {
                 mimetype: 'application/zip',
                 caption
             }, { quoted: m });
-
-            try {
-                const groupName = m.key?.participant
-                    ? (await sock.groupMetadata(from).catch(() => null))?.subject || from
-                    : from;
-                dashboard.log('action', groupName || 'Sistema',
-                    `📦 Dump gerado: ${zipName} (${sizeKb} KB) — ${includedCount} arquivo(s)`,
-                    'Bot', '—', null,
-                    {
-                        toJid: from,
-                        senderJid: sock.user?.id || sock.user?.jid,
-                        fromMe: true,
-                        attachment: {
-                            fileName: zipName,
-                            mime: 'application/zip',
-                            sizeBytes: fs.statSync(zipPath).size,
-                            sizeKb,
-                            downloadUrl: `/api/files/download/${encodeURIComponent(zipName)}?dir=temp`
-                        }
-                    });
-            } catch (_) {}
 
             fs.unlinkSync(zipPath);
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);

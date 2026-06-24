@@ -422,6 +422,9 @@ function init(config) {
         if (!data) return res.status(404).end();
         res.setHeader('Content-Type', data.mime);
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        if (req.query.download) {
+            res.setHeader('Content-Disposition', `attachment; filename="${(data.fileName || id).replace(/"/g, '')}"`);
+        }
         res.end(data.buffer);
     });
     app.get('/favicon.ico', (req, res) => {
@@ -593,13 +596,22 @@ function mediaForLogSent(media, messageId) {
 function mediaForLogReceived(media, messageId) {
     if (!media) return null;
     const type = media.type;
-    if (!['image', 'video', 'audio', 'sticker'].includes(type)) return null;
+    if (!['image', 'video', 'audio', 'sticker', 'document'].includes(type)) return null;
     if (media.url && media.url.startsWith('data:') && messageId) {
         const m = /^data:([^;]+);base64,(.+)$/.exec(media.url);
         if (m) {
             try {
-                persistMedia(messageId, m[2], m[1]);
-                return { type, url: `/media/${encodeURIComponent(messageId)}`, mime: m[1] };
+                const fileName = media.fileName || (type === 'document' ? 'documento' : null);
+                const mime = m[1];
+                const buf = Buffer.from(m[2], 'base64');
+                persistMedia(messageId, m[2], mime);
+                return {
+                    type,
+                    url: `/media/${encodeURIComponent(messageId)}`,
+                    mime,
+                    fileName,
+                    sizeBytes: media.sizeBytes || buf.length
+                };
             } catch (_) {}
         }
     }
@@ -628,12 +640,24 @@ function readPersistedMedia(messageId) {
         ensureMediaDir();
         const files = fs.readdirSync(MEDIA_DIR);
         const safeId = String(messageId).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const EXT_TO_MIME = {
+            jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp',
+            mp4:'video/mp4', webm:'video/webm', mkv:'video/x-matroska',
+            mp3:'audio/mpeg', ogg:'audio/ogg', opus:'audio/ogg', m4a:'audio/mp4', wav:'audio/wav',
+            pdf:'application/pdf', zip:'application/zip', '7z':'application/x-7z-compressed',
+            rar:'application/vnd.rar', tar:'application/x-tar', gz:'application/gzip',
+            txt:'text/plain', json:'application/json', csv:'text/csv', log:'text/plain',
+            doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        };
         for (const f of files) {
             if (f.startsWith(safeId + '.')) {
                 const full = path.join(MEDIA_DIR, f);
                 const buf = fs.readFileSync(full);
-                const mime = 'image/' + (f.split('.').pop() || 'jpeg');
-                return { buffer: buf, mime };
+                const ext = (f.split('.').pop() || '').toLowerCase();
+                const mime = EXT_TO_MIME[ext] || 'application/octet-stream';
+                return { buffer: buf, mime, fileName: f };
             }
         }
     } catch (_) {}
