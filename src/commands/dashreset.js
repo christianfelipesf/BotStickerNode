@@ -19,12 +19,13 @@ module.exports = {
         }
 
         const result = dashboard.resetDashboard();
-        console.log(`🧹 [DASHBOARD] resetado por @${senderNorm.split('@')[0]} — logs=${result.removedLogs} midia=${result.removedMediaFiles} temp=${result.removedTempFiles} limite=${result.newLimit}`);
+        console.log(`🧹 [DASHBOARD] resetado por @${senderNorm.split('@')[0]} — logs=${result.removedLogs} midia=${result.removedMediaFiles} temp=${result.removedTempFiles} logsDir=${result.removedLogsDirFiles} limite=${result.newLimit}`);
         await sock.sendMessage(m.key.remoteJid, {
             text: `🧹 *Dashboard resetado!*\n\n` +
-                  `📋 Logs removidos: ${result.removedLogs}\n` +
-                  `📁 Mídias removidas: ${result.removedMediaFiles}\n` +
-                  `🗑️ Arquivos temp removidos: ${result.removedTempFiles}\n` +
+                  `📋 Logs SQLite: ${result.removedLogs}\n` +
+                  `📁 Mídias (dashboard_media): ${result.removedMediaFiles}\n` +
+                  `🗂️ Temp (zips/txts): ${result.removedTempFiles}\n` +
+                  `📜 Logs dir (terminal_*.log): ${result.removedLogsDirFiles}\n` +
                   `📊 Novo limite: ${result.newLimit}`
         }, { quoted: m });
         return await react(sock, m, '🧹', lastBotResponse, GLOBAL_COOLDOWN);

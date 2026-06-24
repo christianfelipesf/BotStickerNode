@@ -962,9 +962,10 @@ function resetDashboard() {
     let removedLogs = 0;
     let removedMediaFiles = 0;
     let removedTempFiles = 0;
+    let removedLogsDirFiles = 0;
     try { removedLogs = clearDashboardLogs(); } catch (e) { console.error('[dashboard] reset clearLogs:', e.message); }
     try { mediaCache.clear(); } catch (_) {}
-    // Limpa mídia persistida do dashboard (temp/dashboard_media/*.bin)
+    // Limpa mídia persistida do dashboard (temp/dashboard_media/*)
     try {
         if (fs.existsSync(MEDIA_DIR)) {
             for (const f of fs.readdirSync(MEDIA_DIR)) {
@@ -972,15 +973,26 @@ function resetDashboard() {
             }
         }
     } catch (_) {}
-    // Limpa temp/*.zip|txt restantes de dumps/logs (mantém o diretório)
+    // Limpa temp/ de órfãos: tudo que NÃO é cache ativo em uso.
+    // Mantém: stk_* (sticker em processamento), dl_* (download em andamento),
+    //         tts_*, speed_* (conversões em andamento).
     try {
         const tempRoot = path.join(process.cwd(), 'temp');
+        const keepRe = /^(stk_|dl_|tts_|speed_|tts_)/i;
         if (fs.existsSync(tempRoot)) {
             for (const f of fs.readdirSync(tempRoot)) {
                 if (f === 'dashboard_media') continue;
-                if (/^(dump_|logs_)\d/i.test(f)) {
-                    try { fs.unlinkSync(path.join(tempRoot, f)); removedTempFiles++; } catch (_) {}
-                }
+                if (keepRe.test(f)) continue;
+                try { fs.unlinkSync(path.join(tempRoot, f)); removedTempFiles++; } catch (_) {}
+            }
+        }
+    } catch (_) {}
+    // Limpa logs/ completamente (terminal_*.log, divulgar_*.log, etc)
+    try {
+        const logsRoot = path.join(process.cwd(), 'logs');
+        if (fs.existsSync(logsRoot)) {
+            for (const f of fs.readdirSync(logsRoot)) {
+                try { fs.unlinkSync(path.join(logsRoot, f)); removedLogsDirFiles++; } catch (_) {}
             }
         }
     } catch (_) {}
@@ -988,7 +1000,13 @@ function resetDashboard() {
     if (ioServer) {
         try { ioServer.emit('reset', { ts: Date.now() }); } catch (_) {}
     }
-    return { removedLogs, removedMediaFiles, removedTempFiles, newLimit: currentMaxLogs };
+    return {
+        removedLogs,
+        removedMediaFiles,
+        removedTempFiles,
+        removedLogsDirFiles,
+        newLimit: currentMaxLogs
+    };
 }
 
 function stop() {
