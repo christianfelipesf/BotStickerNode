@@ -58,7 +58,7 @@ function quotedHtml(q){const n=esc(q.name||(q.phone?'@'+q.phone:'Mensagem'));con
 function mediaHtml(m){if(!m)return'';if(m.type==='image')return`<div class="msg-media"><img src="${esc(m.url)}" loading="lazy"></div>`;if(m.type==='video')return`<div class="msg-media"><video src="${esc(m.url)}" controls></video></div>`;if(m.type==='audio')return`<div class="msg-media"><audio src="${esc(m.url)}" controls></audio></div>`;if(m.type==='sticker')return`<div class="msg-media"><img src="${esc(m.url)}" style="width:140px;height:140px;"></div>`;if(m.type==='document')return`<div class="msg-media"><a class="msg-doc" href="${esc(m.url)}" download="${esc(m.fileName||'arquivo')}"><span class="msg-doc-icon">📎</span><span class="msg-doc-info"><span class="msg-doc-name">${esc(m.fileName||'arquivo')}</span><span class="msg-doc-meta">${esc(m.mime||'')} · ${Math.max(1,Math.round((m.sizeBytes||0)/1024))} KB</span></span><span class="msg-doc-dl">Baixar</span></a></div>`;return''}
 function attachmentHtml(a){if(!a||!a.fileName)return'';return mediaHtml({type:'document',url:a.downloadUrl||`/api/files/download/${encodeURIComponent(a.fileName)}?dir=temp`,fileName:a.fileName,mime:a.mime||'',sizeBytes:a.sizeBytes||0})}
 function msgHtml(d){const ds=new Date(d.timestamp||Date.now()).toLocaleDateString();let daySep='';if(ds!==lastDate){daySep=`<div class="msg-day-sep">${esc(ds===new Date().toLocaleDateString()?'Hoje':ds)}</div>`;lastDate=ds}if((d.type==='action'||d.type==='error')&&!d.attachment){play(d.type==='error'?soundError:soundAction);return daySep+`<div class="msg-system ${d.type==='error'?'msg-error':''}">${esc(d.text||'')}</div>`}return daySep+msgBubbleHtml(d)}
-function msgBubbleHtml(d){const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const att=d.attachment?attachmentHtml(d.attachment):'';const rx=reactionsHtml(d.reactions);const note=d.type==='action'?`<div class="msg-system-inline">${esc(d.text||'')}</div>`:'';return`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" onclick="openReply(this)" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${note}${m}${att}${d.text&&d.type!=='action'?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`}
+function msgBubbleHtml(d){const me=!!d.fromMe;const ac=me?'#ffd279':userColor(d.phone);const q=d.quoted?quotedHtml(d.quoted):'';const m=mediaHtml(d.media);const att=d.attachment?attachmentHtml(d.attachment):'';const rx=reactionsHtml(d.reactions);const note=d.type==='action'?`<div class="msg-system-inline">${esc(d.text||'')}</div>`:'';return`<div class="msg-wrapper ${me?'from-me':'from-other'}"><div class="msg-bubble" data-tj="${d.toJid||''}" data-mid="${d.messageId||''}" data-sj="${d.senderJid||''}" data-fm="${me?1:0}" data-ph="${d.phone||''}" data-nm="${esc(d.name||'')}" data-pv="${esc(d.text||'')}" data-hm="${d.media?1:0}">${q}${note}${m}${att}${d.text&&d.type!=='action'?`<div class="msg-text">${esc(d.text)}</div>`:''}<div class="msg-meta"><span class="msg-author" style="color:${ac}">${esc(d.name||'Usuário')}</span><span>${esc(d.time||new Date(d.timestamp||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}</span></div>${rx}</div></div>`}
 function append(d){chat.insertAdjacentHTML('beforeend',msgHtml(d));play(soundChat)}
 function rerenderOne(messageId){
     const el=document.querySelector(`.msg-bubble[data-mid="${CSS.escape(messageId)}"]`);
@@ -81,7 +81,69 @@ function rerenderOne(messageId){
     chat.scrollTop=prevTop+(chat.scrollHeight-prevHeight);
 }
 function rerenderBatch(){if(!activeJid)return;lastDate='';chat.innerHTML='';const list=activeJid===ALL?allMsgs():(msgsByJid[activeJid]||[]);if(!list.length)return;const frag=[];for(const d of list)frag.push(msgHtml(d));chat.insertAdjacentHTML('beforeend',frag.join(''));setTimeout(()=>{chat.scrollTop=chat.scrollHeight},30);if(soundEnabled)play(soundChat)}
-window.openReply=el=>{if(!activeJid)return toast('Selecione um grupo');const tj=el.dataset.tj;if(!tj)return toast('Sem identificação de destino');setReply({toJid:tj,messageId:el.dataset.mid,senderJid:el.dataset.sj,fromMe:el.dataset.fm==='1',phone:el.dataset.ph,name:el.dataset.nm,preview:el.dataset.pv||(el.dataset.hm==='1'?'📎 Mídia':''),hasMedia:el.dataset.hm==='1'});messageInput.focus()};
+// === Click vs drag detection para abrir reply sem atrapalhar seleção de texto ===
+const CLICK_DRAG_THRESHOLD = 6;
+let _downX = 0, _downY = 0, _downEl = null, _downMoved = false;
+chat.addEventListener('mousedown', e => {
+    const bubble = e.target.closest('.msg-bubble');
+    if (!bubble) return;
+    _downX = e.clientX;
+    _downY = e.clientY;
+    _downEl = bubble;
+    _downMoved = false;
+});
+chat.addEventListener('mousemove', e => {
+    if (!_downEl) return;
+    if (Math.abs(e.clientX - _downX) > CLICK_DRAG_THRESHOLD ||
+        Math.abs(e.clientY - _downY) > CLICK_DRAG_THRESHOLD) {
+        _downMoved = true;
+    }
+});
+chat.addEventListener('mouseup', e => {
+    const el = _downEl;
+    _downEl = null;
+    if (!el || _downMoved) return;
+    if (e.target.closest('a,button,.msg-doc,.fr-dl,.ma-dl,input,textarea')) return;
+    if (window.getSelection && window.getSelection().toString().length > 0) return;
+    openReply(el);
+});
+chat.addEventListener('touchstart', e => {
+    const bubble = e.target.closest('.msg-bubble');
+    if (!bubble || !e.touches[0]) return;
+    _downX = e.touches[0].clientX;
+    _downY = e.touches[0].clientY;
+    _downEl = bubble;
+    _downMoved = false;
+}, { passive: true });
+chat.addEventListener('touchmove', e => {
+    if (!_downEl || !e.touches[0]) return;
+    if (Math.abs(e.touches[0].clientX - _downX) > CLICK_DRAG_THRESHOLD ||
+        Math.abs(e.touches[0].clientY - _downY) > CLICK_DRAG_THRESHOLD) {
+        _downMoved = true;
+    }
+}, { passive: true });
+chat.addEventListener('touchend', e => {
+    const el = _downEl;
+    _downEl = null;
+    if (!el || _downMoved) return;
+    openReply(el);
+});
+function openReply(el) {
+    if (!activeJid) return toast('Selecione um grupo');
+    const tj = el.dataset.tj;
+    if (!tj) return toast('Sem identificação de destino');
+    setReply({
+        toJid: tj,
+        messageId: el.dataset.mid,
+        senderJid: el.dataset.sj,
+        fromMe: el.dataset.fm === '1',
+        phone: el.dataset.ph,
+        name: el.dataset.nm,
+        preview: el.dataset.pv || (el.dataset.hm === '1' ? '📎 Mídia' : ''),
+        hasMedia: el.dataset.hm === '1'
+    });
+    messageInput.focus();
+}
 
 /* ========== Lista de chats ========== */
 function renderGroups(){
