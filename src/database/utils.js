@@ -1319,12 +1319,13 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     const config = readConfig();
     const finalPack = pack || config.botName || 'Bot';
     const finalAuthor = author || `${config.botName}` || 'Bot';
-    const isVideo = mimeType.includes('video');
+    const mime = (mimeType || '').toLowerCase();
+    const isVideo = mime.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
 
     const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
-    const intermediatePath = path.join(tempDir, `stk_inter_${tempId}${isVideo ? '.gif' : '.png'}`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
+    const cleanup = [inputPath, outputPath];
 
     try {
         if (!isVideo) {
@@ -1335,29 +1336,81 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             await webp.cwebp(inputPath, outputPath, "-q 60");
         } else {
             fs.writeFileSync(inputPath, buffer);
+            const stats = fs.statSync(inputPath);
+            if (!stats.size) throw new Error('Vídeo vazio');
+
             await new Promise((resolve, reject) => {
                 ffmpeg(inputPath)
                     .inputOptions(['-t 6'])
                     .outputOptions([
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
-                        '-r', '12'
+                        '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=12,setsar=1',
+                        '-c:v', 'libwebp',
+                        '-lossless', '0',
+                        '-q:v', '60',
+                        '-preset', 'default',
+                        '-loop', '0',
+                        '-an',
+                        '-fps_mode', 'vfr'
                     ])
-                    .toFormat('gif')
+                    .toFormat('webp')
                     .on('end', resolve)
                     .on('error', reject)
-                    .save(intermediatePath);
+                    .save(outputPath);
             });
-            await webp.gwebp(intermediatePath, outputPath, "-q 60");
+
+            const outStat = fs.statSync(outputPath);
+            if (outStat.size < 512) {
+                try { fs.unlinkSync(outputPath); } catch (_) {}
+                throw new Error('Vídeo gerou WebP vazio/inválido');
+            }
+            const header = fs.readFileSync(outputPath).slice(0, 12);
+            if (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP') {
+                try { fs.unlinkSync(outputPath); } catch (_) {}
+                throw new Error('Vídeo gerou arquivo não-WebP');
+            }
         }
 
-        return await addMetadata(fs.readFileSync(outputPath), finalPack, finalAuthor);
+        const result = await addMetadata(fs.readFileSync(outputPath), finalPack, finalAuthor);
+        if (!result || result.length < 512) {
+            throw new Error('Falha ao injetar metadados do sticker');
+        }
+        return result;
     } catch (error) {
         console.error('❌ [CONVERSÃO] Falha:', error.message);
+        if (isVideo && fs.existsSync(inputPath)) {
+            try {
+                const firstFrameWebp = path.join(tempDir, `stk_fb_${tempId}.webp`);
+                cleanup.push(firstFrameWebp);
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputPath)
+                        .outputOptions([
+                            '-vframes', '1',
+                            '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
+                            '-c:v', 'libwebp',
+                            '-lossless', '0',
+                            '-q:v', '60',
+                            '-preset', 'default',
+                            '-loop', '0',
+                            '-an'
+                        ])
+                        .toFormat('webp')
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .save(firstFrameWebp);
+                });
+                if (fs.existsSync(firstFrameWebp) && fs.statSync(firstFrameWebp).size >= 64) {
+                    const fallback = await addMetadata(fs.readFileSync(firstFrameWebp), finalPack, finalAuthor);
+                    if (fallback && fallback.length >= 64) {
+                        return fallback;
+                    }
+                }
+            } catch (fbErr) {
+                console.error('❌ [CONVERSÃO] Fallback estático falhou:', fbErr.message);
+            }
+        }
         throw error;
     } finally {
-        [inputPath, intermediatePath, outputPath].forEach(p => {
-            try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
-        });
+        cleanup.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
     }
 }
 

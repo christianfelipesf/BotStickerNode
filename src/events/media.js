@@ -123,8 +123,22 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             } else {
                 const requesterName = m.pushName || 'Usuário';
                 const botName = getBotName(from, config);
-                const stickerBuffer = await mediaToSticker(buffer, mediaMessage.imageMessage?.mimetype || mediaMessage.videoMessage?.mimetype || '', requesterName, `${botName}`);
-                await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: m });
+                const detectedMime = mediaMessage.videoMessage
+                    ? (mediaMessage.videoMessage.mimetype || 'video/mp4')
+                    : (mediaMessage.imageMessage?.mimetype || 'image/jpeg');
+                try {
+                    const stickerBuffer = await mediaToSticker(buffer, detectedMime, requesterName, `${botName}`);
+                    if (!stickerBuffer || stickerBuffer.length < 64) throw new Error('Sticker gerado vazio');
+                    const header = Buffer.isBuffer(stickerBuffer) ? stickerBuffer.slice(0, 12) : null;
+                    if (header && (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP')) {
+                        throw new Error('Sticker gerado inválido');
+                    }
+                    await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: m });
+                } catch (stickerErr) {
+                    console.error('❌ [STICKER] Falha ao gerar:', stickerErr.message);
+                    await sock.sendMessage(from, { text: '❌ Não foi possível gerar o sticker desse vídeo. Tente outro ou envie uma imagem.' }, { quoted: m });
+                    throw stickerErr;
+                }
             }
         } else if (action === 'speed') {
             if (!mediaMessage.videoMessage && !mediaMessage.audioMessage) {
