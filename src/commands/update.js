@@ -37,18 +37,21 @@ module.exports = {
     aliases: ['upgrade', 'atualizar', 'atualiza', 'pull', 'updateall'],
     category: 'admin',
     description: 'Atualiza o bot via git pull (use "all" para sobrescrever alterações locais)',
-    async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN, fullArgsText, commandName }) {
+    async execute(sock, m, { from, utils, lastBotResponse, GLOBAL_COOLDOWN, fullArgsText, commandName, args }) {
         const { react } = utils;
         if (!isOwner(sock, m, utils)) {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
         }
 
         const argsText = String(fullArgsText || '').trim().toLowerCase();
+        const firstArg = String((Array.isArray(args) && args[0]) || '').toLowerCase();
         const allMode = commandName === 'updateall'
             || argsText === 'all'
             || argsText === '--all'
             || argsText.startsWith('all ')
-            || argsText.startsWith('--all ');
+            || argsText.startsWith('--all ')
+            || firstArg === 'all'
+            || firstArg === '--all';
 
         // Reação imediata: o bot entendeu o comando e vai executar
         lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
