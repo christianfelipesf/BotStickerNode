@@ -392,33 +392,6 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
 
     try {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-        const credsPath = path.join(dir, 'creds.json');
-        try {
-            if (!fs.existsSync(credsPath)) {
-                const initCreds = {
-                    noiseKey: null,
-                    signedIdentityKey: null,
-                    signedPreKey: null,
-                    registrationId: 0,
-                    advSecretKey: null,
-                    processedHistoryMessages: [],
-                    nextPreKeyId: 1,
-                    firstUnuploadedPreKeyId: 1,
-                    accountSyncCounter: 0,
-                    accountSettings: { unarchiveChats: false },
-                    me: null,
-                    signalIdentities: [],
-                    platform: 'android',
-                    lastAccountSyncTimestamp: 0,
-                    myAppStateKeyId: '',
-                    registrations: []
-                };
-                fs.writeFileSync(credsPath, JSON.stringify(initCreds, null, 2), 'utf8');
-                dlog(`${hashJid(ownerJid)} creds.json inicial criado em ${dir}`);
-            }
-        } catch (e) {
-            dlog(`${hashJid(ownerJid)} falha ao criar creds inicial: ${e?.message}`);
-        }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
         try {
