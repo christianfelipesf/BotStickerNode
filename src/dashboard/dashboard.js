@@ -550,7 +550,8 @@ function init(config) {
         pingTimeout: 60000,
         pingInterval: 25000,
         upgradeTimeout: 30000,
-        serveClient: false
+        serveClient: true,
+        path: '/socket.io'
     });
     ioServer.engine.use((req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');

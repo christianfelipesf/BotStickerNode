@@ -29,12 +29,13 @@
 
     function bind() {
         const sock = io({
+            path: '/socket.io',
             transports: ['polling', 'websocket'],
             upgrade: true,
-            rememberUpgrade: true,
+            rememberUpgrade: false,
             timeout: 20000,
             reconnection: true,
-            reconnectionAttempts: 10,
+            reconnectionAttempts: 15,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000
         });
