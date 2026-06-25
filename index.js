@@ -3,8 +3,7 @@ require('dotenv').config();
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
-    DisconnectReason, 
-    fetchLatestBaileysVersion
+    DisconnectReason
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -147,11 +146,8 @@ console.log('═'.repeat(60));
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
-    let version = [2, 3000, 1017531287];
-    try {
-        const latest = await fetchLatestBaileysVersion();
-        if (latest?.version) version = latest.version;
-    } catch (err) {}
+    const { getCachedBaileysVersion } = require('./src/services/version');
+    const version = await getCachedBaileysVersion();
     
     const sock = makeWASocket({ 
         version, 

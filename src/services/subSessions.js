@@ -7,8 +7,7 @@ const baileys = require('@whiskeysockets/baileys');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion
+    DisconnectReason
 } = baileys;
 const { Boom } = require('@hapi/boom');
 const { initAuthCreds, BufferJSON } = baileys;
@@ -431,13 +430,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             dlog(`${hashJid(ownerJid)} falha ao criar creds: ${e?.message}`);
         }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
-        let version = [2, 3000, 1017531287];
-        try {
-            const latest = await fetchLatestBaileysVersion();
-            if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
-                version = latest.version;
-            }
-        } catch (_) {}
+        const { getCachedBaileysVersion } = require('./version');
+        const version = await getCachedBaileysVersion();
         dlog(`${hashJid(ownerJid)} usando version=${JSON.stringify(version)} (pairing=${!!normalizedPhone})`);
 
         const sock = makeWASocket({

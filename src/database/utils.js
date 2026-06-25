@@ -745,8 +745,11 @@ function canAdminControl() {
     try { const cfg = readConfig(); return cfg && cfg.adminCanControl === true; } catch (_) { return false; }
 }
 
+let _cachedVersion = null;
 function getVersion() {
-    try { return execFileSync('git', ['log', '-1', '--format=%h %s'], { windowsHide: true }).toString().trim() || 'v1.0.0'; } catch (_) { return 'v1.0.0'; }
+    if (_cachedVersion) return _cachedVersion;
+    try { _cachedVersion = execFileSync('git', ['log', '-1', '--format=%h %s'], { windowsHide: true }).toString().trim() || 'v1.0.0'; } catch (_) { _cachedVersion = 'v1.0.0'; }
+    return _cachedVersion;
 }
 
 function flushNow() { flushJsonNow(); flushMessagesSync(); }

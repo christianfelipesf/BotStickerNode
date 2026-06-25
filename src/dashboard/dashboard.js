@@ -267,9 +267,6 @@ function init(config) {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('X-Frame-Options', 'DENY');
         res.setHeader('Referrer-Policy', 'no-referrer');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
         next();
     });
@@ -344,8 +341,14 @@ function init(config) {
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
-    app.post('/api/reply', apiHandler(sendReply));
-    app.post('/api/send', apiHandler(sendDirect));
+    app.post('/api/reply', (req, res, next) => {
+        if (!rateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitas requisições. Aguarde alguns segundos.' });
+        next();
+    }, apiHandler(sendReply));
+    app.post('/api/send', (req, res, next) => {
+        if (!rateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitas requisições. Aguarde alguns segundos.' });
+        next();
+    }, apiHandler(sendDirect));
     app.get('/api/groups', async (req, res) => {
         try {
             const list = await getGroupsSnapshot();
@@ -558,7 +561,7 @@ function init(config) {
     });
 
     ioServer = new Server(server, {
-        cors: { origin: '*', credentials: false },
+        cors: { origin: (origin, cb) => cb(null, !origin || origin.startsWith('http://localhost') || origin.startsWith('https://localhost')), credentials: true },
         transports: ['polling', 'websocket'],
         allowUpgrades: true,
         pingTimeout: 60000,
@@ -702,6 +705,33 @@ function apiHandler(fn) {
         }
     };
 }
+
+// ============================================================
+// Rate limiter for API endpoints
+// ============================================================
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 10 * 1000;
+const RATE_LIMIT_MAX = 10;
+
+function rateLimit(req) {
+    const key = req.ip || req.connection?.remoteAddress || 'unknown';
+    const now = Date.now();
+    let entry = rateLimitMap.get(key);
+    if (!entry || (now - entry.windowStart) > RATE_LIMIT_WINDOW) {
+        entry = { windowStart: now, count: 0 };
+        rateLimitMap.set(key, entry);
+    }
+    entry.count++;
+    return entry.count <= RATE_LIMIT_MAX;
+}
+
+// Prevent unbounded growth of IP entries
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of rateLimitMap) {
+        if ((now - entry.windowStart) > RATE_LIMIT_WINDOW * 2) rateLimitMap.delete(key);
+    }
+}, RATE_LIMIT_WINDOW);
 
 function startAccessLog() {
     try {
