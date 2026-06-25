@@ -31,6 +31,7 @@ const { setupAI } = require('./src/services/ai');
 const dashboard = require('./src/dashboard/dashboard');
 const news = require('./src/services/news');
 const subSessions = require('./src/services/subSessions');
+const { startTempCleanup } = require('./src/services/tempCleanup');
 
 // Inicializar Filtro de Logs
 initLogger();
@@ -63,6 +64,9 @@ try {
 // Inicializar Inteligência Artificial e Comandos
 setupAI(config);
 const _cmdSummary = loadCommands({ verbose: false });
+
+// Limpeza automática de temp/ a cada 30 min (arquivos > 1h)
+startTempCleanup();
 
 // Restaurar sub-sessões Baileys persistidas (silencioso — só loga o resultado)
 (async () => {

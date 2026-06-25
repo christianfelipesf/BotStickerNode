@@ -18,6 +18,8 @@ const {
     groupMetadataCached
 } = require('../database/utils');
 
+const cooldown = require('../services/cooldown');
+
 const dashboardCacheMedia = dashboard.cacheMedia;
 const dashboardPushGroups = dashboard.pushGroupsSnapshot;
 const dashboardRememberGroup = dashboard.rememberGroupInfo;
@@ -442,6 +444,20 @@ module.exports = {
             if (isGroup && !isActiveGroup(from) && !activationControlCmds.includes(cmd.name)) {
                 // Em grupo inativo E não-parcial, mantém comportamento original
                 if (!isPartialActive(from)) return;
+            }
+
+            // ============================================================
+            // COOLDOWN / ANTI-SPAM
+            // ============================================================
+            if (!m.key.fromMe) {
+                const remaining = cooldown.checkCooldown(cmd.name, sender);
+                if (remaining > 0) {
+                    console.log(`⏳ [COOLDOWN] !${commandName} por ${senderName} — aguarde ${Math.ceil(remaining / 1000)}s`);
+                    try {
+                        await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
+                    } catch (_) {}
+                    return;
+                }
             }
 
             // ============================================================

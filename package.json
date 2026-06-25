@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "reset:admin": "node src/scripts/reset-admin.js"
+    "reset:admin": "node src/scripts/reset-admin.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
