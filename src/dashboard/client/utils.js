@@ -51,7 +51,11 @@
 
         play: function (audio) {
             if (!D.state.soundEnabled || !audio) return;
-            try { audio.currentTime = 0; audio.play().catch(() => {}); } catch (_) {}
+            try {
+                audio.volume = 0.25;
+                audio.currentTime = 0;
+                audio.play().catch(() => {});
+            } catch (_) {}
         },
 
         // Captura todos os refs DOM necessários (chamado uma vez no bootstrap)
