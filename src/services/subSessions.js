@@ -391,7 +391,6 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
     persistSessionMeta(session);
 
     try {
-        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
         try {
@@ -466,7 +465,15 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             if (typeof session.qrTimer.unref === 'function') session.qrTimer.unref();
         };
 
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', async () => {
+            try { await saveCreds(); }
+            catch (e) {
+                if (e?.code === 'ENOENT') {
+                    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+                    try { await saveCreds(); } catch (_) {}
+                }
+            }
+        });
 
         sock.ev.on('connection.update', async (u) => {
             try {
