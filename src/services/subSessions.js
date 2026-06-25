@@ -395,11 +395,29 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         const credsPath = path.join(dir, 'creds.json');
         try {
             if (!fs.existsSync(credsPath)) {
-                fs.writeFileSync(credsPath, JSON.stringify({}), 'utf8');
-                dlog(`${hashJid(ownerJid)} creds.json stub criado em ${dir}`);
+                const initCreds = {
+                    noiseKey: null,
+                    signedIdentityKey: null,
+                    signedPreKey: null,
+                    registrationId: 0,
+                    advSecretKey: null,
+                    processedHistoryMessages: [],
+                    nextPreKeyId: 1,
+                    firstUnuploadedPreKeyId: 1,
+                    accountSyncCounter: 0,
+                    accountSettings: { unarchiveChats: false },
+                    me: null,
+                    signalIdentities: [],
+                    platform: 'android',
+                    lastAccountSyncTimestamp: 0,
+                    myAppStateKeyId: '',
+                    registrations: []
+                };
+                fs.writeFileSync(credsPath, JSON.stringify(initCreds, null, 2), 'utf8');
+                dlog(`${hashJid(ownerJid)} creds.json inicial criado em ${dir}`);
             }
         } catch (e) {
-            dlog(`${hashJid(ownerJid)} falha ao criar creds stub: ${e?.message}`);
+            dlog(`${hashJid(ownerJid)} falha ao criar creds inicial: ${e?.message}`);
         }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
@@ -429,19 +447,23 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         console.log(`🔐 [sub:${hashJid(ownerJid)}] sock criado, auth dir=${dir}, version=${JSON.stringify(version)}`);
 
         if (normalizedPhone) {
-            setTimeout(async () => {
+            const tryRequestCode = async (attempt = 1) => {
                 if (session.pairCodeSent || session.connected) return;
                 try {
-                    dlog(`${hashJid(ownerJid)} requesting pairing code eagerly...`);
+                    dlog(`${hashJid(ownerJid)} requesting pairing code (tentativa ${attempt})...`);
                     const code = await sock.requestPairingCode(normalizedPhone);
-                    dlog(`${hashJid(ownerJid)} pairing code eager: ${code}`);
+                    dlog(`${hashJid(ownerJid)} pairing code OK: ${code}`);
                     session.pairCodeSent = true;
                     await safeCallback(session.onPairingCode, ownerJid, { code, phoneNumber: normalizedPhone });
                     armWatchdog();
                 } catch (e) {
-                    dlog(`${hashJid(ownerJid)} erro eager pairing: ${e?.message}`);
+                    dlog(`${hashJid(ownerJid)} erro pairing (tentativa ${attempt}): ${e?.message}`);
+                    if (attempt < 4 && !session.connected) {
+                        setTimeout(() => tryRequestCode(attempt + 1), 3000);
+                    }
                 }
-            }, 4000);
+            };
+            setTimeout(() => tryRequestCode(1), 5000);
         }
 
         const cleanupAndCancel = async (reason) => {
