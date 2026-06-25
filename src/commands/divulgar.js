@@ -4,6 +4,9 @@ const { info, ok, err, head, warn } = require('../services/divulgarLog');
 const DELAY_MIN = 45000;
 const DELAY_MAX = 90000;
 const JITTER_MAX = 15000;
+const CONFIRM_TIMEOUT = 2 * 60 * 1000;
+
+const pendingConfirmations = new Map();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const rand = (min, max) => Math.floor(min + Math.random() * (max - min));
@@ -45,6 +48,30 @@ Qualquer coisa é só chamar!`,
 
 function pickTemplate() {
     return TEMPLATES[Math.floor(Math.random() * TEMPLATES.length)];
+}
+
+async function sendConfirmation(sock, m, from, sender, targets, metadata) {
+    const link = getGroupLink();
+    const totalMs = targets.length * 75 * 1000;
+    const key = `${sender}:${from}`;
+
+    const msg = await sock.sendMessage(from, {
+        text: `⚠️ *CONFIRMAÇÃO NECESSÁRIA*\n\n` +
+            `📢 Enviar link do grupo *${metadata.subject}* para *${targets.length} membro(s)* via DM.\n` +
+            `⏱️ Tempo estimado: ~${Math.ceil(targets.length * 75 / 60)} min\n` +
+            `🔗 Link: ${link}\n\n` +
+            `❗ Isso pode ser considerado *spam* e resultar em *ban* da sua conta do WhatsApp.\n\n` +
+            `Para confirmar, use o comando novamente:\n` +
+            `\`!divulgar confirmar\`\n\n` +
+            `_Expira em 2 minutos._`
+    }, { quoted: m });
+
+    pendingConfirmations.set(key, { targets, metadata, msg, timeout: Date.now() + CONFIRM_TIMEOUT });
+    setTimeout(() => {
+        if (pendingConfirmations.get(key)?.msg?.key?.id === msg.key.id) {
+            pendingConfirmations.delete(key);
+        }
+    }, CONFIRM_TIMEOUT);
 }
 
 async function runDivulgacao(sock, m, ctx) {
@@ -188,6 +215,63 @@ module.exports = {
             return sock.sendMessage(from, { text: '❌ Use este comando dentro do grupo que você quer divulgar.' }, { quoted: m });
         }
 
-        return runDivulgacao(sock, m, { from, sender, lastBotResponse, GLOBAL_COOLDOWN, react });
+        const key = `${sender}:${from}`;
+        const pending = pendingConfirmations.get(key);
+
+        const isConfirm = ctx.fullArgsText?.trim()?.toLowerCase() === 'confirmar'
+            || ctx.args?.[0]?.toLowerCase() === 'confirmar';
+
+        if (isConfirm && pending) {
+            pendingConfirmations.delete(key);
+            return runDivulgacao(sock, m, { from, sender, lastBotResponse, GLOBAL_COOLDOWN, react });
+        }
+
+        if (pending) {
+            const remaining = Math.ceil((pending.timeout - Date.now()) / 1000);
+            return sock.sendMessage(from, {
+                text: `⏳ Divulgação já aguardando confirmação para este grupo.\n` +
+                    `Use \`!divulgar confirmar\` para confirmar.\n` +
+                    `_Expira em ${remaining}s_`
+            }, { quoted: m });
+        }
+
+        const link = getGroupLink();
+        if (!link) return sock.sendMessage(from, { text: '❌ Nenhum link configurado. Use !setlink <link> primeiro.' }, { quoted: m });
+
+        const meId = normalizeJid(sock.user.id);
+        const senderNorm = normalizeJid(sender);
+        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+
+        if (!isBotOwner) {
+            return sock.sendMessage(from, { text: '❌ Apenas quem está conectado no bot (celular que escaneou o QR) pode usar este comando.' }, { quoted: m });
+        }
+
+        const adminsRaw = await getAdmins(sock, from);
+        const admins = adminsRaw.map(p => normalizeJid(p.id || p.jid));
+
+        let metadata;
+        try {
+            metadata = await sock.groupMetadata(from);
+        } catch (e) {
+            return sock.sendMessage(from, { text: '❌ Não consegui ler os membros do grupo.' }, { quoted: m });
+        }
+
+        const targets = metadata.participants
+            .map(p => p.id)
+            .filter(id => {
+                if (!id) return false;
+                const norm = normalizeJid(id);
+                return norm !== meId && !admins.includes(norm);
+            });
+
+        if (targets.length === 0) {
+            warn(`Divulgar cancelado: grupo ${metadata.subject} (${from}) só tem admins/bot. Nenhum alvo.`);
+            try { await sock.sendMessage(from, { react: { text: '🚫', key: m.key } }); } catch (_) {}
+            return sock.sendMessage(from, {
+                text: `🚫 Nada pra divulgar. O grupo *${metadata.subject}* só tem admins (e o bot), não há membros comuns.`
+            }, { quoted: m });
+        }
+
+        return sendConfirmation(sock, m, from, sender, targets, metadata);
     }
 };

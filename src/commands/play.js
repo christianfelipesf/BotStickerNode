@@ -1,7 +1,7 @@
 const yts = require('yt-search');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const { getMaxDurationSeconds, formatDuration } = require('../services/durationLimit');
 
 module.exports = {
@@ -45,15 +45,25 @@ module.exports = {
 
             console.log(`🎵 [PLAY] Baixando: ${video.title} (${formatDuration(duration)})`);
 
-            const downloadCmd = `yt-dlp --no-warnings --extract-audio --audio-format mp3 --audio-quality 128K --output "${outPath}" "${video.url}"`;
-
             await new Promise((resolve, reject) => {
-                const process = exec(downloadCmd, (error) => {
-                    if (error) {
-                        console.error(`❌ [YT-DLP] Erro: ${error.message}`);
-                        return reject(error);
-                    }
-                    resolve();
+                const proc = spawn('yt-dlp', [
+                    '--no-warnings',
+                    '--extract-audio',
+                    '--audio-format', 'mp3',
+                    '--audio-quality', '128K',
+                    '--output', outPath,
+                    video.url
+                ], { windowsHide: true });
+
+                let stderr = '';
+                proc.stderr.on('data', (d) => { stderr += d.toString(); });
+                proc.on('error', (err) => {
+                    console.error(`❌ [YT-DLP] Erro: ${err.message}`);
+                    reject(err);
+                });
+                proc.on('close', (code) => {
+                    if (code === 0) resolve();
+                    else reject(new Error(`yt-dlp exit code ${code}: ${stderr.slice(0, 300)}`));
                 });
 
                 setTimeout(async () => {

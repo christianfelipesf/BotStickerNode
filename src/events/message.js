@@ -1,51 +1,38 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const fs = require('fs');
-const path = require('path');
 const { revealViewOnce } = require('./media');
 const { getModel } = require('../services/ai');
 const dashboard = require('../dashboard/dashboard');
+const cooldown = require('../services/cooldown');
+const trace = require('../services/trace');
+const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('./dashboard-handler');
+const { enforceMuteAndAntilink } = require('./enforcement');
 
 const {
-    isActiveGroup, activateGroup, deactivateGroup,
-    isPartialActive, activatePartial, deactivatePartial, getPartialWaitMs,
-    getGroupData, setGroupData, saveGroupMenuImage,
-    isViewOnce, getMediaMessage, getContextInfo, mediaToSticker, stickerToMedia,
-    readStats, incrementCommand, formatUptime,
-    readConfig, writeConfig, saveMessage, getChatHistory,
-    changeSpeed, getBotName, react, getMessageText,
-    isDashboardEnabled, listDashboardGroups, setDashboardEnabled,
-    groupMetadataCached
+    isActiveGroup, isPartialActive, activatePartial, deactivatePartial, getPartialWaitMs,
+    getGroupData, setGroupData,
+    incrementCommand, formatUptime,
+    readConfig, saveMessage, getChatHistory,
+    getBotName, react, getMessageText,
+    isDashboardEnabled, groupMetadataCached, updateMemberActivity
 } = require('../database/utils');
 
-const cooldown = require('../services/cooldown');
-
-const dashboardCacheMedia = dashboard.cacheMedia;
-const dashboardPushGroups = dashboard.pushGroupsSnapshot;
-const dashboardRememberGroup = dashboard.rememberGroupInfo;
-const dashboardMediaForLogReceived = dashboard.mediaForLogReceived;
-
-const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
-const safeDashboardCache = (...args) => { try { dashboardCacheMedia(...args); } catch (_) {} };
-const safeDashboardRememberGroup = (...args) => { try { dashboardRememberGroup(...args); } catch (_) {} };
-const safeDashboardMediaReceived = (...args) => { try { return dashboardMediaForLogReceived(...args); } catch (_) { return null; } };
-
+// ============================================================
+// Deduplication
+// ============================================================
 const processedMessages = new Set();
-// Limpa periodicamente para evitar crescimento infinito da memória
-const _processedMessagesInterval = setInterval(() => processedMessages.clear(), 10 * 60 * 1000);
-if (typeof _processedMessagesInterval.unref === 'function') _processedMessagesInterval.unref();
+setInterval(() => processedMessages.clear(), 10 * 60 * 1000).unref();
 
-// Ring buffer de chaves recentes por grupo (para !limpar deletar N últimas)
+// ============================================================
+// Recent message buffer (for !limpar)
+// ============================================================
 const RECENT_BUFFER_LIMIT = 100;
 const recentMessagesByGroup = new Map();
 
 function trackRecentMessage(jid, key) {
     if (!jid || !key || !key.id) return;
     let list = recentMessagesByGroup.get(jid);
-    if (!list) {
-        list = [];
-        recentMessagesByGroup.set(jid, list);
-    }
+    if (!list) { list = []; recentMessagesByGroup.set(jid, list); }
     list.push({ id: key.id, participant: key.participant || null, fromMe: !!key.fromMe });
     if (list.length > RECENT_BUFFER_LIMIT) list.shift();
 }
@@ -56,16 +43,10 @@ function getRecentMessages(jid, limit) {
 }
 
 // ============================================================
-// Ativamento Parcial — pendentes de resposta
-// Quando um grupo está em modo parcial (!ativarp), o bot:
-//   1) registra a mensagem-comando como "pendente"
-//   2) aguarda `partialWaitMs` ms checando se alguém reagiu à mensagem
-//   3) se ninguém reagiu nesse tempo E o comando for permitido, executa
-//   4) se outro bot (não este) reagiu OU o comando não é permitido, ignora
+// Partial Activation
 // ============================================================
-const partialPending = new Map(); // key = `${jid}:${msgId}` -> { resolve, timer, botJid, commandName, isGroup }
+const partialPending = new Map();
 const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia']);
-// Comandos admin/críticos nunca respondem em modo parcial, mesmo que categoria
 const PARTIAL_BLOCKED_COMMANDS = new Set([
     'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
     'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
@@ -73,11 +54,6 @@ const PARTIAL_BLOCKED_COMMANDS = new Set([
     'log', 'logs', 'logsterminal', 'terminallog',
     'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai'
 ]);
-// Comandos que controlam o próprio modo de ativamento (sempre funcionam,
-// inclusive dentro do modo parcial — senão o usuário não consegue desligar).
-// `dashboard`/`dash`/`painel` entram aqui porque ligam/desligam o log do
-// painel — são independentes de !ativar e devem funcionar mesmo em grupos
-// onde o bot nunca foi ativado.
 const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']);
 
 function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
@@ -85,9 +61,7 @@ function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
 function _isPartialAllowed(cmd) {
     if (!cmd) return false;
     if (PARTIAL_BLOCKED_COMMANDS.has(cmd.name)) return false;
-    if (Array.isArray(cmd.aliases)) {
-        for (const a of cmd.aliases) if (PARTIAL_BLOCKED_COMMANDS.has(a)) return false;
-    }
+    if (Array.isArray(cmd.aliases)) for (const a of cmd.aliases) if (PARTIAL_BLOCKED_COMMANDS.has(a)) return false;
     return PARTIAL_ALLOWED_CATEGORIES.has(cmd.category);
 }
 
@@ -101,14 +75,6 @@ function registerPartialPending(jid, msgId, commandName, botJid) {
     return promise;
 }
 
-function consumePartialPending(jid, msgId) {
-    const k = _partialKey(jid, msgId);
-    const entry = partialPending.get(k);
-    if (!entry) return null;
-    partialPending.delete(k);
-    return entry;
-}
-
 function cancelPartialPending(jid, msgId) {
     const k = _partialKey(jid, msgId);
     const entry = partialPending.get(k);
@@ -118,7 +84,6 @@ function cancelPartialPending(jid, msgId) {
 }
 
 function notifyPartialReaction(jid, msgId, reactorJid) {
-    // Se o reactor NÃO for este bot, cancela o pendente (outro bot respondeu)
     const k = _partialKey(jid, msgId);
     const entry = partialPending.get(k);
     if (!entry) return false;
@@ -143,8 +108,6 @@ function setPartialTimer(jid, msgId, ms) {
     }, Math.max(0, ms || 0));
 }
 
-// Limpa pendentes com mais de 5 minutos para evitar leak caso reaction
-// nunca chegue e o timer falhe (defesa em profundidade).
 setInterval(() => {
     const cutoff = Date.now() - 5 * 60 * 1000;
     for (const [k, entry] of partialPending.entries()) {
@@ -156,12 +119,16 @@ setInterval(() => {
     }
 }, 60 * 1000).unref();
 
+// ============================================================
+// Constants
+// ============================================================
 const GLOBAL_COOLDOWN = 1000;
 let lastBotResponse = 0;
 const AUTO_VIEW_ONCE = true;
 
-const trace = require('../services/trace');
-
+// ============================================================
+// Main message handler
+// ============================================================
 module.exports = {
     handleMessageUpsert: async (sock, { messages, type }, { commands, config, startTime }) => {
         if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
@@ -169,266 +136,74 @@ module.exports = {
         try {
             const m = messages[0];
             if (!m.message || processedMessages.has(m.key.id)) return;
-            
+
             const messageTime = m.messageTimestamp?.low || m.messageTimestamp || 0;
-            const bootThreshold = Math.floor(startTime / 1000) + 10;
-            if (messageTime < bootThreshold) return;
+            if (messageTime < Math.floor(startTime / 1000) + 10) return;
 
             processedMessages.add(m.key.id);
 
             const from = m.key.remoteJid;
             const isGroup = from.endsWith('@g.us');
             if (isGroup) trackRecentMessage(from, m.key);
+
             const sender = m.key.fromMe
                 ? (sock.user?.id || m.key.participant || m.key.remoteJid)
                 : (m.key.participant || m.key.remoteJid);
             const text = (getMessageText(m.message) || '').trim();
-            const senderName = m.key.fromMe
-                ? config.botName
-                : (m.pushName || 'Usuário');
+            const senderName = m.key.fromMe ? config.botName : (m.pushName || 'Usuário');
 
-            // Tratamento especial para Reações (para evitar bolhas vazias e poluição no chat do dashboard)
-            const reactionMsg = m.message?.reactionMessage || m.message?.ephemeralMessage?.message?.reactionMessage;
-            if (reactionMsg) {
-                if (isGroup && isDashboardEnabled(from)) {
-                    const targetId = reactionMsg.key.id;
-                    const emoji = reactionMsg.text || '';
-                    const { handleReaction } = require('../dashboard/dashboard');
-                    handleReaction(targetId, emoji, sender, senderName);
-                }
-                // Notifica o sistema de ativamento parcial: se alguém (que não é este bot)
-                // reagiu a uma mensagem de comando pendente, cancela a execução.
+            // === Reactions ===
+            if (await handleReaction(sock, m, from, sender, senderName)) {
                 try {
-                    const tgt = reactionMsg.key?.id;
+                    const tgt = m.message?.reactionMessage?.key?.id || m.message?.ephemeralMessage?.message?.reactionMessage?.key?.id;
                     if (isGroup && tgt) notifyPartialReaction(from, tgt, sender);
                 } catch (_) {}
                 return;
             }
 
-            // Tratamento especial para Protocolos (como mensagens apagadas)
-            const protocolMsg = m.message?.protocolMessage || m.message?.ephemeralMessage?.message?.protocolMessage;
-            if (protocolMsg) {
-                if (protocolMsg.type === 3 && isGroup && isDashboardEnabled(from)) {
-                    const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
-                    safeDashboardRememberGroup(from, {
-                        subject: groupMetadata.subject,
-                        memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
-                        ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
-                    });
-                    
-                    safeDashboardLog('chat',
-                        groupMetadata.subject,
-                        '📑 [Apagou uma mensagem]',
-                        senderName,
-                        sender.split('@')[0],
-                        null,
-                        {
-                            toJid: from,
-                            messageId: m.key.id,
-                            senderJid: sender,
-                            fromMe: !!m.key.fromMe,
-                            ephemeral: !!m.message?.ephemeralMessage
-                        }
-                    );
-                }
-                return;
-            }
+            // === Protocol messages (deleted, etc) ===
+            if (await handleProtocolMessage(sock, m, from, sender, senderName)) return;
 
             const isBotActive = !isGroup || isActiveGroup(from);
-            
-            // --- Enforce Admin Policies (Mute & Anti-Link) ---
+
+            // === Mute & Antilink enforcement ===
             if (isGroup && isBotActive) {
-                const groupData = getGroupData(from);
-                const utilsRef = require('../database/utils');
-                const adminsRaw = await utilsRef.getAdmins(sock, from);
-                const senderNorm = utilsRef.normalizeJid(sender);
-                const senderUser = senderNorm.split('@')[0];
-                const isSenderAdmin = adminsRaw.some(p => {
-                    const candidates = [p.id, p.jid, p.lid].filter(Boolean).map(j => utilsRef.normalizeJid(j));
-                    return candidates.some(c => c.split('@')[0] === senderUser);
-                });
-                const isBotAdmin = await utilsRef.botIsAdmin(sock, from);
-
-                // 1. Mute enforcement (lista persistida em SQLite, expira em 12h)
-                if (!isSenderAdmin && utilsRef.isMuted(from, sender)) {
-                    if (isBotAdmin) {
-                        try {
-                            await sock.sendMessage(from, { delete: m.key });
-                        } catch (delErr) {
-                            console.error('❌ Falha ao apagar mensagem de mutado:', delErr.message);
-                        }
-                        return; // Stop processing muted messages
-                    }
-                }
-
-                // 2. Anti-link enforcement
-                if (groupData.antilink && !isSenderAdmin && isBotAdmin) {
-                    const groupLinkRegex = /chat\.whatsapp\.com\/[a-zA-Z0-9]/;
-                    if (groupLinkRegex.test(text)) {
-                        // Deleta o link
-                        await sock.sendMessage(from, { delete: m.key });
-                        
-                        // Aplica 2 advertências
-                        if (!groupData.warnings) groupData.warnings = {};
-                        groupData.warnings[sender] = (groupData.warnings[sender] || 0) + 2;
-                        const count = groupData.warnings[sender];
-                        
-                        setGroupData(from, groupData);
-
-                        if (count >= 3) {
-                            await sock.groupParticipantsUpdate(from, [sender], 'remove');
-                            delete groupData.warnings[sender];
-                            setGroupData(from, groupData);
-                            return await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]} enviou link, atingiu ${count}/3 advertências e foi banido.`, mentions: [sender] });
-                        } else {
-                            return await sock.sendMessage(from, { text: `⚠️ @${sender.split('@')[0]} enviou link e recebeu 2 advertências. (${count}/3)`, mentions: [sender] });
-                        }
-                    }
-                }
+                const enforcement = await enforceMuteAndAntilink(sock, m, from, sender, text);
+                if (enforcement === 'muted' || enforcement === 'antilink') return;
             }
 
-            // Log no Dashboard (Apenas com dashboard opt-in - independente de o bot estar ativo ou não no grupo)
+            // === Dashboard logging ===
             if (isGroup && isDashboardEnabled(from)) {
                 const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
-                safeDashboardRememberGroup(from, {
-                    subject: groupMetadata.subject,
-                    memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
-                    ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null,
-                    desc: groupMetadata.desc || groupMetadata.description || null
-                });
-                const mediaMsg = getMediaMessage(m.message);
-                let mediaInfo = null;
-                let hidden = false;
-                let ephemeral = false;
-
-                if (mediaMsg) {
-                    try {
-                        const buffer = await downloadMediaMessage(m, 'buffer', {}, {
-                            logger: pino({ level: 'fatal' }),
-                            reuploadRequest: sock.updateMediaMessage
-                        }).catch(() => null);
-
-                        const innerKey = mediaMsg ? Object.keys(mediaMsg).find(k => /Message$/.test(k)) : null;
-                        const inner = innerKey ? mediaMsg[innerKey] : null;
-                        const type = mediaMsg?.imageMessage ? 'image' :
-                                     mediaMsg?.videoMessage ? 'video' :
-                                     mediaMsg?.audioMessage ? 'audio' :
-                                     mediaMsg?.stickerMessage ? 'sticker' :
-                                     mediaMsg?.documentMessage ? 'document' : null;
-                        const mime = inner?.mimetype || (type === 'document' ? 'application/octet-stream' : 'application/octet-stream');
-
-                        if (type) {
-                            if (buffer) {
-                                const isVO = type !== 'document' && !!inner.viewOnce;
-                                const persisted = safeDashboardMediaReceived({
-                                    type,
-                                    url: `data:${mime};base64,${buffer.toString('base64')}`
-                                }, m.key.id);
-                                if (persisted) {
-                                    mediaInfo = persisted;
-                                } else {
-                                    mediaInfo = { type, url: `data:${mime};base64,${buffer.toString('base64')}` };
-                                }
-                                if (type === 'image' || type === 'video' || type === 'audio') {
-                                    hidden = isVO;
-                                }
-                                if (type === 'document') {
-                                    mediaInfo.fileName = inner.fileName || 'documento';
-                                    mediaInfo.mime = mime;
-                                    mediaInfo.sizeBytes = inner.fileLength || buffer.length;
-                                }
-                                try {
-                                    safeDashboardCache(m.key.id, {
-                                        bufferBase64: buffer.toString('base64'),
-                                        mime,
-                                        type,
-                                        fileName: inner.fileName || null,
-                                        text: inner.caption || null,
-                                        fromJid: from
-                                    });
-                                } catch (_) {}
-                            } else {
-                                mediaInfo = { type, url: null };
-                                if (type === 'document') {
-                                    mediaInfo.fileName = inner?.fileName || 'documento';
-                                    mediaInfo.mime = mime;
-                                }
-                            }
-                        }
-                    } catch (e) {
-                        console.error('Erro ao baixar mídia para o dashboard:', e.message);
-                    }
-                }
-
-                if (m.message?.ephemeralMessage) ephemeral = true;
-
-                // quoted (mensagem citada/resposta)
-                const qi = getContextInfo(m.message);
-                let quotedInfo = null;
-                if (qi?.quotedMessage) {
-                    const qText = qi.quotedMessage.conversation
-                        || qi.quotedMessage.extendedTextMessage?.text
-                        || qi.quotedMessage.imageMessage?.caption
-                        || qi.quotedMessage.videoMessage?.caption
-                        || qi.quotedMessage.documentMessage?.caption
-                        || '';
-                    const qSender = qi.participant || null;
-                    const qSenderName = (() => {
-                        try {
-                            const p = groupMetadata.participants?.find(pp => pp.id === qSender);
-                            return p?.name || p?.notify || (qSender ? '@' + qSender.split('@')[0] : null);
-                        } catch (_) { return qSender ? '@' + qSender.split('@')[0] : null; }
-                    })();
-                    quotedInfo = {
-                        text: qText || null,
-                        hasMedia: !!(qi.quotedMessage.imageMessage || qi.quotedMessage.videoMessage || qi.quotedMessage.audioMessage || qi.quotedMessage.stickerMessage || qi.quotedMessage.documentMessage),
-                        senderJid: qSender,
-                        phone: qSender ? qSender.split('@')[0] : null,
-                        name: qSenderName
-                    };
-                }
-
-                const logType = hidden ? 'viewonce' : 'chat';
-                const mediaForDb = mediaInfo;
-                safeDashboardLog(logType,
-                    groupMetadata.subject,
-                    text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),
-                    senderName,
-                    sender.split('@')[0],
-                    mediaForDb,
-                    {
-                        toJid: from,
-                        messageId: m.key.id,
-                        senderJid: sender,
-                        fromMe: !!m.key.fromMe,
-                        quoted: quotedInfo,
-                        hidden,
-                        ephemeral
-                    }
-                );
+                await handleDashboardLog(sock, m, from, sender, senderName, text, groupMetadata);
             }
 
+            // === Save message for !resumir ===
             if (isGroup && isActiveGroup(from) && text && !text.startsWith(config.prefix)) {
                 saveMessage(from, m.pushName || senderName, text);
             }
-            
+
+            // === Activity tracking ===
             if (isBotActive && isGroup) {
-                const { updateMemberActivity } = require('../database/utils');
                 updateMemberActivity(from, sender, senderName);
             }
-            if (isBotActive && (AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && isViewOnce(m.message) && !m.key.fromMe) {
+
+            // === Auto view-once reveal ===
+            if (isBotActive && (AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && !m.key.fromMe) {
                 lastBotResponse = await revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN);
             }
 
+            // === Prefix query ===
             if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && isBotActive) {
-                const stats = readStats();
+                const stats = require('../database/utils').readStats();
                 const now = Date.now();
-                const currentBotName = getBotName(from, config);
-                const statusText = `🌌 *${currentBotName}*\n\n⌨️ *Prefixo:* ${config.prefix}\n⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n⌨️ *Comandos:* ${stats.totalCommands}\n💻 *Plataforma:* ${process.platform === 'win32' ? 'Windows' : 'Linux'}`;
                 lastBotResponse = await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
-                return await sock.sendMessage(from, { text: statusText }, { quoted: m });
+                return await sock.sendMessage(from, {
+                    text: `🌌 *${getBotName(from, config)}*\n\n⌨️ *Prefixo:* ${config.prefix}\n⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n⌨️ *Comandos:* ${stats.totalCommands}\n💻 *Plataforma:* ${process.platform === 'win32' ? 'Windows' : 'Linux'}`
+                }, { quoted: m });
             }
 
+            // === Command detection ===
             if (!text.startsWith(config.prefix)) return;
             const args = text.slice(config.prefix.length).trim().split(/ +/);
             const commandName = args.shift().toLowerCase();
@@ -437,50 +212,34 @@ module.exports = {
             const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
             if (!cmd) return;
 
-            // Comandos de controle de ativamento funcionam mesmo com bot inativo/parcial.
-            // `dashboard`/`dash`/`painel` ligam/desligam o log do painel — funcionam
-            // mesmo em grupos onde o bot nunca foi ativado (!ativar).
+            // === Activation control commands always work ===
             const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel'];
             if (isGroup && !isActiveGroup(from) && !activationControlCmds.includes(cmd.name)) {
-                // Em grupo inativo E não-parcial, mantém comportamento original
                 if (!isPartialActive(from)) return;
             }
 
-            // ============================================================
-            // COOLDOWN / ANTI-SPAM
-            // ============================================================
+            // === Cooldown ===
             if (!m.key.fromMe) {
                 const remaining = cooldown.checkCooldown(cmd.name, sender);
                 if (remaining > 0) {
                     console.log(`⏳ [COOLDOWN] !${commandName} por ${senderName} — aguarde ${Math.ceil(remaining / 1000)}s`);
-                    try {
-                        await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
-                    } catch (_) {}
+                    try { await sock.sendMessage(from, { react: { text: '⏳', key: m.key } }); } catch (_) {}
                     return;
                 }
             }
 
-            // ============================================================
-            // ATIVAMENTO PARCIAL: se o grupo está em modo parcial,
-            // comandos admin ficam mudos e comandos de mídia só
-            // respondem após `partialWaitMs` sem reação de outro bot.
-            // Comandos de controle de ativamento (!ativar/!desativar/
-            // !ativarp/!desativarp/!status) sempre passam — caso
-            // contrário, o usuário não consegue sair do modo parcial.
-            // ============================================================
+            // === Partial activation ===
             if (isGroup && isPartialActive(from)) {
                 if (PARTIAL_BYPASS_COMMANDS.has(cmd.name)) {
-                    // Bypass intencional — permite sair do modo parcial.
+                    // bypass
                 } else if (!_isPartialAllowed(cmd)) {
                     console.log(`🤐 [PARCIAL] comando ${config.prefix}${commandName} bloqueado em ${from}`);
                     try {
-                        safeDashboardLog('action', (await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }))).subject,
-                            `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, sender.split('@')[0],
-                            null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+                        const gm = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
+                        safeDashboardLog('action', gm.subject, `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
                     } catch (_) {}
                     return;
                 } else {
-                    // Registrar pendente e esperar — se alguém reagir, cancela.
                     const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
                     const waitMs = getPartialWaitMs();
                     const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
@@ -495,12 +254,14 @@ module.exports = {
                 }
             }
 
+            // === Pre-command tracking ===
             const groupMetadata = isGroup ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
             if (isGroup) safeDashboardRememberGroup(from, {
                 subject: groupMetadata.subject,
                 memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
                 ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
             });
+
             const botActiveInGroup = isGroup && (isActiveGroup(from) || isPartialActive(from));
             if (botActiveInGroup || !isGroup) {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
@@ -517,6 +278,7 @@ module.exports = {
                 ai: require('../services/ai')
             };
 
+            // === Tracing setup ===
             const t0 = Date.now();
             const stepStart = t0;
             let stepN = 0;
@@ -527,19 +289,16 @@ module.exports = {
                 const delta = now - stepStart;
                 const total = now - t0;
                 stepN += 1;
-                const detailPart = detail ? ` — ${detail}` : '';
-                console.log(`   └─ [${fmtTs()}] [+${String(delta).padStart(5,' ')}ms / total ${total}ms] ${traceTag} #${stepN} ${label}${detailPart}`);
+                console.log(`   └─ [${fmtTs()}] [+${String(delta).padStart(5,' ')}ms / total ${total}ms] ${traceTag} #${stepN} ${label}${detail ? ` — ${detail}` : ''}`);
             };
             const origLog = console.log.bind(console);
             const origInfo = console.info?.bind(console);
             const origWarn = console.warn?.bind(console);
+
             console.log = (...a) => {
                 try {
                     const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
-                    if (msg && !msg.includes('[INTERAÇÃO]') && !msg.startsWith('   └─')) {
-                        traceLog('log', msg);
-                        return;
-                    }
+                    if (msg && !msg.includes('[INTERAÇÃO]') && !msg.startsWith('   └─')) { traceLog('log', msg); return; }
                 } catch (_) {}
                 return origLog(...a);
             };
@@ -548,31 +307,27 @@ module.exports = {
 
             traceLog('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
-            let result;
+            // === Command execution ===
             try {
-                result = await cmd.execute(sock, m, context);
+                const result = await cmd.execute(sock, m, context);
+                if (result !== undefined) lastBotResponse = result;
+                const elapsed = Date.now() - t0;
+                traceLog('fim', `ok em ${elapsed}ms`);
+                if (botActiveInGroup && elapsed >= 800) {
+                    safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
-                const errText = `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`;
                 console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
                 traceLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
                 if (botActiveInGroup || !isGroup) {
-                    safeDashboardLog('error', groupMetadata.subject, errText, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                    safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
+                throw cmdErr;
+            } finally {
                 console.log = origLog;
                 if (origInfo) console.info = origInfo;
                 if (origWarn) console.warn = origWarn;
-                throw cmdErr;
-            }
-            console.log = origLog;
-            if (origInfo) console.info = origInfo;
-            if (origWarn) console.warn = origWarn;
-
-            if (result !== undefined) lastBotResponse = result;
-            const elapsed = Date.now() - t0;
-            traceLog('fim', `ok em ${elapsed}ms`);
-            if (botActiveInGroup && elapsed >= 800) {
-                safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
             }
 
         } catch (e) {

@@ -17,7 +17,7 @@
         summaryPrompt: 'Prompt do !resumir — define tom/forma do resumo.',
         stickerPack: 'Nome do pack das figurinhas geradas.',
         stickerAuthor: 'Autor publicado nos EXIF das figurinhas.',
-        geminiApiKey: 'Chave da API Gemini. Não compartilhe — dá acesso à sua conta.',
+        geminiApiKey: 'Chave da API Gemini (definida via .env). Não compartilhe.',
         dashboardEnabled: 'Liga/desliga o painel web do bot.',
         dashboardPort: 'Porta HTTP do painel (3000 por padrão).',
         dashboardMaxLogs: 'Máx. de linhas de log mantidas no banco antes do trim.',
