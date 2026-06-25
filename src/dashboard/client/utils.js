@@ -79,7 +79,7 @@
                 composer: $('composer'),
                 toast: $('toast'),
                 backBtn: $('backBtn'),
-                mobileBackFromStats: $('mobileBackFromStats'),
+                mobileBackFromStats: null,
                 openStatsMobile: $('openStatsMobile'),
                 colStats: $('colStats'),
                 mobileTabbar: $('mobileTabbar'),

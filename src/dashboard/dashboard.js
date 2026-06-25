@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { exec } = require('child_process');
 const express = require('express');
 const { Server } = require('socket.io');
 const cookieSession = require('cookie-session');
@@ -312,6 +313,101 @@ function init(config) {
         }
         if (adminAuth.setCredentials(username, password)) return json(res, true);
         return json(res, false, { error: 'Erro ao salvar' }, 500);
+    });
+
+    function runShell(cmd, { timeoutMs = 5 * 60 * 1000 } = {}) {
+        return new Promise((resolve) => {
+            try {
+                exec(cmd, {
+                    cwd: process.cwd(),
+                    maxBuffer: 8 * 1024 * 1024,
+                    windowsHide: true,
+                    timeout: timeoutMs
+                }, (err, stdout, stderr) => {
+                    resolve({
+                        ok: !err,
+                        out: (stdout || '').trim(),
+                        err: (stderr || '').trim() || err?.message || null
+                    });
+                });
+            } catch (e) { resolve({ ok: false, out: '', err: e?.message || String(e) }); }
+        });
+    }
+
+    const mgmtLocks = new Map();
+    function acquireMgmtLock(key, ownerLabel) {
+        const now = Date.now();
+        const cur = mgmtLocks.get(key);
+        if (cur && cur.until > now) {
+            return { ok: false, until: cur.until, owner: cur.owner };
+        }
+        mgmtLocks.set(key, { until: now + 90 * 1000, owner: ownerLabel });
+        return { ok: true };
+    }
+    function releaseMgmtLock(key) { mgmtLocks.delete(key); }
+
+    app.post('/api/admin/update', async (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        const lockKey = 'update';
+        const got = acquireMgmtLock(lockKey, req.session?.adminUser || 'admin');
+        if (!got.ok) {
+            return json(res, false, { error: 'Já existe uma atualização em andamento. Aguarde.' }, 429);
+        }
+        try {
+            const before = await runShell('git rev-parse --short HEAD');
+            const pull = await runShell('git pull', { timeoutMs: 3 * 60 * 1000 });
+            const after = pull.ok ? await runShell('git rev-parse --short HEAD') : { out: '' };
+            return json(res, true, {
+                command: 'git pull',
+                before: before.out || '?',
+                after: after.out || before.out || '?',
+                changed: pull.ok && before.out !== after.out,
+                out: pull.out,
+                err: pull.err
+            });
+        } finally {
+            releaseMgmtLock(lockKey);
+        }
+    });
+
+    app.post('/api/admin/restart', async (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        const lockKey = 'restart';
+        const got = acquireMgmtLock(lockKey, req.session?.adminUser || 'admin');
+        if (!got.ok) {
+            return json(res, false, { error: 'Já existe um reinício em andamento. Aguarde.' }, 429);
+        }
+        try {
+            const r = await runShell('pm2 restart all', { timeoutMs: 60 * 1000 });
+            return json(res, true, {
+                command: 'pm2 restart all',
+                ok: r.ok,
+                out: r.out,
+                err: r.err
+            });
+        } finally {
+            setTimeout(() => releaseMgmtLock(lockKey), 5000);
+        }
+    });
+
+    app.post('/api/admin/install', async (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        const lockKey = 'install';
+        const got = acquireMgmtLock(lockKey, req.session?.adminUser || 'admin');
+        if (!got.ok) {
+            return json(res, false, { error: 'Já existe uma instalação em andamento. Aguarde.' }, 429);
+        }
+        try {
+            const r = await runShell('npm install --no-audit --no-fund', { timeoutMs: 10 * 60 * 1000 });
+            return json(res, true, {
+                command: 'npm install',
+                ok: r.ok,
+                out: r.out,
+                err: r.err
+            });
+        } finally {
+            setTimeout(() => releaseMgmtLock(lockKey), 5000);
+        }
     });
 
     app.get('/api/admin/config', (req, res) => {

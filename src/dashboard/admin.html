@@ -70,11 +70,27 @@
   .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
   .modal button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 7px 12px; font-size: 12px; cursor: pointer; }
   .modal button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
+  .modal button.primary.danger { background: #d29922; border-color: #d29922; color: #fff; }
+  .modal button.primary.danger:hover { background: #b97f1a; }
   .modal .err-msg { color: #f85149; font-size: 11px; min-height: 14px; margin-top: 6px; }
 
   .hidden { display: none !important; }
   .empty { padding: 40px; text-align: center; color: #9aa6b2; font-size: 13px; }
   .info-line { font-size: 11px; color: #9aa6b2; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+
+  .mgmt-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; padding: 10px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+  .mgmt-bar .lbl { font-size: 11px; color: #9aa6b2; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
+  .mgmt-btn { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s, border-color 0.15s, opacity 0.15s; }
+  .mgmt-btn:hover:not(:disabled) { background: #2a313c; border-color: #5b8cff; }
+  .mgmt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .mgmt-btn.busy { background: #d29922; border-color: #d29922; color: #fff; cursor: wait; opacity: 1; }
+  .mgmt-btn.ok { background: #1f2530; border-color: #3fb950; color: #3fb950; }
+  .mgmt-btn.err { background: #1f2530; border-color: #f85149; color: #f85149; }
+  .mgmt-btn .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: mgmt-spin 0.8s linear infinite; }
+  @keyframes mgmt-spin { to { transform: rotate(360deg); } }
+  .mgmt-status { font-size: 11px; color: #9aa6b2; font-family: ui-monospace, monospace; margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mgmt-status.ok { color: #3fb950; }
+  .mgmt-status.err { color: #f85149; }
 </style>
 </head>
 <body>
@@ -82,11 +98,11 @@
 <div class="login-card" id="loginCard">
   <h2>🔐 Login</h2>
   <p>Painel admin — editar config do bot.</p>
-  <form id="loginForm">
+  <form id="loginForm" action="/api/admin/login" method="POST">
     <label>Usuário</label>
-    <input type="text" id="loginUser" autocomplete="username" required />
+    <input type="text" id="loginUser" name="username" autocomplete="username" required />
     <label>Senha</label>
-    <input type="password" id="loginPass" autocomplete="current-password" required />
+    <input type="password" id="loginPass" name="password" autocomplete="current-password" required />
     <button class="primary" type="submit">Entrar</button>
     <div class="err" id="loginError"></div>
   </form>
@@ -106,6 +122,13 @@
   </header>
 
   <div class="wrap">
+    <div class="mgmt-bar" id="mgmtBar">
+      <span class="lbl">Gerenciar:</span>
+      <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar (git pull)</button>
+      <button class="mgmt-btn" data-mgmt="install" id="btnMgmtInstall" title="Roda 'npm install'">📦 Instalar deps</button>
+      <button class="mgmt-btn" data-mgmt="restart" id="btnMgmtRestart" title="Roda 'pm2 restart all'">🔁 Reiniciar bot</button>
+      <span class="mgmt-status" id="mgmtStatus">pronto</span>
+    </div>
     <div class="info-line" id="infoLine">—</div>
     <div class="toolbar">
       <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar..." />
@@ -123,13 +146,13 @@
   <div class="modal">
     <h3>🔑 Credenciais</h3>
     <label>Usuário atual</label>
-    <input type="text" id="credCurUser" readonly />
+    <input type="text" id="credCurUser" name="username" readonly />
     <label>Novo usuário</label>
-    <input type="text" id="credNewUser" />
+    <input type="text" id="credNewUser" name="username" autocomplete="username" />
     <label>Nova senha</label>
-    <input type="password" id="credNewPass" />
+    <input type="password" id="credNewPass" name="new-password" autocomplete="new-password" />
     <label>Confirmar</label>
-    <input type="password" id="credConfirm" />
+    <input type="password" id="credConfirm" name="confirm-password" autocomplete="new-password" />
     <div class="err-msg" id="credErr"></div>
     <div class="row">
       <button id="credCancel">Cancelar</button>
@@ -147,6 +170,19 @@
     <div class="row">
       <button id="editCancel">Cancelar</button>
       <button class="primary" id="editSave">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="mgmtModal">
+  <div class="modal" style="min-width:420px">
+    <h3 id="mgmtTitle">Confirmar ação</h3>
+    <p id="mgmtDesc" style="margin:0 0 8px;color:#9aa6b2;font-size:13px">—</p>
+    <pre id="mgmtCmd" style="margin:0 0 10px;padding:8px 10px;background:#0e1116;border:1px solid #30363d;border-radius:5px;font-family:ui-monospace,monospace;font-size:12px;color:#d29922;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;"></pre>
+    <div class="err-msg" id="mgmtErr"></div>
+    <div class="row">
+      <button id="mgmtCancel">Cancelar</button>
+      <button class="primary danger" id="mgmtConfirm">Executar</button>
     </div>
   </div>
 </div>
@@ -327,6 +363,122 @@ $('editSave').addEventListener('click', () => {
     cfg[editKey] = v; edit(editKey, v);
     $('editModal').classList.remove('show'); editKey = null; rerender(); toast('Editado — clique 💾', 'ok');
   } catch (e) { $('editErr').textContent = 'JSON inválido: ' + e.message; }
+});
+
+const MGMT_INFO = {
+  update:  { label: 'Atualizar (git pull)', cmd: 'git pull',                          desc: 'Baixa as últimas alterações do repositório. NÃO reinicia o bot — você pode revisar antes.' },
+  install: { label: 'Instalar dependências', cmd: 'npm install',                      desc: 'Instala/atualiza pacotes do package.json. Pode levar alguns minutos.' },
+  restart: { label: 'Reiniciar bot',       cmd: 'pm2 restart all',                    desc: 'Reinicia o bot via pm2. A sessão do dashboard será desconectada por alguns segundos.' }
+};
+const mgmtCooldown = new Map();
+const MGMT_COOLDOWN_MS = 8 * 1000;
+let mgmtBusy = false;
+
+function setMgmtStatus(text, cls) {
+  const el = $('mgmtStatus');
+  el.textContent = text;
+  el.className = 'mgmt-status' + (cls ? ' ' + cls : '');
+}
+function setBtnState(btn, kind) {
+  if (!btn) return;
+  btn.classList.remove('busy', 'ok', 'err');
+  if (kind === 'busy') {
+    btn.classList.add('busy');
+    btn.disabled = true;
+    const orig = btn.dataset.origLabel || btn.textContent;
+    btn.dataset.origLabel = orig;
+    btn.innerHTML = '<span class="spin"></span> executando…';
+  } else if (kind === 'ok') {
+    btn.classList.add('ok');
+    btn.disabled = false;
+    btn.textContent = btn.dataset.origLabel || btn.textContent;
+  } else if (kind === 'err') {
+    btn.classList.add('err');
+    btn.disabled = false;
+    btn.textContent = btn.dataset.origLabel || btn.textContent;
+  } else if (kind === 'reset') {
+    btn.classList.remove('busy', 'ok', 'err');
+    btn.disabled = false;
+    btn.textContent = btn.dataset.origLabel || btn.textContent;
+  }
+}
+
+function askMgmt(action) {
+  const info = MGMT_INFO[action];
+  if (!info) return;
+  const last = mgmtCooldown.get(action) || 0;
+  const now = Date.now();
+  if (now - last < MGMT_COOLDOWN_MS) {
+    toast('Aguarde alguns segundos antes de repetir', 'err');
+    return;
+  }
+  if (mgmtBusy) { toast('Outra ação em andamento', 'err'); return; }
+  $('mgmtTitle').textContent = 'Confirmar: ' + info.label;
+  $('mgmtDesc').textContent = info.desc;
+  $('mgmtCmd').textContent = '$ ' + info.cmd;
+  $('mgmtErr').textContent = '';
+  $('mgmtConfirm').dataset.action = action;
+  $('mgmtConfirm').textContent = 'Executar';
+  $('mgmtConfirm').disabled = false;
+  $('mgmtCancel').disabled = false;
+  $('mgmtModal').classList.add('show');
+}
+
+$('mgmtCancel').addEventListener('click', () => $('mgmtModal').classList.remove('show'));
+
+$('mgmtConfirm').addEventListener('click', async () => {
+  const action = $('mgmtConfirm').dataset.action;
+  if (!action) return;
+  $('mgmtConfirm').disabled = true;
+  $('mgmtCancel').disabled = true;
+  mgmtBusy = true;
+  mgmtCooldown.set(action, Date.now());
+  $('mgmtModal').classList.remove('show');
+
+  const btn = $('btnMgmt' + action[0].toUpperCase() + action.slice(1));
+  setBtnState(btn, 'busy');
+  setMgmtStatus('Executando ' + action + '…');
+
+  try {
+    const r = await api('/api/admin/' + action, { method: 'POST' });
+    if (!r.ok) {
+      const msg = r.data?.error || ('HTTP ' + r.status);
+      setBtnState(btn, 'err');
+      setMgmtStatus('✗ ' + msg, 'err');
+      toast('Falha: ' + msg, 'err');
+    } else {
+      const d = r.data || {};
+      if (action === 'update') {
+        const changed = d.changed;
+        const txt = changed ? `atualizado ${d.before} → ${d.after}` : `sem alterações (${d.after || d.before})`;
+        setBtnState(btn, 'ok');
+        setMgmtStatus('✓ ' + txt, 'ok');
+        toast('git pull: ' + txt, 'ok');
+      } else if (action === 'install') {
+        setBtnState(btn, d.ok !== false ? 'ok' : 'err');
+        setMgmtStatus(d.ok !== false ? '✓ npm install concluído' : '✗ npm install falhou', d.ok !== false ? 'ok' : 'err');
+        toast(d.ok !== false ? 'npm install ✓' : 'npm install falhou', d.ok !== false ? 'ok' : 'err');
+      } else if (action === 'restart') {
+        setBtnState(btn, d.ok ? 'ok' : 'err');
+        setMgmtStatus(d.ok ? '✓ pm2 restart enviado' : '✗ pm2 restart falhou', d.ok ? 'ok' : 'err');
+        toast(d.ok ? 'Reiniciando…' : 'Falhou', d.ok ? 'ok' : 'err');
+        if (d.ok) {
+          setTimeout(() => { try { location.reload(); } catch (_) {} }, 3500);
+        }
+      }
+    }
+  } catch (e) {
+    setBtnState(btn, 'err');
+    setMgmtStatus('✗ ' + (e?.message || 'erro'), 'err');
+    toast('Erro: ' + (e?.message || 'falha'), 'err');
+  } finally {
+    mgmtBusy = false;
+    setTimeout(() => setBtnState(btn, 'reset'), 4000);
+  }
+});
+
+document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
+  btn.addEventListener('click', () => askMgmt(btn.dataset.mgmt));
 });
 
 load();

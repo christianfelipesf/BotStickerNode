@@ -151,9 +151,6 @@
                 renderGroups();
             });
         }
-        if (D.refs.mobileBackFromStats) {
-            D.refs.mobileBackFromStats.addEventListener('click', () => setScreen(state.activeJid ? 'chat' : 'chats'));
-        }
         if (D.refs.openStatsMobile) {
             D.refs.openStatsMobile.addEventListener('click', () => {
                 setScreen('stats');
