@@ -44,6 +44,7 @@ function setCredentials(u, p) {
     const d = load() || {};
     d.username = u;
     d.passwordHash = bcrypt.hashSync(p, 10);
+    d.sessionSecret = crypto.randomBytes(32).toString('hex');
     return save(d);
 }
 

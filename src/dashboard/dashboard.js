@@ -628,7 +628,6 @@ function init(config) {
                 const c = countDashboardLogs();
                 if (c > maxRows || (maxAgeMs > 0 && c > 0)) {
                     trimDashboardLogs({ maxAgeMs, maxRows });
-                    // Checkpoint passivo do WAL pra evitar bot.db-wal inflado
                     try { require('../database/utils').checkpointWal(); } catch (_) {}
                 }
             } catch (_) {}
@@ -637,11 +636,11 @@ function init(config) {
 
         try {
             const before = countDashboardLogs();
-            if (before > maxRows || (maxAgeMs > 0 && before > 0)) {
-                trimDashboardLogs({ maxAgeMs, maxRows });
+            if (before > maxRows) {
+                trimDashboardLogs({ maxAgeMs: 0, maxRows });
                 const after = countDashboardLogs();
                 if (after !== before) {
-                    console.log(`🧹 [dashboard] logs: ${before} → ${after} (maxRows=${maxRows}, maxAgeHours=${maxAgeMs/3600000})`);
+                    console.log(`🧹 [dashboard] logs (maxRows): ${before} → ${after} (max=${maxRows})`);
                 }
             }
         } catch (_) {}
