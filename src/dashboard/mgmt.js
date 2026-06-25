@@ -17,7 +17,6 @@ const lock = (k, ttlMs = 90 * 1000) => {
 const unlock = (k, delayMs = 0) => { if (delayMs) setTimeout(() => locks.delete(k), delayMs); else locks.delete(k); };
 
 const handlers = {
-    // GET-only: verifica se há atualizações disponíveis (sem modificar nada)
     'check-update': async () => {
         const fetch = await run('git fetch', 60 * 1000);
         if (!fetch.ok) {
@@ -33,17 +32,45 @@ const handlers = {
         return { behind, summary: summary.split('\n').filter(Boolean) };
     },
     update: async () => {
+        const statusCheck = await run('git status --porcelain', 15 * 1000);
+        const hasLocalChanges = statusCheck.ok && statusCheck.out.trim().length > 0;
+
         const before = await run('git rev-parse --short HEAD', 30 * 1000);
-        const pull = await run('git pull', 3 * 60 * 1000);
-        const after = pull.ok ? await run('git rev-parse --short HEAD', 30 * 1000) : { out: '' };
-        const changed = pull.ok && before.out !== after.out;
+        const pull = await run('git pull --ff-only', 3 * 60 * 1000);
+        let after = pull.ok ? await run('git rev-parse --short HEAD', 30 * 1000) : { out: '' };
+        let changed = pull.ok && before.out !== after.out;
+        let usedFallback = false;
+
+        if (!changed && !hasLocalChanges && pull.ok) {
+            const stillBehind = await run('git rev-list HEAD..@{upstream} --count', 30 * 1000);
+            if (parseInt(stillBehind.out || '0', 10) > 0) {
+                const pullMerge = await run('git pull --no-ff', 3 * 60 * 1000);
+                if (pullMerge.ok) {
+                    const afterMerge = await run('git rev-parse --short HEAD', 30 * 1000);
+                    changed = before.out !== afterMerge.out;
+                    after = afterMerge;
+                    usedFallback = true;
+                }
+            }
+        }
+
         let pkgChanged = false;
         if (changed) {
             const diff = await run(`git diff --name-only ${before.out}..${after.out}`, 30 * 1000);
             const files = (diff.out || '').split('\n').map(f => f.trim()).filter(Boolean);
             pkgChanged = files.some(f => f === 'package.json' || f === 'package-lock.json');
         }
-        return { command: 'git pull', before: before.out || '?', after: after.out || before.out || '?', changed, pkgChanged, ok: pull.ok, out: pull.out, err: pull.err };
+        return {
+            command: usedFallback ? 'git pull --no-ff' : 'git pull --ff-only',
+            before: before.out || '?',
+            after: after.out || before.out || '?',
+            changed,
+            pkgChanged,
+            ok: true,
+            hasLocalChanges,
+            out: pull.out || '',
+            err: changed ? '' : (hasLocalChanges ? 'Há alterações locais não commitadas. Commit ou stash antes de atualizar.' : (pull.err || ''))
+        };
     },
     restart: async () => {
         const r = await run('pm2 restart all', 60 * 1000);

@@ -237,7 +237,26 @@ async function doUpdate(btn) {
         setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
         return;
     }
-    const txt = d.changed ? `atualizado ${d.before} → ${d.after}` : `sem alterações (${d.after || d.before})`;
+    let txt;
+    if (d.changed) {
+        txt = `atualizado ${d.before} → ${d.after}`;
+    } else if (d.hasLocalChanges) {
+        txt = `alterações locais impedem o pull. Commit ou stash primeiro.`;
+        setBtn(btn, 'err');
+        setStatus('✗ ' + txt, 'err');
+        toast('git pull: ' + txt, 'err');
+        $('updateBadge').className = 'badge hidden';
+        return;
+    } else if (d.err) {
+        txt = `falhou: ${d.err}`;
+        setBtn(btn, 'err');
+        setStatus('✗ ' + txt, 'err');
+        toast('git pull: ' + txt, 'err');
+        $('updateBadge').className = 'badge hidden';
+        return;
+    } else {
+        txt = `sem alterações (${d.after || d.before})`;
+    }
     setBtn(btn, 'ok'); setStatus('✓ ' + txt, 'ok'); toast('git pull: ' + txt, 'ok');
 
     // Esconde badge de atualização
