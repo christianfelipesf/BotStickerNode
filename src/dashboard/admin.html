@@ -3,542 +3,134 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Admin — Config Editor</title>
+<title>Admin</title>
 <style>
-  :root {
-    --bg: #0a0e14;
-    --bg2: #131820;
-    --bg3: #1c232d;
-    --bg4: #252e3a;
-    --fg: #e6edf3;
-    --fg2: #9aa6b2;
-    --fg3: #6e7681;
-    --accent: #5b8cff;
-    --accent2: #3b6fe6;
-    --green: #3fb950;
-    --red: #f85149;
-    --orange: #d29922;
-    --purple: #a371f7;
-    --border: #30363d;
-    --border2: #444c56;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
-    --shadow: 0 8px 24px rgba(0,0,0,0.4);
-  }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-  }
-  header {
-    background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    backdrop-filter: blur(10px);
-  }
-  header h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.2px; }
-  header .pill {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 11px;
-    font-size: 11px;
-    color: var(--fg2);
-    font-weight: 500;
-  }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0e1116; color: #e6edf3; }
+  header { background: #161b22; border-bottom: 1px solid #30363d; padding: 10px 18px; display: flex; align-items: center; gap: 12px; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   header .spacer { flex: 1; }
-  header button, header a.btn {
-    background: var(--bg3);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 13px;
-    cursor: pointer;
-    text-decoration: none;
-    transition: all 0.15s;
-  }
-  header button:hover, header a.btn:hover { background: var(--bg4); border-color: var(--border2); }
-  header button.danger { color: var(--red); border-color: rgba(248,81,73,0.4); }
-  header button.danger:hover { background: rgba(248,81,73,0.1); }
+  header a, header button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; text-decoration: none; }
+  header button:hover, header a:hover { background: #2a313c; }
+  header button.danger { color: #f85149; border-color: #f85149; }
 
-  .wrap { padding: 24px; max-width: 1240px; margin: 0 auto; }
+  .wrap { padding: 18px; max-width: 1100px; margin: 0 auto; }
+  .login-card { max-width: 380px; margin: 60px auto; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; }
+  .login-card h2 { margin: 0 0 4px; font-size: 18px; }
+  .login-card p { margin: 0 0 18px; color: #9aa6b2; font-size: 13px; }
+  .login-card label { display: block; font-size: 11px; color: #9aa6b2; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .login-card input { width: 100%; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 9px 11px; color: #e6edf3; font-size: 14px; }
+  .login-card input:focus { outline: none; border-color: #5b8cff; }
+  .login-card button.primary { width: 100%; margin-top: 16px; background: #5b8cff; color: #fff; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .login-card button.primary:hover { background: #3b6fe6; }
+  .login-card .err { color: #f85149; font-size: 13px; margin-top: 10px; min-height: 16px; }
 
-  .login-shell {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    background:
-      radial-gradient(circle at 30% 20%, rgba(91,140,255,0.08), transparent 50%),
-      radial-gradient(circle at 70% 80%, rgba(163,113,247,0.06), transparent 50%);
-  }
-  .login-card {
-    width: 100%;
-    max-width: 420px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 36px 32px;
-    box-shadow: var(--shadow);
-  }
-  .login-logo {
-    width: 60px; height: 60px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, var(--accent), var(--purple));
-    display: flex; align-items: center; justify-content: center;
-    font-size: 30px;
-    margin-bottom: 18px;
-  }
-  .login-card h2 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
-  .login-card .subtitle { margin: 0 0 24px; color: var(--fg2); font-size: 13px; }
-  .login-card label {
-    display: block;
-    font-size: 11px;
-    color: var(--fg2);
-    margin: 14px 0 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-  }
-  .login-card input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 11px 14px;
-    color: var(--fg);
-    font-size: 14px;
-    transition: border-color 0.15s;
-  }
-  .login-card input:focus { outline: none; border-color: var(--accent); }
-  .login-card button.primary {
-    width: 100%;
-    margin-top: 22px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 12px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .login-card button.primary:hover { background: var(--accent2); }
-  .login-card .error {
-    color: var(--red);
-    font-size: 13px;
-    margin-top: 12px;
-    min-height: 18px;
-    text-align: center;
-  }
-  .login-hint {
-    margin-top: 22px;
-    padding: 12px;
-    background: var(--bg3);
-    border-radius: 8px;
-    font-size: 12px;
-    color: var(--fg2);
-    line-height: 1.5;
-  }
-  .login-hint code {
-    font-family: var(--mono);
-    background: var(--bg);
-    padding: 1px 5px;
-    border-radius: 3px;
-    color: var(--orange);
-  }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .toolbar input.search { flex: 1; min-width: 200px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 11px; color: #e6edf3; font-size: 13px; }
+  .toolbar input.search:focus { outline: none; border-color: #5b8cff; }
+  .toolbar button { background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 12px; cursor: pointer; }
+  .toolbar button:hover { background: #1f2530; }
+  .toolbar button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
+  .toolbar button.primary:hover { background: #3b6fe6; }
+  .toolbar button.danger { color: #f85149; border-color: #f85149; }
 
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 14px;
-    margin-bottom: 22px;
-  }
-  .stat-card {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-  }
-  .stat-card .label {
-    font-size: 11px;
-    color: var(--fg2);
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    font-weight: 600;
-    margin-bottom: 6px;
-  }
-  .stat-card .value {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--fg);
-    font-family: var(--mono);
-  }
-  .stat-card .sub {
-    font-size: 11px;
-    color: var(--fg3);
-    margin-top: 2px;
-  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
+  .card:hover { border-color: #444c56; }
+  .card.dirty { border-color: #d29922; }
+  .card .row1 { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .card .name { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; word-break: break-all; }
+  .card .type { font-size: 10px; color: #6e7681; background: #1f2530; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; }
+  .card input[type=text], .card input[type=number] { width: 100%; background: #0e1116; border: 1px solid #30363d; border-radius: 5px; padding: 6px 9px; color: #e6edf3; font-size: 12px; font-family: ui-monospace, monospace; }
+  .card input:focus { outline: none; border-color: #5b8cff; }
+  .card .toggle { position: relative; width: 40px; height: 22px; background: #1f2530; border-radius: 999px; cursor: pointer; transition: background 0.2s; }
+  .card .toggle.on { background: #3fb950; }
+  .card .toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: left 0.2s; }
+  .card .toggle.on::after { left: 21px; }
+  .card .row2 { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .card .preview { flex: 1; font-family: ui-monospace, monospace; font-size: 11px; color: #9aa6b2; background: #0e1116; padding: 4px 8px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .card .row2 button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 5px 9px; font-size: 11px; cursor: pointer; }
+  .card .row2 button:hover { background: #2a313c; }
+  .card .row2 button.save { background: #d29922; border-color: #d29922; color: #fff; }
+  .card .actions-row { display: flex; gap: 6px; }
+  .card textarea { width: 100%; background: #0e1116; border: 1px solid #30363d; border-radius: 5px; padding: 6px 9px; color: #e6edf3; font-size: 12px; font-family: ui-monospace, monospace; resize: vertical; min-height: 50px; }
 
-  .toolbar {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .toolbar input.search {
-    flex: 1;
-    min-width: 220px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    color: var(--fg);
-    font-size: 13px;
-  }
-  .toolbar input.search:focus { outline: none; border-color: var(--accent); }
-  .toolbar button {
-    background: var(--bg2);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .toolbar button:hover { background: var(--bg3); border-color: var(--border2); }
-  .toolbar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .toolbar button.primary:hover { background: var(--accent2); }
-  .toolbar button.danger { color: var(--red); border-color: rgba(248,81,73,0.4); }
-  .toolbar button.danger:hover { background: rgba(248,81,73,0.1); }
-
-  .group-section {
-    margin-bottom: 22px;
-  }
-  .group-section h3 {
-    margin: 0 0 10px;
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.7px;
-    color: var(--fg2);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .group-section h3 .badge-count {
-    background: var(--bg3);
-    color: var(--fg);
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-
-  .cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 12px;
-  }
-
-  .card {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-    transition: all 0.15s;
-    position: relative;
-  }
-  .card:hover { border-color: var(--border2); }
-  .card.dirty { border-color: var(--orange); box-shadow: 0 0 0 1px rgba(210,153,34,0.3); }
-
-  .card .row1 {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-  .card .name {
-    font-family: var(--mono);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--fg);
-    word-break: break-all;
-  }
-  .card .type {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg3);
-    background: var(--bg3);
-    padding: 2px 6px;
-    border-radius: 4px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .card .row2 {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .card .value-preview {
-    font-size: 11px;
-    color: var(--fg2);
-    font-family: var(--mono);
-    background: var(--bg);
-    padding: 4px 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .card .actions { display: flex; gap: 4px; }
-  .card .actions button {
-    background: var(--bg3);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 5px 10px;
-    font-size: 11px;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .card .actions button:hover { background: var(--bg4); }
-  .card .actions button.save { background: var(--orange); border-color: var(--orange); color: #fff; }
-
-  /* Toggle switch */
-  .toggle {
-    position: relative;
-    width: 44px;
-    height: 24px;
-    background: var(--bg3);
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.2s;
-    flex-shrink: 0;
-  }
-  .toggle.on { background: var(--green); }
-  .toggle::after {
-    content: '';
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
-    background: #fff;
-    border-radius: 50%;
-    transition: left 0.2s;
-  }
-  .toggle.on::after { left: 23px; }
-
-  .input-text, .input-num {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 7px 10px;
-    color: var(--fg);
-    font-size: 13px;
-    font-family: var(--mono);
-  }
-  .input-text:focus, .input-num:focus { outline: none; border-color: var(--accent); }
-
-  .toast {
-    position: fixed;
-    right: 22px;
-    bottom: 22px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 13px 18px;
-    font-size: 13px;
-    box-shadow: var(--shadow);
-    opacity: 0;
-    transform: translateY(10px);
-    transition: opacity 0.2s, transform 0.2s;
-    pointer-events: none;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
+  .toast { position: fixed; right: 18px; bottom: 18px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 100; }
   .toast.show { opacity: 1; transform: translateY(0); }
-  .toast.ok { border-color: var(--green); color: var(--green); }
-  .toast.err { border-color: var(--red); color: var(--red); }
+  .toast.ok { border-color: #3fb950; color: #3fb950; }
+  .toast.err { border-color: #f85149; color: #f85149; }
 
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(2px);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-  }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 200; }
   .modal-overlay.show { display: flex; }
-  .modal {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 26px;
-    min-width: 380px;
-    max-width: 90vw;
-    box-shadow: var(--shadow);
-  }
-  .modal h3 { margin: 0 0 16px; font-size: 17px; font-weight: 600; }
-  .modal label {
-    display: block;
-    font-size: 11px;
-    color: var(--fg2);
-    margin: 12px 0 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-  }
-  .modal input, .modal textarea {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 9px 12px;
-    color: var(--fg);
-    font-size: 13px;
-  }
-  .modal textarea {
-    font-family: var(--mono);
-    resize: vertical;
-    min-height: 80px;
-  }
-  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
-  .modal button {
-    background: var(--bg3);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 14px;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .modal button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .modal button.primary:hover { background: var(--accent2); }
-  .modal .err-msg { color: var(--red); font-size: 12px; min-height: 16px; margin-top: 8px; }
+  .modal { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 22px; min-width: 360px; max-width: 90vw; }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; }
+  .modal label { display: block; font-size: 11px; color: #9aa6b2; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .modal input, .modal textarea { width: 100%; background: #0e1116; border: 1px solid #30363d; border-radius: 5px; padding: 8px 10px; color: #e6edf3; font-size: 13px; font-family: inherit; }
+  .modal textarea { font-family: ui-monospace, monospace; resize: vertical; min-height: 80px; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 7px 12px; font-size: 12px; cursor: pointer; }
+  .modal button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
+  .modal .err-msg { color: #f85149; font-size: 11px; min-height: 14px; margin-top: 6px; }
 
   .hidden { display: none !important; }
-
-  .empty-state {
-    padding: 50px 20px;
-    text-align: center;
-    color: var(--fg2);
-    font-size: 14px;
-  }
+  .empty { padding: 40px; text-align: center; color: #9aa6b2; font-size: 13px; }
+  .info-line { font-size: 11px; color: #9aa6b2; margin-bottom: 12px; font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
 
-<!-- LOGIN -->
-<div class="login-shell" id="loginCard">
-  <div class="login-card">
-    <div class="login-logo">🛠️</div>
-    <h2>Painel Admin</h2>
-    <p class="subtitle">Edite as configurações do bot e do dashboard.</p>
-    <form id="loginForm">
-      <label>Usuário</label>
-      <input type="text" id="loginUser" autocomplete="username" required />
-      <label>Senha</label>
-      <input type="password" id="loginPass" autocomplete="current-password" required />
-      <button class="primary" type="submit">Entrar</button>
-      <div class="error" id="loginError"></div>
-    </form>
-    <div class="login-hint">
-      <strong style="color:var(--fg)">Primeiro acesso?</strong><br>
-      A senha inicial foi gerada automaticamente no boot do bot. Procure nos logs:
-      <code>pm2 logs BotStickerNode --lines 50</code>
-    </div>
-  </div>
+<div class="login-card" id="loginCard">
+  <h2>🔐 Login</h2>
+  <p>Painel admin — editar config do bot.</p>
+  <form id="loginForm">
+    <label>Usuário</label>
+    <input type="text" id="loginUser" autocomplete="username" required />
+    <label>Senha</label>
+    <input type="password" id="loginPass" autocomplete="current-password" required />
+    <button class="primary" type="submit">Entrar</button>
+    <div class="err" id="loginError"></div>
+  </form>
+  <p style="margin-top: 16px; font-size: 11px; color: #6e7681;">
+    Senha inicial aparece nos logs: <code style="background:#0e1116;padding:1px 4px;border-radius:3px;color:#d29922">pm2 logs BotStickerNode --lines 30</code>
+  </p>
 </div>
 
-<!-- MAIN -->
 <div class="hidden" id="mainApp">
   <header>
-    <h1>🛠️ Admin — Config Editor</h1>
-    <span class="pill" id="userPill">—</span>
+    <h1>🛠️ Admin</h1>
+    <span style="font-size:11px;color:#9aa6b2" id="userPill">—</span>
     <span class="spacer"></span>
-    <a class="btn" href="/" id="dashLink">📊 Dashboard</a>
-    <button id="btnChangeCred">🔑 Credenciais</button>
+    <a href="/" id="dashLink">📊 Dashboard</a>
+    <button id="btnCred">🔑</button>
     <button class="danger" id="btnLogout">Sair</button>
   </header>
 
   <div class="wrap">
-    <!-- Stats overview -->
-    <div class="stats-grid" id="statsGrid">
-      <div class="stat-card">
-        <div class="label">Bot</div>
-        <div class="value" id="statBot">—</div>
-        <div class="sub" id="statVersion">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Plataforma</div>
-        <div class="value" id="statPlatform">—</div>
-        <div class="sub" id="statNode">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Restart #</div>
-        <div class="value" id="statRestart">—</div>
-        <div class="sub" id="statUptime">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Chaves config</div>
-        <div class="value" id="statKeys">—</div>
-        <div class="sub" id="statDirty">—</div>
-      </div>
-    </div>
-
+    <div class="info-line" id="infoLine">—</div>
     <div class="toolbar">
-      <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar chaves (ex: prefix, news, dashboard)..." />
-      <button id="btnReload">↻ Recarregar</button>
+      <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar..." />
+      <button id="btnReload">↻</button>
       <button id="btnSaveAll" class="primary">💾 Salvar (0)</button>
-      <button id="btnDiscard" class="danger">✗ Descartar</button>
+      <button id="btnDiscard" class="danger">✗</button>
     </div>
-
-    <div id="groupsContainer"></div>
+    <div class="grid" id="grid"></div>
   </div>
 </div>
 
-<!-- TOAST -->
-<div class="toast" id="toast"><span id="toastIcon">✓</span><span id="toastMsg"></span></div>
+<div class="toast" id="toast"></div>
 
-<!-- MODAL: credentials -->
-<div class="modal-overlay" id="modalOverlay">
+<div class="modal-overlay" id="credModal">
   <div class="modal">
-    <h3>🔑 Alterar Credenciais</h3>
+    <h3>🔑 Credenciais</h3>
     <label>Usuário atual</label>
-    <input type="text" id="credCurrentUser" readonly />
+    <input type="text" id="credCurUser" readonly />
     <label>Novo usuário</label>
     <input type="text" id="credNewUser" />
-    <label>Nova senha (mín. 4 chars)</label>
+    <label>Nova senha</label>
     <input type="password" id="credNewPass" />
-    <label>Confirmar senha</label>
-    <input type="password" id="credConfirmPass" />
-    <div class="err-msg" id="credError"></div>
+    <label>Confirmar</label>
+    <input type="password" id="credConfirm" />
+    <div class="err-msg" id="credErr"></div>
     <div class="row">
       <button id="credCancel">Cancelar</button>
       <button class="primary" id="credSave">Salvar</button>
@@ -546,13 +138,12 @@
   </div>
 </div>
 
-<!-- MODAL: edit value -->
-<div class="modal-overlay" id="editOverlay">
-  <div class="modal" style="min-width: 480px;">
+<div class="modal-overlay" id="editModal">
+  <div class="modal" style="min-width:480px">
     <h3 id="editTitle">Editar</h3>
-    <label id="editKeyLabel">—</label>
+    <label id="editLbl">—</label>
     <textarea id="editValue" rows="6"></textarea>
-    <div class="err-msg" id="editError"></div>
+    <div class="err-msg" id="editErr"></div>
     <div class="row">
       <button id="editCancel">Cancelar</button>
       <button class="primary" id="editSave">Salvar</button>
@@ -561,390 +152,184 @@
 </div>
 
 <script>
-const $ = (id) => document.getElementById(id);
-
-let originalConfig = {};
-let currentConfig = {};
-let dirtyKeys = new Set();
-let currentUser = '';
-let editingKey = null;
-let bootTime = Date.now();
+const $ = id => document.getElementById(id);
+let cfg = {}, orig = {}, dirty = new Set(), user = '', editKey = null;
 
 function toast(msg, type='ok') {
   const t = $('toast');
-  $('toastIcon').textContent = type === 'ok' ? '✓' : '✗';
-  $('toastMsg').textContent = msg;
+  t.textContent = msg;
   t.className = 'toast show ' + type;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.className = 'toast ' + type, 2500);
+  toast._t = setTimeout(() => t.className = 'toast ' + type, 2200);
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const r = await fetch(path, {
     method: opts.method || 'GET',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    headers: { 'Content-Type': 'application/json' },
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
-  const ct = res.headers.get('content-type') || '';
-  const data = ct.includes('json') ? await res.json() : await res.text();
-  return { ok: res.ok, status: res.status, data };
+  const data = r.headers.get('content-type')?.includes('json') ? await r.json() : await r.text();
+  return { ok: r.ok, status: r.status, data };
 }
 
-function inferType(v) {
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'array';
-  return typeof v;
-}
-
-function badge(t) {
-  return {
-    string: 'str', number: 'num', boolean: 'bool',
-    array: 'arr', object: 'obj', null: 'null', undefined: 'undef'
-  }[t] || t;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
-  }[c]));
-}
-
-function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
-function eqStr(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
-
-function previewValue(v) {
+function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+function inferType(v) { if (v === null) return 'null'; if (Array.isArray(v)) return 'array'; return typeof v; }
+function preview(v) {
   if (typeof v === 'boolean') return v ? '✅ ON' : '⛔ OFF';
-  if (typeof v === 'string') return v.length > 30 ? v.slice(0, 30) + '…' : v;
+  if (typeof v === 'string') return v.length > 30 ? v.slice(0,30)+'…' : v;
   if (typeof v === 'number') return String(v);
-  if (Array.isArray(v)) return `[${v.length} item${v.length !== 1 ? 's' : ''}]`;
+  if (Array.isArray(v)) return `[${v.length} itens]`;
   if (v === null) return 'null';
   if (typeof v === 'object') return '{…}';
   return String(v);
 }
 
-function groupKey(key) {
-  if (key.startsWith('dashboard')) return 'Dashboard';
-  if (key.startsWith('news')) return 'News (Reddit)';
-  if (key.startsWith('subSessions')) return 'Sub-sessões';
-  if (key.startsWith('gemini') || key.startsWith('ai')) return 'IA Gemini';
-  if (['prefix', 'botName'].includes(key)) return 'Geral';
-  if (['maxMediaDurationSeconds'].includes(key)) return 'Mídia';
-  if (key.includes('Admin') || key.includes('admin')) return 'Admin';
-  return 'Outros';
-}
-
-function renderCard(key, value) {
-  const type = inferType(value);
+function renderCard(k, v) {
+  const t = inferType(v);
   const card = document.createElement('div');
-  card.className = 'card';
-  card.dataset.key = key;
-  if (dirtyKeys.has(key)) card.classList.add('dirty');
+  card.className = 'card' + (dirty.has(k) ? ' dirty' : '');
+  card.dataset.key = k;
 
-  const row1 = document.createElement('div');
-  row1.className = 'row1';
-  const nameEl = document.createElement('div');
-  nameEl.className = 'name';
-  nameEl.textContent = key;
-  const typeEl = document.createElement('div');
-  typeEl.className = 'type';
-  typeEl.textContent = badge(type);
-  row1.appendChild(nameEl);
-  row1.appendChild(typeEl);
-  card.appendChild(row1);
+  const r1 = document.createElement('div'); r1.className = 'row1';
+  const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k;
+  const tp = document.createElement('div'); tp.className = 'type'; tp.textContent = t === 'object' ? 'obj' : t;
+  r1.appendChild(nm); r1.appendChild(tp);
+  card.appendChild(r1);
 
-  if (type === 'boolean') {
-    const toggle = document.createElement('div');
-    toggle.className = 'toggle' + (value ? ' on' : '');
-    toggle.onclick = () => {
-      const newVal = !currentConfig[key];
-      toggle.classList.toggle('on', newVal);
-      onLocalEdit(key, newVal);
-      renderAll();
-    };
-    card.appendChild(toggle);
-  } else if (type === 'array') {
-    const preview = document.createElement('div');
-    preview.className = 'value-preview';
-    preview.title = JSON.stringify(value);
-    preview.textContent = previewValue(value);
-    card.appendChild(preview);
-    const editBtn = document.createElement('button');
-    editBtn.textContent = '✏️ Editar';
-    editBtn.style.cssText = 'margin-top: 8px; width: 100%; background: var(--bg3); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 6px; font-size: 12px; cursor: pointer;';
-    editBtn.onclick = () => openEditModal(key, value, type);
-    card.appendChild(editBtn);
-  } else if (type === 'object' && value !== null) {
-    const preview = document.createElement('div');
-    preview.className = 'value-preview';
-    preview.title = JSON.stringify(value, null, 2);
-    preview.textContent = '{ ' + Object.keys(value).slice(0, 3).join(', ') + (Object.keys(value).length > 3 ? ', …' : '') + ' }';
-    card.appendChild(preview);
-    const editBtn = document.createElement('button');
-    editBtn.textContent = '✏️ Editar JSON';
-    editBtn.style.cssText = 'margin-top: 8px; width: 100%; background: var(--bg3); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 6px; font-size: 12px; cursor: pointer;';
-    editBtn.onclick = () => openEditModal(key, value, type);
-    card.appendChild(editBtn);
+  if (t === 'boolean') {
+    const tg = document.createElement('div');
+    tg.className = 'toggle' + (v ? ' on' : '');
+    tg.onclick = () => { tg.classList.toggle('on'); edit(k, !current(k)); rerender(); };
+    card.appendChild(tg);
+  } else if (t === 'array' || t === 'object') {
+    const pv = document.createElement('div'); pv.className = 'preview'; pv.textContent = preview(v); pv.title = JSON.stringify(v);
+    const eb = document.createElement('button'); eb.textContent = '✏️ Editar'; eb.style.cssText = 'margin-top:8px;width:100%;background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:5px;font-size:11px;cursor:pointer';
+    eb.onclick = () => openEdit(k, v, t);
+    card.appendChild(pv); card.appendChild(eb);
   } else {
-    const input = document.createElement('input');
-    input.type = (type === 'number') ? 'number' : 'text';
-    input.className = type === 'number' ? 'input-num' : 'input-text';
-    input.step = 'any';
-    input.value = value == null ? '' : value;
-    input.addEventListener('input', () => {
-      let v = input.value;
-      if (type === 'number') {
-        const n = parseFloat(v);
-        if (isNaN(n)) { input.style.borderColor = 'var(--red)'; return; }
-        input.style.borderColor = '';
-        v = n;
-      }
-      onLocalEdit(key, v);
+    const inp = document.createElement('input');
+    inp.type = t === 'number' ? 'number' : 'text';
+    inp.step = 'any';
+    inp.value = v == null ? '' : v;
+    inp.addEventListener('input', () => {
+      let nv = inp.value;
+      if (t === 'number') { const n = parseFloat(nv); if (isNaN(n)) { inp.style.borderColor = '#f85149'; return; } inp.style.borderColor = ''; nv = n; }
+      edit(k, nv);
     });
-    card.appendChild(input);
+    card.appendChild(inp);
   }
 
-  const row2 = document.createElement('div');
-  row2.className = 'row2';
-  row2.style.marginTop = '10px';
-  const valuePreview = document.createElement('div');
-  valuePreview.className = 'value-preview';
-  valuePreview.title = JSON.stringify(value);
-  valuePreview.textContent = type === 'boolean' ? '' : previewValue(value);
-  if (type !== 'boolean') row2.appendChild(valuePreview);
-  else row2.style.justifyContent = 'flex-end';
-
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  if (type === 'boolean') {
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'save';
-    saveBtn.textContent = '💾 Salvar';
-    saveBtn.onclick = () => saveOne(key);
-    saveBtn.style.padding = '6px 12px';
-    saveBtn.style.fontSize = '12px';
-    actions.appendChild(saveBtn);
-  } else {
-    const saveBtn = document.createElement('button');
-    saveBtn.textContent = '💾';
-    saveBtn.title = 'Salvar';
-    saveBtn.onclick = () => saveOne(key);
-    actions.appendChild(saveBtn);
-  }
-  row2.appendChild(actions);
-  card.appendChild(row2);
-
+  const r2 = document.createElement('div'); r2.className = 'row2';
+  if (t !== 'boolean') {
+    const pv = document.createElement('div'); pv.className = 'preview'; pv.textContent = preview(v); pv.title = JSON.stringify(v);
+    r2.appendChild(pv);
+  } else r2.style.justifyContent = 'flex-end';
+  const sb = document.createElement('button'); sb.className = 'save'; sb.textContent = '💾';
+  sb.onclick = () => saveOne(k);
+  r2.appendChild(sb);
+  card.appendChild(r2);
   return card;
 }
 
-function onLocalEdit(key, value) {
-  if (!eqStr(value, originalConfig[key])) dirtyKeys.add(key);
-  else dirtyKeys.delete(key);
-  currentConfig[key] = value;
-  renderDirtyFlags();
+function current(k) { return cfg[k]; }
+function edit(k, v) { if (!eq(v, orig[k])) dirty.add(k); else dirty.delete(k); cfg[k] = v; updateDirty(); }
+function updateDirty() {
+  document.querySelectorAll('.card').forEach(el => el.classList.toggle('dirty', dirty.has(el.dataset.key)));
+  $('btnSaveAll').textContent = '💾 Salvar (' + dirty.size + ')';
 }
 
-function renderDirtyFlags() {
-  document.querySelectorAll('.card').forEach(el => {
-    const k = el.dataset.key;
-    el.classList.toggle('dirty', dirtyKeys.has(k));
-  });
-  $('statDirty').textContent = dirtyKeys.size > 0 ? dirtyKeys.size + ' pendente(s)' : 'Tudo salvo ✓';
-  $('btnSaveAll').textContent = dirtyKeys.size > 0 ? `💾 Salvar (${dirtyKeys.size})` : '💾 Salvar (0)';
-}
-
-function renderAll() {
+function rerender() {
   const filter = $('searchInput').value.toLowerCase().trim();
-  const entries = Object.entries(currentConfig)
-    .filter(([k]) => !filter || k.toLowerCase().includes(filter))
-    .sort((a, b) => a[0].localeCompare(b[0]));
-
-  $('statKeys').textContent = Object.keys(currentConfig).length;
-
-  if (entries.length === 0) {
-    $('groupsContainer').innerHTML = '<div class="empty-state">Nenhuma chave encontrada.</div>';
-    return;
-  }
-
-  const groups = new Map();
-  for (const [k, v] of entries) {
-    const g = groupKey(k);
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push([k, v]);
-  }
-
-  const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
-    const order = ['Geral', 'Dashboard', 'IA Gemini', 'News (Reddit)', 'Mídia', 'Sub-sessões', 'Outros', 'Admin'];
-    return (order.indexOf(a[0]) === -1 ? 99 : order.indexOf(a[0])) - (order.indexOf(b[0]) === -1 ? 99 : order.indexOf(b[0]));
-  });
-
-  const container = $('groupsContainer');
-  container.innerHTML = '';
-  for (const [gName, items] of sortedGroups) {
-    const sec = document.createElement('div');
-    sec.className = 'group-section';
-    const h = document.createElement('h3');
-    h.innerHTML = `${gName} <span class="badge-count">${items.length}</span>`;
-    sec.appendChild(h);
-    const grid = document.createElement('div');
-    grid.className = 'cards-grid';
-    for (const [k, v] of items) grid.appendChild(renderCard(k, v));
-    sec.appendChild(grid);
-    container.appendChild(sec);
-  }
-
-  renderDirtyFlags();
+  const items = Object.entries(cfg).filter(([k]) => !filter || k.toLowerCase().includes(filter)).sort((a,b) => a[0].localeCompare(b[0]));
+  const g = $('grid');
+  if (items.length === 0) { g.innerHTML = '<div class="empty">Nenhuma chave.</div>'; return; }
+  g.innerHTML = '';
+  for (const [k, v] of items) g.appendChild(renderCard(k, v));
+  updateDirty();
 }
 
-async function loadConfig() {
+async function load() {
   const r = await api('/api/admin/config');
-  if (!r.ok) {
-    if (r.status === 401) { showLogin(); return; }
-    toast('Falha ao carregar: ' + (r.data?.error || r.status), 'err');
-    return;
-  }
-  originalConfig = deepClone(r.data.config);
-  currentConfig = deepClone(r.data.config);
-  dirtyKeys.clear();
-
-  $('statBot').textContent = r.data.botName || '—';
-  $('statVersion').textContent = 'v' + (r.data.version || '—');
-  $('statPlatform').textContent = r.data.platform || '—';
-  $('statNode').textContent = 'Node ' + (r.data.nodeVersion || '—');
-  $('statRestart').textContent = '#' + (r.data.restarts ?? '—');
-  const upMin = Math.round((Date.now() - bootTime) / 60000);
-  $('statUptime').textContent = 'Sessão web: ' + upMin + 'min';
-  showMain();
-  renderAll();
+  if (!r.ok) { if (r.status === 401) showLogin(); return; }
+  cfg = clone(r.data.config); orig = clone(r.data.config); dirty.clear();
+  $('userPill').textContent = '👤 ' + user;
+  $('infoLine').textContent = `${r.data.botName || 'Bot'} • v${r.data.version || '?'} • ${r.data.platform || '?'} • restart #${r.data.restarts ?? '?'}`;
+  showMain(); rerender();
 }
 
-async function saveOne(key) {
-  const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { [key]: currentConfig[key] } } });
-  if (!r.ok) { toast('Erro ao salvar ' + key, 'err'); return; }
-  originalConfig[key] = deepClone(currentConfig[key]);
-  dirtyKeys.delete(key);
-  toast(key + ' salvo ✓', 'ok');
-  renderAll();
+async function saveOne(k) {
+  const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { [k]: cfg[k] } } });
+  if (!r.ok) { toast('Erro ao salvar', 'err'); return; }
+  orig[k] = clone(cfg[k]); dirty.delete(k); updateDirty(); toast(k + ' salvo ✓', 'ok');
 }
 
 async function saveAll() {
-  if (dirtyKeys.size === 0) { toast('Nada para salvar', 'err'); return; }
-  const updates = {};
-  for (const k of dirtyKeys) updates[k] = currentConfig[k];
+  if (dirty.size === 0) return;
+  const updates = {}; for (const k of dirty) updates[k] = cfg[k];
   const r = await api('/api/admin/config', { method: 'PUT', body: { updates } });
-  if (!r.ok) { toast('Erro: ' + (r.data?.error || r.status), 'err'); return; }
-  for (const k of dirtyKeys) originalConfig[k] = deepClone(currentConfig[k]);
-  dirtyKeys.clear();
-  toast(Object.keys(updates).length + ' chave(s) salva(s) ✓', 'ok');
-  renderAll();
+  if (!r.ok) { toast('Erro', 'err'); return; }
+  for (const k of dirty) orig[k] = clone(cfg[k]);
+  dirty.clear(); updateDirty(); toast(Object.keys(updates).length + ' salvas ✓', 'ok');
 }
 
 function showLogin() { $('loginCard').classList.remove('hidden'); $('mainApp').classList.add('hidden'); }
-function showMain()  { $('loginCard').classList.add('hidden');    $('mainApp').classList.remove('hidden'); }
+function showMain() { $('loginCard').classList.add('hidden'); $('mainApp').classList.remove('hidden'); }
 
-$('loginForm').addEventListener('submit', async (e) => {
+$('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const user = $('loginUser').value.trim();
-  const pass = $('loginPass').value;
-  $('loginError').textContent = '';
-  const r = await api('/api/admin/login', { method: 'POST', body: { username: user, password: pass } });
-  if (!r.ok) {
-    $('loginError').textContent = r.data?.error || 'Erro ao entrar';
-    return;
-  }
-  currentUser = user;
-  $('userPill').textContent = '👤 ' + user;
-  await loadConfig();
+  const u = $('loginUser').value.trim(), p = $('loginPass').value;
+  const r = await api('/api/admin/login', { method: 'POST', body: { username: u, password: p } });
+  if (!r.ok) { $('loginError').textContent = r.data?.error || 'Erro'; return; }
+  user = u; await load();
 });
 
 $('btnLogout').addEventListener('click', async () => {
   await api('/api/admin/logout', { method: 'POST' });
-  currentUser = '';
-  $('userPill').textContent = '—';
-  showLogin();
-  $('loginUser').value = '';
-  $('loginPass').value = '';
+  user = ''; $('userPill').textContent = '—'; showLogin(); $('loginUser').value = ''; $('loginPass').value = '';
 });
-
-$('btnReload').addEventListener('click', loadConfig);
+$('btnReload').addEventListener('click', load);
 $('btnSaveAll').addEventListener('click', saveAll);
-$('btnDiscard').addEventListener('click', () => {
-  currentConfig = deepClone(originalConfig);
-  dirtyKeys.clear();
-  renderAll();
-  toast('Alterações descartadas');
-});
+$('btnDiscard').addEventListener('click', () => { cfg = clone(orig); dirty.clear(); rerender(); toast('Descartado'); });
+$('searchInput').addEventListener('input', rerender);
 
-$('searchInput').addEventListener('input', renderAll);
-
-// Credentials modal
-$('btnChangeCred').addEventListener('click', () => {
-  $('credCurrentUser').value = currentUser;
-  $('credNewUser').value = currentUser;
-  $('credNewPass').value = '';
-  $('credConfirmPass').value = '';
-  $('credError').textContent = '';
-  $('modalOverlay').classList.add('show');
+$('btnCred').addEventListener('click', () => {
+  $('credCurUser').value = user;
+  $('credNewUser').value = user; $('credNewPass').value = ''; $('credConfirm').value = ''; $('credErr').textContent = '';
+  $('credModal').classList.add('show');
 });
-$('credCancel').addEventListener('click', () => $('modalOverlay').classList.remove('show'));
+$('credCancel').addEventListener('click', () => $('credModal').classList.remove('show'));
 $('credSave').addEventListener('click', async () => {
-  $('credError').textContent = '';
-  const newUser = $('credNewUser').value.trim();
-  const newPass = $('credNewPass').value;
-  const confirm = $('credConfirmPass').value;
-  if (newPass !== confirm) { $('credError').textContent = 'Senhas não conferem'; return; }
-  if (!newUser) { $('credError').textContent = 'Usuário obrigatório'; return; }
-  const r = await api('/api/admin/credentials', { method: 'POST', body: { username: newUser, password: newPass } });
-  if (!r.ok) { $('credError').textContent = r.data?.error || 'Erro'; return; }
-  toast('Credenciais atualizadas ✓', 'ok');
-  $('modalOverlay').classList.remove('show');
-  currentUser = newUser;
-  $('userPill').textContent = '👤 ' + newUser;
-});
-$('modalOverlay').addEventListener('click', (e) => {
-  if (e.target === $('modalOverlay')) $('modalOverlay').classList.remove('show');
+  const u = $('credNewUser').value.trim(), p = $('credNewPass').value, c = $('credConfirm').value;
+  if (p !== c) { $('credErr').textContent = 'Senhas não conferem'; return; }
+  const r = await api('/api/admin/credentials', { method: 'POST', body: { username: u, password: p } });
+  if (!r.ok) { $('credErr').textContent = r.data?.error || 'Erro'; return; }
+  toast('Atualizado ✓', 'ok'); $('credModal').classList.remove('show'); user = u; $('userPill').textContent = '👤 ' + u;
 });
 
-// Edit modal (for arrays/objects)
-function openEditModal(key, value, type) {
-  editingKey = key;
-  $('editTitle').textContent = `Editar ${key}`;
-  $('editKeyLabel').textContent = `Tipo: ${type}. Use JSON válido para arrays/objects.`;
-  if (type === 'array' || type === 'object') {
-    $('editValue').value = JSON.stringify(value, null, 2);
-  } else {
-    $('editValue').value = String(value);
-  }
-  $('editError').textContent = '';
-  $('editOverlay').classList.add('show');
+function openEdit(k, v, t) {
+  editKey = k; $('editTitle').textContent = 'Editar ' + k;
+  $('editLbl').textContent = `Tipo: ${t}. Use JSON válido.`;
+  $('editValue').value = (t === 'array' || t === 'object') ? JSON.stringify(v, null, 2) : String(v);
+  $('editErr').textContent = ''; $('editModal').classList.add('show');
   setTimeout(() => $('editValue').focus(), 50);
 }
-$('editCancel').addEventListener('click', () => {
-  $('editOverlay').classList.remove('show');
-  editingKey = null;
-});
+$('editCancel').addEventListener('click', () => { $('editModal').classList.remove('show'); editKey = null; });
 $('editSave').addEventListener('click', () => {
-  if (!editingKey) return;
-  const type = inferType(currentConfig[editingKey]);
-  let v;
+  if (!editKey) return;
+  const t = inferType(cfg[editKey]);
   try {
-    if (type === 'array' || type === 'object') v = JSON.parse($('editValue').value);
-    else if (type === 'number') v = parseFloat($('editValue').value);
-    else v = $('editValue').value;
-  } catch (e) { $('editError').textContent = 'JSON inválido: ' + e.message; return; }
-  currentConfig[editingKey] = v;
-  onLocalEdit(editingKey, v);
-  $('editOverlay').classList.remove('show');
-  editingKey = null;
-  renderAll();
-  toast('Editado — clique 💾 para salvar', 'ok');
-});
-$('editOverlay').addEventListener('click', (e) => {
-  if (e.target === $('editOverlay')) { $('editOverlay').classList.remove('show'); editingKey = null; }
+    let v = (t === 'array' || t === 'object') ? JSON.parse($('editValue').value)
+      : t === 'number' ? parseFloat($('editValue').value)
+      : $('editValue').value;
+    cfg[editKey] = v; edit(editKey, v);
+    $('editModal').classList.remove('show'); editKey = null; rerender(); toast('Editado — clique 💾', 'ok');
+  } catch (e) { $('editErr').textContent = 'JSON inválido: ' + e.message; }
 });
 
-// On load
-loadConfig();
+load();
 </script>
 </body>
 </html>

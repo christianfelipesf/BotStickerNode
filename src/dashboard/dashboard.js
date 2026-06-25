@@ -275,7 +275,7 @@ function init(config) {
     });
     app.use(express.json({ limit: '20mb' }));
 
-    adminAuth.ensureDefaultCredentials();
+    adminAuth.ensureDefault();
     app.set('trust proxy', 1);
     app.use(cookieSession({
         name: 'admin_session',
@@ -286,109 +286,60 @@ function init(config) {
         secure: 'auto'
     }));
 
-    const requireAdmin = (req, res, next) => {
-        if (req.session && req.session.adminUser) return next();
-        return res.status(401).json({ ok: false, error: 'Não autenticado' });
-    };
+    const { readConfig, writeConfig, getVersion, readStats } = require('../database/utils');
+    const isAdmin = (req) => req.session && req.session.adminUser;
+    const json = (res, ok, data = {}, status = 200) => res.status(status).json({ ok, ...data });
 
     app.post('/api/admin/login', (req, res) => {
-        try {
-            const { username, password } = req.body || {};
-            if (!username || !password) return res.status(400).json({ ok: false, error: 'Usuário e senha obrigatórios' });
-            if (!adminAuth.verifyCredentials(String(username), String(password))) {
-                return res.status(401).json({ ok: false, error: 'Usuário ou senha inválidos' });
-            }
-            req.session.adminUser = String(username);
-            req.session.adminLoginAt = Date.now();
-            return res.json({ ok: true, username });
-        } catch (e) {
-            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
+        const { username, password } = req.body || {};
+        if (!username || !password || !adminAuth.verify(username, password)) {
+            return json(res, false, { error: 'Credenciais inválidas' }, 401);
         }
+        req.session.adminUser = String(username);
+        return json(res, true, { username });
     });
 
     app.post('/api/admin/logout', (req, res) => {
-        try {
-            if (req.session) req.session = null;
-            return res.json({ ok: true });
-        } catch (e) {
-            return res.status(500).json({ ok: false, error: e.message });
-        }
+        if (req.session) req.session = null;
+        return json(res, true);
     });
 
-    app.get('/api/admin/me', (req, res) => {
-        if (req.session && req.session.adminUser) {
-            return res.json({ ok: true, username: req.session.adminUser, info: adminAuth.getInfo() });
+    app.post('/api/admin/credentials', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        const { username, password } = req.body || {};
+        if (!username || !password || password.length < 4) {
+            return json(res, false, { error: 'Usuário e senha (mín. 4 chars) obrigatórios' }, 400);
         }
-        return res.status(401).json({ ok: false, error: 'Não autenticado' });
+        if (adminAuth.setCredentials(username, password)) return json(res, true);
+        return json(res, false, { error: 'Erro ao salvar' }, 500);
     });
 
-    app.get('/api/admin/initial-password', (req, res) => {
-        if (!(req.session && req.session.adminUser)) {
-            return res.status(401).json({ ok: false, error: 'Não autenticado' });
-        }
-        const pwd = adminAuth.consumeInitialPassword();
-        if (!pwd) return res.json({ ok: true, available: false });
-        return res.json({ ok: true, available: true, password: pwd });
-    });
-
-    app.post('/api/admin/credentials', requireAdmin, (req, res) => {
-        try {
-            const { username, password } = req.body || {};
-            const r = adminAuth.setCredentials(username, password);
-            if (!r.ok) return res.status(400).json(r);
-            return res.json({ ok: true });
-        } catch (e) {
-            return res.status(500).json({ ok: false, error: e.message });
-        }
-    });
-
-    const { readConfig, writeConfig, getVersion, readStats } = require('../database/utils');
-
-    app.get('/api/admin/config', requireAdmin, (req, res) => {
+    app.get('/api/admin/config', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             const cfg = readConfig();
             const stats = readStats();
-            return res.json({
-                ok: true,
+            return json(res, true, {
                 config: cfg,
                 botName: cfg.botName,
                 version: getVersion(),
                 platform: process.platform,
                 restarts: stats.restarts,
-                nodeVersion: process.version,
-                uptimeSeconds: Math.round(process.uptime())
+                nodeVersion: process.version
             });
-        } catch (e) {
-            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
-        }
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
-    app.put('/api/admin/config', requireAdmin, (req, res) => {
+    app.put('/api/admin/config', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             const { updates } = req.body || {};
             if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
-                return res.status(400).json({ ok: false, error: 'Body precisa ter { updates: { key: value } }' });
+                return json(res, false, { error: 'Body precisa ter { updates: { key: value } }' }, 400);
             }
-            const current = readConfig();
-            const merged = { ...current, ...updates };
-            writeConfig(merged);
-            try {
-                const newsSvc = global.__botServices && global.__botServices.news;
-                if (newsSvc && 'newsEnabled' in updates) {
-                    const cfgNow = readConfig();
-                    if (cfgNow.newsEnabled !== false) {
-                        try { newsSvc.attachSock(sockRef); } catch (_) {}
-                        try { newsSvc.start(); } catch (_) {}
-                    } else {
-                        try { newsSvc.stop(); } catch (_) {}
-                    }
-                }
-            } catch (_) {}
-            try { dashboard.log('action', 'SISTEMA', 'Config editada via /admin', 'admin', 'admin', null, { toJid: 'admin', messageId: null, senderJid: 'admin', fromMe: false }); } catch (_) {}
-            return res.json({ ok: true, updated: Object.keys(updates).length });
-        } catch (e) {
-            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
-        }
+            writeConfig({ ...readConfig(), ...updates });
+            return json(res, true, { updated: Object.keys(updates).length });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
     app.post('/api/reply', apiHandler(sendReply));
@@ -579,15 +530,12 @@ function init(config) {
         }
         res.status(204).end();
     });
+    const adminHtml = path.join(__dirname, 'admin.html');
     app.get('/admin', (req, res) => {
-        if (!(req.session && req.session.adminUser)) {
-            return res.redirect('/admin/login');
-        }
-        res.type('html').sendFile(path.join(__dirname, 'admin.html'));
+        if (!(req.session && req.session.adminUser)) return res.redirect('/admin/login');
+        res.type('html').sendFile(adminHtml);
     });
-    app.get('/admin/login', (req, res) => {
-        res.type('html').sendFile(path.join(__dirname, 'admin.html'));
-    });
+    app.get('/admin/login', (req, res) => res.type('html').sendFile(adminHtml));
     app.get('/', (req, res) => res.type('html').send(getHtml(config.botName || 'Bot')));
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
@@ -601,7 +549,12 @@ function init(config) {
         allowUpgrades: true,
         pingTimeout: 60000,
         pingInterval: 25000,
-        upgradeTimeout: 30000
+        upgradeTimeout: 30000,
+        serveClient: false
+    });
+    ioServer.engine.use((req, res, next) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        next();
     });
     ioServer.on('connection', async (socket) => {
         try {

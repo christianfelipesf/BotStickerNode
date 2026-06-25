@@ -28,7 +28,16 @@
     }
 
     function bind() {
-        const sock = io();
+        const sock = io({
+            transports: ['polling', 'websocket'],
+            upgrade: true,
+            rememberUpgrade: true,
+            timeout: 20000,
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000
+        });
 
         sock.on('groups', list => {
             state.groups = Array.isArray(list) ? list : [];
@@ -99,6 +108,14 @@
         sock.on('disconnect', () => {
             if (D.refs.status) {
                 D.refs.status.innerText = 'reconectando…';
+                D.refs.status.style.color = '#ff8182';
+            }
+        });
+
+        sock.on('connect_error', (err) => {
+            console.warn('[socket] connect_error:', err && err.message);
+            if (D.refs.status) {
+                D.refs.status.innerText = 'conectando…';
                 D.refs.status.style.color = '#ff8182';
             }
         });
