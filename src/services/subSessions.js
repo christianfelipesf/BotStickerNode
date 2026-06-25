@@ -28,7 +28,7 @@ const mediaHandler = require('../events/media');
 const SUB_SESSIONS_DIR = path.join(process.cwd(), 'session', 'subs');
 const PER_SESSION_PREFIX_DEFAULT = '!';
 const QR_MAX_ATTEMPTS = 3;
-const QR_INTERVAL_MS = 8000;
+const QR_INTERVAL_MS = 45000;
 const SUBS_GROUPS_DEFAULT = true;
 
 const ALLOWED_BASIC = new Set([
@@ -336,14 +336,7 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
                         armWatchdog();
                         return;
                     }
-                    session.qrAttempts += 1;
-                    if (session.qrAttempts > QR_MAX_ATTEMPTS) {
-                        await cleanupAndCancel('qr-exhausted');
-                        return;
-                    }
-                    if (session.sock) {
-                        try { session.sock.end(undefined); } catch (_) {}
-                    }
+                    await cleanupAndCancel('qr-exhausted');
                 } catch (_) {}
             }, QR_INTERVAL_MS);
             if (typeof session.qrTimer.unref === 'function') session.qrTimer.unref();
