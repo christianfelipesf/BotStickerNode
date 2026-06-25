@@ -52,7 +52,7 @@
         play: function (audio) {
             if (!D.state.soundEnabled || !audio) return;
             try {
-                audio.volume = 0.25;
+                audio.volume = 0.6;
                 audio.currentTime = 0;
                 audio.play().catch(() => {});
             } catch (_) {}
