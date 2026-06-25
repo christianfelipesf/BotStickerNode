@@ -493,16 +493,18 @@ function init(config) {
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Endpoint nao encontrado' }));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/dashboard-client.js', (req, res) => {
-        // Compatibilidade retroativa: serve o bundle index.js dos módulos
-        res.type('javascript').sendFile(path.join(__dirname, 'client', 'index.js'));
+        res.set('Content-Type', 'application/javascript; charset=utf-8');
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.sendFile(path.join(__dirname, 'client', 'index.js'));
     });
-    // Serve cada módulo do client: /dashboard-client/utils.js, /dashboard-client/state.js, etc
     app.get('/dashboard-client/:name', (req, res) => {
         const name = String(req.params.name || '');
         if (!/^[a-zA-Z0-9_\-]+\.js$/.test(name)) return res.status(400).end();
         const file = path.join(__dirname, 'client', name);
         if (!fs.existsSync(file)) return res.status(404).end();
-        res.type('javascript').sendFile(file);
+        res.set('Content-Type', 'application/javascript; charset=utf-8');
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.sendFile(file);
     });
     app.get('/media/:id', (req, res) => {
         const id = req.params.id;
