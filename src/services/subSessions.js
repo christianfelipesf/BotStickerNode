@@ -339,14 +339,18 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         }
     }
 
-    const dir = sessionFolder(ownerJid);
+    const baseHash = hashJid(ownerJid);
+    let dir = sessionFolder(ownerJid);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
     const meta = loadSessionMeta(ownerJid) || {};
     const normalizedPhone = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
 
     if (normalizedPhone) {
-        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-        dlog(`${hashJid(ownerJid)} modo pairing → credenciais apagadas para começar do zero`);
+        const stamp = Date.now().toString(36);
+        const pairDir = path.join(SUB_SESSIONS_DIR, `${baseHash}_pair_${stamp}`);
+        try { fs.mkdirSync(pairDir, { recursive: true }); } catch (_) {}
+        dir = pairDir;
+        dlog(`${hashJid(ownerJid)} modo pairing → usando dir temporário ${dir}`);
     }
 
     const session = {
@@ -408,12 +412,15 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                 } catch (e) {
                     dlog(`${hashJid(ownerJid)} erro eager pairing: ${e?.message}`);
                 }
-            }, 1500);
+            }, 4000);
         }
 
         const cleanupAndCancel = async (reason) => {
             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
             try { sock.end(undefined); } catch (_) {}
+            if (normalizedPhone && dir && dir.includes('_pair_')) {
+                try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+            }
             sessions.delete(ownerJid);
             console.log(`🔐 [sub:${hashJid(ownerJid)}] cleanup (${reason})`);
             await safeCallback(session.onClosed, ownerJid, reason);
@@ -517,6 +524,19 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                     session.connecting = false;
                     try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                     session.phoneNumber = sock.user?.id?.split?.(':')?.[0] || session.phoneNumber;
+
+                    const finalDir = sessionFolder(ownerJid);
+                    if (dir !== finalDir) {
+                        try {
+                            fs.rmSync(finalDir, { recursive: true, force: true });
+                            fs.mkdirSync(path.dirname(finalDir), { recursive: true });
+                            fs.renameSync(dir, finalDir);
+                            dlog(`${hashJid(ownerJid)} credenciais movidas de ${path.basename(dir)} → ${path.basename(finalDir)}`);
+                        } catch (e) {
+                            dlog(`${hashJid(ownerJid)} erro ao mover credenciais: ${e?.message}`);
+                        }
+                    }
+
                     persistSessionMeta(session);
                     attachMessagesHandler(session, sock);
                     dlog(`${hashJid(ownerJid)} ✅ CONECTADO phone=${session.phoneNumber}`);
