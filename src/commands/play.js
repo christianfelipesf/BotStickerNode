@@ -2,12 +2,13 @@ const yts = require('yt-search');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
+const { getMaxDurationSeconds, formatDuration } = require('../services/durationLimit');
 
 module.exports = {
     name: 'play',
     aliases: ['p', 'musica', 'youtube'],
     category: 'mídia',
-    description: 'Baixa áudio do YouTube',
+    description: 'Baixa áudio do YouTube (limite configurável, padrão 15 min)',
     async execute(sock, m, { from, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus } = utils;
         const q = fullArgsText.trim();
@@ -25,6 +26,15 @@ module.exports = {
                 return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
+            const duration = video.duration || video.seconds || 0;
+            const maxSeconds = getMaxDurationSeconds();
+            if (duration > maxSeconds) {
+                await sock.sendMessage(from, {
+                    text: `⏱️ *Limite de duração excedido!*\n\n📌 O *!play* baixa no máximo *${formatDuration(maxSeconds)}* (${maxSeconds}s).\n🎵 *Vídeo:* ${video.title || '?'}\n⏰ *Duração:* ${formatDuration(duration)}\n\n💡 Para vídeos longos, use *!d <link>* e baixe apenas o trecho que quiser em outro app.\n⚙️ _Limite configurável:_ \`!set maxMediaDurationSeconds <segundos>\``
+                }, { quoted: m });
+                return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            }
+
             currentBotResponse = await react(sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
 
             const tempName = `music_${Date.now()}.mp3`;
@@ -33,7 +43,7 @@ module.exports = {
 
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-            console.log(`🎵 [PLAY] Baixando: ${video.title}`);
+            console.log(`🎵 [PLAY] Baixando: ${video.title} (${formatDuration(duration)})`);
 
             const downloadCmd = `yt-dlp --no-warnings --extract-audio --audio-format mp3 --audio-quality 128K --output "${outPath}" "${video.url}"`;
 

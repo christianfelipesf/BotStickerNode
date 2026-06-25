@@ -211,7 +211,9 @@ const DEFAULT_CONFIG = {
     newsOnePerCycle: true,
     newsMaxRetries: 3,
     newsRetryBaseDelayMs: 15000,
-    dashboardTrimIntervalMs: 60 * 1000
+    dashboardTrimIntervalMs: 60 * 1000,
+    maxMediaDurationSeconds: 900,
+    subSessionsGroups: true
 };
 
 

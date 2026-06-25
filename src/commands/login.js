@@ -1,11 +1,19 @@
 const subSessions = require('../services/subSessions');
 
+function normalizePhone(input) {
+    if (!input) return null;
+    const raw = String(input).trim();
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return null;
+    return digits;
+}
+
 module.exports = {
     name: 'login',
     aliases: ['entrar', 'conectar'],
     category: 'admin',
-    description: 'Conecta uma sub-sessão Baileys (gera QR Code no WhatsApp)',
-    async execute(sock, m, { from, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    description: 'Conecta uma sub-sessão Baileys (QR Code ou código de pareamento)',
+    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react } = utils;
         const ownerJid = sender;
 
@@ -23,15 +31,26 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
         }
 
+        const phoneArg = normalizePhone(fullArgsText);
+        const usePairing = !!phoneArg;
+
         let currentBotResponse = await react(sock, m, '🔐', lastBotResponse, GLOBAL_COOLDOWN);
 
-        await sock.sendMessage(from, {
-            text: '🔐 *Sub-sessão iniciando…*\n\nVou enviar o QR Code em até *3 tentativas*. Escaneie no WhatsApp → Aparelhos conectados.\n\n⏱️ Você tem ~1 min por QR.'
-        }, { quoted: m });
+        if (usePairing) {
+            await sock.sendMessage(from, {
+                text: `🔐 *Sub-sessão iniciando…*\n\n📞 *Número:* \`${phoneArg}\`\n📲 *Modo:* código de pareamento\n\nVou gerar um *código de 8 dígitos* para você digitar no WhatsApp.\n\n⏱️ Você tem até 5 minutos para parear.`
+            }, { quoted: m });
+        } else {
+            await sock.sendMessage(from, {
+                text: '🔐 *Sub-sessão iniciando…*\n\nVou enviar o QR Code em até *3 tentativas*. Escaneie no WhatsApp → Aparelhos conectados.\n\n💡 _Dica:_ use `!login 5511999999999` para parear com código de 8 dígitos em vez de QR.\n\n⏱️ Você tem ~1 min por QR.'
+            }, { quoted: m });
+        }
 
         try {
             await subSessions.startLogin(ownerJid, {
+                phoneNumber: usePairing ? phoneArg : null,
                 onQr: async (jid, { buffer, attempt, max }) => {
+                    if (usePairing) return;
                     try {
                         if (buffer) {
                             await sock.sendMessage(from, {
@@ -43,6 +62,14 @@ module.exports = {
                                 text: `📱 *QR ${attempt}/${max}*\n_\n(string abaixo é o QR — normalmente envio como imagem, mas falhou agora. Tente escanear a partir do terminal do bot se necessário.)_`
                             }, { quoted: m });
                         }
+                    } catch (_) {}
+                },
+                onPairingCode: async (jid, { code, phoneNumber }) => {
+                    try {
+                        const formatted = `${code.slice(0, 4)}-${code.slice(4)}`;
+                        await sock.sendMessage(from, {
+                            text: `🔢 *Código de pareamento*\n\n📞 *Número:* \`${phoneNumber}\`\n🔐 *Código:* \`${formatted}\`\n\n📱 *Como usar:*\n1. Abra o WhatsApp no celular\n2. ⋮ (três pontos) → *Aparelhos conectados*\n3. Toque em *Conectar um aparelho*\n4. Toque em *Conectar com número de telefone*\n5. Digite o código acima: *${formatted}*\n\n⏱️ Código válido por ~5 minutos.`
+                        }, { quoted: m });
                     } catch (_) {}
                 },
                 onConnected: async (jid, { phoneNumber }) => {

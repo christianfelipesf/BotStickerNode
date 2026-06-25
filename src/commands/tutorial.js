@@ -21,12 +21,14 @@ module.exports = {
             `│ Marque um sticker com ${p}toimg para voltar a imagem\n` +
             `│ ${p}revelar — recupera view-once (fotos/vídeos que somem)\n` +
             `╰─────────────────────────────\n\n` +
-            `╭── *3. MÍDIA & DOWNLOAD* ──\n` +
-            `│ ${p}play <nome> — baixa música do YouTube\n` +
-            `│ ${p}dl <link> — baixa vídeo (TikTok, IG, YouTube…)\n` +
-            `│ ${p}tts <texto> — fala um texto em áudio\n` +
-            `│ ${p}acelerar / ${p}desacelerar — ajusta velocidade do áudio\n` +
-            `╰─────────────────────────────\n\n` +
+        `╭── *3. MÍDIA & DOWNLOAD* ──\n` +
+        `│ ${p}play <nome> — baixa música do YouTube (max 15min)\n` +
+        `│ ${p}dl <link> — baixa vídeo (TikTok, IG, YouTube…)\n` +
+        `│ ${p}dhd <link> — versão HD do !d\n` +
+        `│ ${p}tts <texto> — fala um texto em áudio\n` +
+        `│ ${p}acelerar / ${p}desacelerar — ajusta velocidade do áudio\n` +
+        `╰─────────────────────────────\n\n` +
+        `⏱️ *Limite:* ${p}play e ${p}d (YouTube) baixam no máximo *15 minutos* (configurável com \`${p}set maxMediaDurationSeconds <s>\`).\n\n` +
             `╭── *4. INTELIGÊNCIA ARTIFICIAL* ──\n` +
             `│ ${p}ai <pergunta> — converse com a IA (Gemini)\n` +
             `│ ${p}resumir <n> — resume as últimas mensagens do grupo\n` +

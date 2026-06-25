@@ -111,9 +111,9 @@ function basicMenuText(prefix, botName) {
         `│ 🐌 *${prefix}desacelerar*\n` +
         `╰───────────────\n\n` +
         `╭── *DOWNLOAD* ───\n` +
-        `│ 🎵 *${prefix}play* <nome>\n` +
+        `│ 🎵 *${prefix}play* <nome> (max 15min)\n` +
         `│ 🎬 *${prefix}tiktok* <link>\n` +
-        `│ 📥 *${prefix}dl* <link>\n` +
+        `│ 📥 *${prefix}dl* <link> (YT max 15min)\n` +
         `╰───────────────\n\n` +
         `╭── *CONFIG* ───\n` +
         `│ 🛠️ *${prefix}setprefix* <símbolo>\n` +
@@ -329,7 +329,7 @@ function extractText(message, m) {
     );
 }
 
-async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false }) {
+async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null }) {
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
         if (existing.connecting && !_silent && !_reconnect) return existing;
@@ -341,11 +341,12 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
 
     const dir = sessionFolder(ownerJid);
     const meta = loadSessionMeta(ownerJid) || {};
+    const normalizedPhone = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
 
     const session = {
         ownerJid,
         prefix: meta.prefix || PER_SESSION_PREFIX_DEFAULT,
-        phoneNumber: meta.phoneNumber || null,
+        phoneNumber: normalizedPhone || meta.phoneNumber || null,
         startedAt: Date.now(),
         sock: null,
         connected: false,
@@ -354,7 +355,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         qrTimer: null,
         lastQrHash: null,
         lastQrAt: 0,
-        onQr, onConnected, onClosed
+        pairCodeSent: false,
+        onQr, onConnected, onClosed, onPairingCode
     };
     sessions.set(ownerJid, session);
     persistSessionMeta(session);
@@ -417,7 +419,24 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             try {
                 dlog(`${hashJid(ownerJid)} conn.update → connection=${u.connection} qr=${u.qr ? 'YES(len=' + u.qr.length + ')' : 'no'} lastDisconnect=${u.lastDisconnect?.error?.message ? u.lastDisconnect.error.message.slice(0, 80) : 'none'}`);
 
+                if (normalizedPhone && u.connection === 'connecting' && !u.qr && !session.pairCodeSent) {
+                    try {
+                        const code = await sock.requestPairingCode(normalizedPhone);
+                        dlog(`${hashJid(ownerJid)} pairing code gerado: ${code}`);
+                        session.pairCodeSent = true;
+                        await safeCallback(session.onPairingCode, ownerJid, { code, phoneNumber: normalizedPhone });
+                        armWatchdog();
+                    } catch (e) {
+                        dlog(`${hashJid(ownerJid)} erro ao gerar pairing code: ${e?.message}`);
+                    }
+                }
+
                 if (u.qr) {
+                    if (normalizedPhone && session.pairCodeSent) {
+                        dlog(`${hashJid(ownerJid)} QR suprimido (modo pairing code)`);
+                        armWatchdog();
+                        return;
+                    }
                     const qrHash = crypto.createHash('sha1').update(String(u.qr)).digest('hex');
                     const isNewQr = qrHash !== session.lastQrHash;
                     if (isNewQr) {

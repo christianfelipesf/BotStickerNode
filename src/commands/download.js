@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const { getMaxDurationSeconds, fetchYouTubeDuration, buildDurationErrorMessage } = require('../services/durationLimit');
 
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -187,6 +188,18 @@ module.exports = {
 
         const platform = getPlatform(url);
         let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+
+        if (platform === 'youtube') {
+            const maxSeconds = getMaxDurationSeconds();
+            const info = await fetchYouTubeDuration(url, hasCookies ? cookiesPath : null);
+            if (Number.isFinite(info.seconds) && info.seconds > maxSeconds) {
+                await sock.sendMessage(from, {
+                    text: buildDurationErrorMessage({ url, seconds: info.seconds, title: info.title, platform, maxSeconds })
+                }, { quoted: m });
+                return await react(sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
+            }
+        }
+
         const id = crypto.randomBytes(4).toString('hex');
         const template = path.join(tempDir, `dl_${id}_%(playlist_index|)s%(playlist_index&_|)s%(id)s.%(ext)s`);
 

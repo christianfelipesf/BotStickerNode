@@ -91,7 +91,7 @@ module.exports = {
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
             else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle' || p === 'subSessionsGroups') config[p] = v.toLowerCase() === 'true';
-            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs') config[p] = parseInt(v, 10);
+            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs' || p === 'maxMediaDurationSeconds') config[p] = parseInt(v, 10);
             else if (p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs') {
                 // Aceita: "45" (minutos), "45m", "60s", "1h", "2700000ms".
                 // newsPollIntervalMinutes → grava em MINUTOS (número puro).
