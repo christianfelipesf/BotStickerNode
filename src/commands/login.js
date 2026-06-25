@@ -91,11 +91,11 @@ module.exports = {
                             }, { quoted: m });
                         } else if (reason === 'unauthorized') {
                             await sock.sendMessage(from, {
-                                text: '🔒 *Falha de autenticação (401).*\n\nO WhatsApp rejeitou a conexão.\n\n💡 *Possíveis causas:*\n• O número já tem outro dispositivo pareado\n• O WhatsApp bloqueou este IP (muitos pareamentos)\n• Credenciais anteriores expiradas\n\n🔄 Tente novamente em alguns minutos com *!login <número>*.'
+                                text: '🔒 *Falha de autenticação (401).*\n\nO WhatsApp rejeitou a conexão.\n\n💡 *Possíveis causas:*\n• O número já tem outro dispositivo pareado\n• O WhatsApp bloqueou este IP (muitos pareamentos)\n• Credenciais anteriores expiradas\n\n🔄 *Alternativa:* use `!login` (sem número) para gerar QR Code.\n\n⏰ Se o problema persistir, espere 15-30 min antes de tentar novamente.'
                             }, { quoted: m });
                         } else if (reason && reason.startsWith('close-')) {
                             await sock.sendMessage(from, {
-                                text: `❌ *Conexão fechada (${reason}).*\n\nO servidor WhatsApp encerrou a conexão antes de gerar o código.\n\n🔄 Tente *!login <número>* novamente em alguns minutos.`
+                                text: `❌ *Conexão fechada (${reason}).*\n\nO servidor WhatsApp encerrou a conexão antes de gerar o código de pareamento.\n\n💡 *Sugestão:* use \`!login\` (sem número) para gerar *QR Code* como alternativa — QR é menos restritivo.\n\n⏰ Aguarde 15-30 min se quiser tentar pairing novamente.`
                             }, { quoted: m });
                         }
                     } catch (_) {}
