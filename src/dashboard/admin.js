@@ -36,6 +36,14 @@ function renderCard(k, v) {
     const tp = document.createElement('div'); tp.className = 'type'; tp.textContent = t === 'object' ? 'obj' : t;
     r1.append(nm, tp); card.appendChild(r1);
 
+    const doc = window.Dashboard && window.Dashboard.configDocs ? window.Dashboard.configDocs[k] : null;
+    if (doc) {
+        const desc = document.createElement('div');
+        desc.style.cssText = 'font-size:11px;color:#9aa6b2;margin:6px 0 4px;line-height:1.4';
+        desc.textContent = doc;
+        card.appendChild(desc);
+    }
+
     if (t === 'boolean') {
         const tg = document.createElement('div');
         tg.className = 'toggle' + (v ? ' on' : '');
