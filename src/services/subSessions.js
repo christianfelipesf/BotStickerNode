@@ -295,6 +295,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
         connecting: true,
         qrAttempts: 0,
         qrTimer: null,
+        lastQrHash: null,
+        lastQrAt: 0,
         onQr, onConnected, onClosed
     };
     sessions.set(ownerJid, session);
@@ -317,55 +319,80 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
         });
         session.sock = sock;
 
+        const cleanupAndCancel = async (reason) => {
+            try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+            try { sock.end(undefined); } catch (_) {}
+            sessions.delete(ownerJid);
+            await safeCallback(session.onClosed, ownerJid, reason);
+        };
+
+        const armWatchdog = () => {
+            try { if (session.qrTimer) clearTimeout(session.qrTimer); } catch (_) {}
+            session.qrTimer = setTimeout(async () => {
+                try {
+                    if (session.connected) return;
+                    const sinceLast = Date.now() - (session.lastQrAt || 0);
+                    if (sinceLast < QR_INTERVAL_MS) {
+                        armWatchdog();
+                        return;
+                    }
+                    session.qrAttempts += 1;
+                    if (session.qrAttempts > QR_MAX_ATTEMPTS) {
+                        await cleanupAndCancel('qr-exhausted');
+                        return;
+                    }
+                    if (session.sock) {
+                        try { session.sock.end(undefined); } catch (_) {}
+                    }
+                } catch (_) {}
+            }, QR_INTERVAL_MS);
+            if (typeof session.qrTimer.unref === 'function') session.qrTimer.unref();
+        };
+
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', async (u) => {
             try {
                 if (u.qr) {
-                    session.qrAttempts += 1;
-                    if (session.qrAttempts > QR_MAX_ATTEMPTS) {
-                        await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
-                        try { sock.end(undefined); } catch (_) {}
-                        sessions.delete(ownerJid);
-                        return;
+                    const qrHash = crypto.createHash('sha1').update(String(u.qr)).digest('hex');
+                    const isNewQr = qrHash !== session.lastQrHash;
+                    if (isNewQr) {
+                        session.lastQrHash = qrHash;
+                        session.lastQrAt = Date.now();
+                        session.qrAttempts += 1;
+                        if (session.qrAttempts > QR_MAX_ATTEMPTS) {
+                            await cleanupAndCancel('qr-exhausted');
+                            return;
+                        }
+                        let buffer = null;
+                        try { buffer = await QRCode.toBuffer(u.qr, { type: 'png', width: 512, margin: 2 }); }
+                        catch (_) { buffer = null; }
+                        await safeCallback(session.onQr, ownerJid, { qr: u.qr, buffer, attempt: session.qrAttempts, max: QR_MAX_ATTEMPTS });
                     }
-                    let buffer = null;
-                    try { buffer = await QRCode.toBuffer(u.qr, { type: 'png', width: 512, margin: 2 }); }
-                    catch (_) { buffer = null; }
-                    await safeCallback(session.onQr, ownerJid, { qr: u.qr, buffer, attempt: session.qrAttempts, max: QR_MAX_ATTEMPTS });
-
-                    if (session.qrTimer) clearTimeout(session.qrTimer);
-                    session.qrTimer = setTimeout(async () => {
-                        try {
-                            if (!session.connected && session.sock) {
-                                session.qrAttempts += 1;
-                                if (session.qrAttempts > QR_MAX_ATTEMPTS) {
-                                    await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
-                                    try { session.sock.end(undefined); } catch (_) {}
-                                    sessions.delete(ownerJid);
-                                }
-                            }
-                        } catch (_) {}
-                    }, QR_INTERVAL_MS);
+                    armWatchdog();
                 }
 
                 if (u.connection === 'close') {
+                    session.connected = false;
+                    try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                     const code = (u.lastDisconnect?.error instanceof Boom)
                         ? u.lastDisconnect.error.output?.statusCode
                         : u.lastDisconnect?.error?.statusCode;
-                    session.connected = false;
                     if (code === DisconnectReason.loggedOut) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
-                    } else {
-                        await safeCallback(session.onClosed, ownerJid, `close-${code}`);
+                    } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
                         sessions.delete(ownerJid);
+                        await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
+                    } else {
+                        sessions.delete(ownerJid);
+                        await safeCallback(session.onClosed, ownerJid, `close-${code}`);
                     }
                 } else if (u.connection === 'open') {
                     session.connected = true;
                     session.connecting = false;
-                    if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; }
+                    try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                     session.phoneNumber = sock.user?.id?.split?.(':')?.[0] || session.phoneNumber;
                     persistSessionMeta(session);
                     attachMessagesHandler(session, sock);
