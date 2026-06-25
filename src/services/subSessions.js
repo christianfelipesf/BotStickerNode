@@ -343,6 +343,12 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
     const meta = loadSessionMeta(ownerJid) || {};
     const normalizedPhone = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
 
+    if (normalizedPhone) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        dlog(`${hashJid(ownerJid)} modo pairing → credenciais apagadas para começar do zero`);
+    }
+
     const session = {
         ownerJid,
         prefix: meta.prefix || PER_SESSION_PREFIX_DEFAULT,
@@ -388,6 +394,22 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         });
         session.sock = sock;
         console.log(`🔐 [sub:${hashJid(ownerJid)}] sock criado, auth dir=${dir}, version=${JSON.stringify(version)}`);
+
+        if (normalizedPhone) {
+            setTimeout(async () => {
+                if (session.pairCodeSent || session.connected) return;
+                try {
+                    dlog(`${hashJid(ownerJid)} requesting pairing code eagerly...`);
+                    const code = await sock.requestPairingCode(normalizedPhone);
+                    dlog(`${hashJid(ownerJid)} pairing code eager: ${code}`);
+                    session.pairCodeSent = true;
+                    await safeCallback(session.onPairingCode, ownerJid, { code, phoneNumber: normalizedPhone });
+                    armWatchdog();
+                } catch (e) {
+                    dlog(`${hashJid(ownerJid)} erro eager pairing: ${e?.message}`);
+                }
+            }, 1500);
+        }
 
         const cleanupAndCancel = async (reason) => {
             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
