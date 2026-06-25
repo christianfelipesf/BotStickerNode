@@ -9,18 +9,18 @@
   },
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "reset:admin": "node src/scripts/reset-admin.js"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.6.0",
-    "bcryptjs": "^2.4.3",
-    "cookie-session": "^2.1.0",
     "adm-zip": "^0.5.17",
     "axios": "^1.6.7",
     "better-sqlite3": "^12.11.1",
+    "cookie-session": "^2.1.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fluent-ffmpeg": "^2.1.2",

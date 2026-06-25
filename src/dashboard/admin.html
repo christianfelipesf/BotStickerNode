@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Admin</title>
+<link rel="icon" type="image/png" href="/favicon.ico">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0e1116; color: #e6edf3; }
@@ -11,7 +12,7 @@
   header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   header .spacer { flex: 1; }
   header a, header button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; text-decoration: none; }
-  header button:hover, header a:hover { background: #2a313c; }
+  header a:hover, header button:hover { background: #2a313c; }
   header button.danger { color: #f85149; border-color: #f85149; }
 
   .wrap { padding: 18px; max-width: 1100px; margin: 0 auto; }
@@ -52,8 +53,6 @@
   .card .row2 button { background: #1f2530; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 5px 9px; font-size: 11px; cursor: pointer; }
   .card .row2 button:hover { background: #2a313c; }
   .card .row2 button.save { background: #d29922; border-color: #d29922; color: #fff; }
-  .card .actions-row { display: flex; gap: 6px; }
-  .card textarea { width: 100%; background: #0e1116; border: 1px solid #30363d; border-radius: 5px; padding: 6px 9px; color: #e6edf3; font-size: 12px; font-family: ui-monospace, monospace; resize: vertical; min-height: 50px; }
 
   .toast { position: fixed; right: 18px; bottom: 18px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 100; }
   .toast.show { opacity: 1; transform: translateY(0); }
@@ -84,8 +83,8 @@
   .mgmt-btn:hover:not(:disabled) { background: #2a313c; border-color: #5b8cff; }
   .mgmt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .mgmt-btn.busy { background: #d29922; border-color: #d29922; color: #fff; cursor: wait; opacity: 1; }
-  .mgmt-btn.ok { background: #1f2530; border-color: #3fb950; color: #3fb950; }
-  .mgmt-btn.err { background: #1f2530; border-color: #f85149; color: #f85149; }
+  .mgmt-btn.ok { border-color: #3fb950; color: #3fb950; }
+  .mgmt-btn.err { border-color: #f85149; color: #f85149; }
   .mgmt-btn .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: mgmt-spin 0.8s linear infinite; }
   @keyframes mgmt-spin { to { transform: rotate(360deg); } }
   .mgmt-status { font-size: 11px; color: #9aa6b2; font-family: ui-monospace, monospace; margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -122,7 +121,7 @@
   </header>
 
   <div class="wrap">
-    <div class="mgmt-bar" id="mgmtBar">
+    <div class="mgmt-bar">
       <span class="lbl">Gerenciar:</span>
       <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar (git pull)</button>
       <button class="mgmt-btn" data-mgmt="install" id="btnMgmtInstall" title="Roda 'npm install'">📦 Instalar deps</button>
@@ -187,301 +186,6 @@
   </div>
 </div>
 
-<script>
-const $ = id => document.getElementById(id);
-let cfg = {}, orig = {}, dirty = new Set(), user = '', editKey = null;
-
-function toast(msg, type='ok') {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = 'toast show ' + type;
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.className = 'toast ' + type, 2200);
-}
-
-async function api(path, opts = {}) {
-  const r = await fetch(path, {
-    method: opts.method || 'GET',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: opts.body ? JSON.stringify(opts.body) : undefined
-  });
-  const data = r.headers.get('content-type')?.includes('json') ? await r.json() : await r.text();
-  return { ok: r.ok, status: r.status, data };
-}
-
-function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
-function clone(v) { return JSON.parse(JSON.stringify(v)); }
-function inferType(v) { if (v === null) return 'null'; if (Array.isArray(v)) return 'array'; return typeof v; }
-function preview(v) {
-  if (typeof v === 'boolean') return v ? '✅ ON' : '⛔ OFF';
-  if (typeof v === 'string') return v.length > 30 ? v.slice(0,30)+'…' : v;
-  if (typeof v === 'number') return String(v);
-  if (Array.isArray(v)) return `[${v.length} itens]`;
-  if (v === null) return 'null';
-  if (typeof v === 'object') return '{…}';
-  return String(v);
-}
-
-function renderCard(k, v) {
-  const t = inferType(v);
-  const card = document.createElement('div');
-  card.className = 'card' + (dirty.has(k) ? ' dirty' : '');
-  card.dataset.key = k;
-
-  const r1 = document.createElement('div'); r1.className = 'row1';
-  const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k;
-  const tp = document.createElement('div'); tp.className = 'type'; tp.textContent = t === 'object' ? 'obj' : t;
-  r1.appendChild(nm); r1.appendChild(tp);
-  card.appendChild(r1);
-
-  if (t === 'boolean') {
-    const tg = document.createElement('div');
-    tg.className = 'toggle' + (v ? ' on' : '');
-    tg.onclick = () => { tg.classList.toggle('on'); edit(k, !current(k)); rerender(); };
-    card.appendChild(tg);
-  } else if (t === 'array' || t === 'object') {
-    const pv = document.createElement('div'); pv.className = 'preview'; pv.textContent = preview(v); pv.title = JSON.stringify(v);
-    const eb = document.createElement('button'); eb.textContent = '✏️ Editar'; eb.style.cssText = 'margin-top:8px;width:100%;background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:5px;font-size:11px;cursor:pointer';
-    eb.onclick = () => openEdit(k, v, t);
-    card.appendChild(pv); card.appendChild(eb);
-  } else {
-    const inp = document.createElement('input');
-    inp.type = t === 'number' ? 'number' : 'text';
-    inp.step = 'any';
-    inp.value = v == null ? '' : v;
-    inp.addEventListener('input', () => {
-      let nv = inp.value;
-      if (t === 'number') { const n = parseFloat(nv); if (isNaN(n)) { inp.style.borderColor = '#f85149'; return; } inp.style.borderColor = ''; nv = n; }
-      edit(k, nv);
-    });
-    card.appendChild(inp);
-  }
-
-  const r2 = document.createElement('div'); r2.className = 'row2';
-  if (t !== 'boolean') {
-    const pv = document.createElement('div'); pv.className = 'preview'; pv.textContent = preview(v); pv.title = JSON.stringify(v);
-    r2.appendChild(pv);
-  } else r2.style.justifyContent = 'flex-end';
-  const sb = document.createElement('button'); sb.className = 'save'; sb.textContent = '💾';
-  sb.onclick = () => saveOne(k);
-  r2.appendChild(sb);
-  card.appendChild(r2);
-  return card;
-}
-
-function current(k) { return cfg[k]; }
-function edit(k, v) { if (!eq(v, orig[k])) dirty.add(k); else dirty.delete(k); cfg[k] = v; updateDirty(); }
-function updateDirty() {
-  document.querySelectorAll('.card').forEach(el => el.classList.toggle('dirty', dirty.has(el.dataset.key)));
-  $('btnSaveAll').textContent = '💾 Salvar (' + dirty.size + ')';
-}
-
-function rerender() {
-  const filter = $('searchInput').value.toLowerCase().trim();
-  const items = Object.entries(cfg).filter(([k]) => !filter || k.toLowerCase().includes(filter)).sort((a,b) => a[0].localeCompare(b[0]));
-  const g = $('grid');
-  if (items.length === 0) { g.innerHTML = '<div class="empty">Nenhuma chave.</div>'; return; }
-  g.innerHTML = '';
-  for (const [k, v] of items) g.appendChild(renderCard(k, v));
-  updateDirty();
-}
-
-async function load() {
-  const r = await api('/api/admin/config');
-  if (!r.ok) { if (r.status === 401) showLogin(); return; }
-  cfg = clone(r.data.config); orig = clone(r.data.config); dirty.clear();
-  $('userPill').textContent = '👤 ' + user;
-  $('infoLine').textContent = `${r.data.botName || 'Bot'} • v${r.data.version || '?'} • ${r.data.platform || '?'} • restart #${r.data.restarts ?? '?'}`;
-  showMain(); rerender();
-}
-
-async function saveOne(k) {
-  const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { [k]: cfg[k] } } });
-  if (!r.ok) { toast('Erro ao salvar', 'err'); return; }
-  orig[k] = clone(cfg[k]); dirty.delete(k); updateDirty(); toast(k + ' salvo ✓', 'ok');
-}
-
-async function saveAll() {
-  if (dirty.size === 0) return;
-  const updates = {}; for (const k of dirty) updates[k] = cfg[k];
-  const r = await api('/api/admin/config', { method: 'PUT', body: { updates } });
-  if (!r.ok) { toast('Erro', 'err'); return; }
-  for (const k of dirty) orig[k] = clone(cfg[k]);
-  dirty.clear(); updateDirty(); toast(Object.keys(updates).length + ' salvas ✓', 'ok');
-}
-
-function showLogin() { $('loginCard').classList.remove('hidden'); $('mainApp').classList.add('hidden'); }
-function showMain() { $('loginCard').classList.add('hidden'); $('mainApp').classList.remove('hidden'); }
-
-$('loginForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const u = $('loginUser').value.trim(), p = $('loginPass').value;
-  const r = await api('/api/admin/login', { method: 'POST', body: { username: u, password: p } });
-  if (!r.ok) { $('loginError').textContent = r.data?.error || 'Erro'; return; }
-  user = u; await load();
-});
-
-$('btnLogout').addEventListener('click', async () => {
-  await api('/api/admin/logout', { method: 'POST' });
-  user = ''; $('userPill').textContent = '—'; showLogin(); $('loginUser').value = ''; $('loginPass').value = '';
-});
-$('btnReload').addEventListener('click', load);
-$('btnSaveAll').addEventListener('click', saveAll);
-$('btnDiscard').addEventListener('click', () => { cfg = clone(orig); dirty.clear(); rerender(); toast('Descartado'); });
-$('searchInput').addEventListener('input', rerender);
-
-$('btnCred').addEventListener('click', () => {
-  $('credCurUser').value = user;
-  $('credNewUser').value = user; $('credNewPass').value = ''; $('credConfirm').value = ''; $('credErr').textContent = '';
-  $('credModal').classList.add('show');
-});
-$('credCancel').addEventListener('click', () => $('credModal').classList.remove('show'));
-$('credSave').addEventListener('click', async () => {
-  const u = $('credNewUser').value.trim(), p = $('credNewPass').value, c = $('credConfirm').value;
-  if (p !== c) { $('credErr').textContent = 'Senhas não conferem'; return; }
-  const r = await api('/api/admin/credentials', { method: 'POST', body: { username: u, password: p } });
-  if (!r.ok) { $('credErr').textContent = r.data?.error || 'Erro'; return; }
-  toast('Atualizado ✓', 'ok'); $('credModal').classList.remove('show'); user = u; $('userPill').textContent = '👤 ' + u;
-});
-
-function openEdit(k, v, t) {
-  editKey = k; $('editTitle').textContent = 'Editar ' + k;
-  $('editLbl').textContent = `Tipo: ${t}. Use JSON válido.`;
-  $('editValue').value = (t === 'array' || t === 'object') ? JSON.stringify(v, null, 2) : String(v);
-  $('editErr').textContent = ''; $('editModal').classList.add('show');
-  setTimeout(() => $('editValue').focus(), 50);
-}
-$('editCancel').addEventListener('click', () => { $('editModal').classList.remove('show'); editKey = null; });
-$('editSave').addEventListener('click', () => {
-  if (!editKey) return;
-  const t = inferType(cfg[editKey]);
-  try {
-    let v = (t === 'array' || t === 'object') ? JSON.parse($('editValue').value)
-      : t === 'number' ? parseFloat($('editValue').value)
-      : $('editValue').value;
-    cfg[editKey] = v; edit(editKey, v);
-    $('editModal').classList.remove('show'); editKey = null; rerender(); toast('Editado — clique 💾', 'ok');
-  } catch (e) { $('editErr').textContent = 'JSON inválido: ' + e.message; }
-});
-
-const MGMT_INFO = {
-  update:  { label: 'Atualizar (git pull)', cmd: 'git pull',                          desc: 'Baixa as últimas alterações do repositório. NÃO reinicia o bot — você pode revisar antes.' },
-  install: { label: 'Instalar dependências', cmd: 'npm install',                      desc: 'Instala/atualiza pacotes do package.json. Pode levar alguns minutos.' },
-  restart: { label: 'Reiniciar bot',       cmd: 'pm2 restart all',                    desc: 'Reinicia o bot via pm2. A sessão do dashboard será desconectada por alguns segundos.' }
-};
-const mgmtCooldown = new Map();
-const MGMT_COOLDOWN_MS = 8 * 1000;
-let mgmtBusy = false;
-
-function setMgmtStatus(text, cls) {
-  const el = $('mgmtStatus');
-  el.textContent = text;
-  el.className = 'mgmt-status' + (cls ? ' ' + cls : '');
-}
-function setBtnState(btn, kind) {
-  if (!btn) return;
-  btn.classList.remove('busy', 'ok', 'err');
-  if (kind === 'busy') {
-    btn.classList.add('busy');
-    btn.disabled = true;
-    const orig = btn.dataset.origLabel || btn.textContent;
-    btn.dataset.origLabel = orig;
-    btn.innerHTML = '<span class="spin"></span> executando…';
-  } else if (kind === 'ok') {
-    btn.classList.add('ok');
-    btn.disabled = false;
-    btn.textContent = btn.dataset.origLabel || btn.textContent;
-  } else if (kind === 'err') {
-    btn.classList.add('err');
-    btn.disabled = false;
-    btn.textContent = btn.dataset.origLabel || btn.textContent;
-  } else if (kind === 'reset') {
-    btn.classList.remove('busy', 'ok', 'err');
-    btn.disabled = false;
-    btn.textContent = btn.dataset.origLabel || btn.textContent;
-  }
-}
-
-function askMgmt(action) {
-  const info = MGMT_INFO[action];
-  if (!info) return;
-  const last = mgmtCooldown.get(action) || 0;
-  const now = Date.now();
-  if (now - last < MGMT_COOLDOWN_MS) {
-    toast('Aguarde alguns segundos antes de repetir', 'err');
-    return;
-  }
-  if (mgmtBusy) { toast('Outra ação em andamento', 'err'); return; }
-  $('mgmtTitle').textContent = 'Confirmar: ' + info.label;
-  $('mgmtDesc').textContent = info.desc;
-  $('mgmtCmd').textContent = '$ ' + info.cmd;
-  $('mgmtErr').textContent = '';
-  $('mgmtConfirm').dataset.action = action;
-  $('mgmtConfirm').textContent = 'Executar';
-  $('mgmtConfirm').disabled = false;
-  $('mgmtCancel').disabled = false;
-  $('mgmtModal').classList.add('show');
-}
-
-$('mgmtCancel').addEventListener('click', () => $('mgmtModal').classList.remove('show'));
-
-$('mgmtConfirm').addEventListener('click', async () => {
-  const action = $('mgmtConfirm').dataset.action;
-  if (!action) return;
-  $('mgmtConfirm').disabled = true;
-  $('mgmtCancel').disabled = true;
-  mgmtBusy = true;
-  mgmtCooldown.set(action, Date.now());
-  $('mgmtModal').classList.remove('show');
-
-  const btn = $('btnMgmt' + action[0].toUpperCase() + action.slice(1));
-  setBtnState(btn, 'busy');
-  setMgmtStatus('Executando ' + action + '…');
-
-  try {
-    const r = await api('/api/admin/' + action, { method: 'POST' });
-    if (!r.ok) {
-      const msg = r.data?.error || ('HTTP ' + r.status);
-      setBtnState(btn, 'err');
-      setMgmtStatus('✗ ' + msg, 'err');
-      toast('Falha: ' + msg, 'err');
-    } else {
-      const d = r.data || {};
-      if (action === 'update') {
-        const changed = d.changed;
-        const txt = changed ? `atualizado ${d.before} → ${d.after}` : `sem alterações (${d.after || d.before})`;
-        setBtnState(btn, 'ok');
-        setMgmtStatus('✓ ' + txt, 'ok');
-        toast('git pull: ' + txt, 'ok');
-      } else if (action === 'install') {
-        setBtnState(btn, d.ok !== false ? 'ok' : 'err');
-        setMgmtStatus(d.ok !== false ? '✓ npm install concluído' : '✗ npm install falhou', d.ok !== false ? 'ok' : 'err');
-        toast(d.ok !== false ? 'npm install ✓' : 'npm install falhou', d.ok !== false ? 'ok' : 'err');
-      } else if (action === 'restart') {
-        setBtnState(btn, d.ok ? 'ok' : 'err');
-        setMgmtStatus(d.ok ? '✓ pm2 restart enviado' : '✗ pm2 restart falhou', d.ok ? 'ok' : 'err');
-        toast(d.ok ? 'Reiniciando…' : 'Falhou', d.ok ? 'ok' : 'err');
-        if (d.ok) {
-          setTimeout(() => { try { location.reload(); } catch (_) {} }, 3500);
-        }
-      }
-    }
-  } catch (e) {
-    setBtnState(btn, 'err');
-    setMgmtStatus('✗ ' + (e?.message || 'erro'), 'err');
-    toast('Erro: ' + (e?.message || 'falha'), 'err');
-  } finally {
-    mgmtBusy = false;
-    setTimeout(() => setBtnState(btn, 'reset'), 4000);
-  }
-});
-
-document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
-  btn.addEventListener('click', () => askMgmt(btn.dataset.mgmt));
-});
-
-load();
-</script>
+<script src="/admin.js"></script>
 </body>
 </html>

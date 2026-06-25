@@ -131,6 +131,7 @@ dist
 # Bot Specific
 session/
 temp/
+data/
 
 # yarn v2
 .yarn/cache
