@@ -64,12 +64,14 @@
     function msgBubbleHtml(d) {
         const me = !!d.fromMe;
         const accent = me ? '#ffd279' : userColor(d.phone);
+        const inits = me ? '' : esc(initials(d.name || d.phone || '?'));
+        const avatarHtml = me ? '' : `<div class="msg-avatar" style="background:${accent}">${inits}</div>`;
         const q = d.quoted ? quotedHtml(d.quoted) : '';
         const m = mediaHtml(d.media);
         const att = d.attachment ? attachmentHtml(d.attachment) : '';
         const rx = reactionsHtml(d.reactions);
         const note = d.type === 'action' ? `<div class="msg-system-inline">${esc(d.text || '')}</div>` : '';
-        return `<div class="msg-wrapper ${me ? 'from-me' : 'from-other'}"><div class="msg-bubble" data-tj="${d.toJid || ''}" data-mid="${d.messageId || ''}" data-sj="${d.senderJid || ''}" data-fm="${me ? 1 : 0}" data-ph="${d.phone || ''}" data-nm="${esc(d.name || '')}" data-pv="${esc(d.text || '')}" data-hm="${d.media ? 1 : 0}">${q}${note}${m}${att}${d.text && d.type !== 'action' ? `<div class="msg-text">${esc(d.text)}</div>` : ''}<div class="msg-meta"><span class="msg-author" style="color:${accent}">${esc(d.name || 'Usuário')}</span><span>${esc(d.time || new Date(d.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></div>${rx}</div></div>`;
+        return `<div class="msg-wrapper ${me ? 'from-me' : 'from-other'}">${avatarHtml}<div class="msg-bubble" data-tj="${d.toJid || ''}" data-mid="${d.messageId || ''}" data-sj="${d.senderJid || ''}" data-fm="${me ? 1 : 0}" data-ph="${d.phone || ''}" data-nm="${esc(d.name || '')}" data-pv="${esc(d.text || '')}" data-hm="${d.media ? 1 : 0}">${q}${note}${m}${att}${d.text && d.type !== 'action' ? `<div class="msg-text">${esc(d.text)}</div>` : ''}<div class="msg-meta"><span class="msg-author" style="color:${accent}">${esc(d.name || 'Usuário')}</span><span>${esc(d.time || new Date(d.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span></div>${rx}</div></div>`;
     }
 
     function msgHtml(d) {
