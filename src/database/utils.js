@@ -213,7 +213,8 @@ const DEFAULT_CONFIG = {
     newsRetryBaseDelayMs: 15000,
     dashboardTrimIntervalMs: 60 * 1000,
     maxMediaDurationSeconds: 900,
-    subSessionsGroups: true
+    subSessionsGroups: true,
+    dashboardMuted: false
 };
 
 

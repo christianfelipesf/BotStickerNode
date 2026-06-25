@@ -35,14 +35,35 @@ function save(data) {
     }
 }
 
+function generateStrongPassword(length = 12) {
+    const charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*?+';
+    const bytes = crypto.randomBytes(length * 2);
+    let pwd = '';
+    for (let i = 0; i < bytes.length && pwd.length < length; i++) {
+        pwd += charset[bytes[i] % charset.length];
+    }
+    return pwd;
+}
+
 function ensureDefaultCredentials() {
     const data = load();
     if (!data.passwordHash) {
         data.username = data.username || 'admin';
-        data.passwordHash = bcrypt.hashSync('admin', 10);
+        const generatedPassword = generateStrongPassword(12);
+        data.passwordHash = bcrypt.hashSync(generatedPassword, 10);
+        data.initialPasswordPlain = generatedPassword;
         data.createdAt = data.createdAt || new Date().toISOString();
         save(data);
-        console.log('[adminAuth] ⚠️ Credenciais padrão criadas: admin/admin (TROQUE IMEDIATAMENTE!)');
+        console.log('');
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('🛡️  ADMIN PANEL — CREDENCIAIS GERADAS');
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log(`   Usuário: ${data.username}`);
+        console.log(`   Senha:   ${generatedPassword}`);
+        console.log('   ⚠️  Guarde esta senha! Ela aparece APENAS agora.');
+        console.log('   💡 Troque pelo painel /admin após o primeiro login.');
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('');
     }
     return data;
 }
@@ -89,11 +110,22 @@ function getSessionSecret() {
     return data.sessionSecret;
 }
 
+function consumeInitialPassword() {
+    const data = load();
+    const pwd = data.initialPasswordPlain;
+    if (!pwd) return null;
+    delete data.initialPasswordPlain;
+    save(data);
+    return pwd;
+}
+
 module.exports = {
     ensureDefaultCredentials,
     verifyCredentials,
     setCredentials,
     getInfo,
     getSessionSecret,
+    consumeInitialPassword,
+    generateStrongPassword,
     ADMIN_FILE
 };

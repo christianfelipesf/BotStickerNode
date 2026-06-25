@@ -322,6 +322,15 @@ function init(config) {
         return res.status(401).json({ ok: false, error: 'Não autenticado' });
     });
 
+    app.get('/api/admin/initial-password', (req, res) => {
+        if (!(req.session && req.session.adminUser)) {
+            return res.status(401).json({ ok: false, error: 'Não autenticado' });
+        }
+        const pwd = adminAuth.consumeInitialPassword();
+        if (!pwd) return res.json({ ok: true, available: false });
+        return res.json({ ok: true, available: true, password: pwd });
+    });
+
     app.post('/api/admin/credentials', requireAdmin, (req, res) => {
         try {
             const { username, password } = req.body || {};
@@ -345,7 +354,9 @@ function init(config) {
                 botName: cfg.botName,
                 version: getVersion(),
                 platform: process.platform,
-                restarts: stats.restarts
+                restarts: stats.restarts,
+                nodeVersion: process.version,
+                uptimeSeconds: Math.round(process.uptime())
             });
         } catch (e) {
             return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
@@ -584,7 +595,14 @@ function init(config) {
         res.status(status).json({ ok: false, error });
     });
 
-    ioServer = new Server(server);
+    ioServer = new Server(server, {
+        cors: { origin: '*', credentials: false },
+        transports: ['polling', 'websocket'],
+        allowUpgrades: true,
+        pingTimeout: 60000,
+        pingInterval: 25000,
+        upgradeTimeout: 30000
+    });
     ioServer.on('connection', async (socket) => {
         try {
             const history = loadDashboardHistory({ limit: HISTORY_SEND_LIMIT });
@@ -1058,6 +1076,10 @@ function shouldEmit(data) {
 
 function log(type, group, text, name = null, phone = null, media = null, extra = {}) {
     try {
+        try {
+            const cfg = readConfig();
+            if (cfg && cfg.dashboardMuted === true) return false;
+        } catch (_) {}
         // Gera messageId determinístico a partir do conteúdo quando não vier,
         // para que o UNIQUE INDEX (to_jid, message_id, type) deduplique
         // logs idênticos (ex.: mensagens de ação geradas em sequência rápida).
