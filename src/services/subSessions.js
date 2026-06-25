@@ -281,10 +281,14 @@ function extractText(message) {
     );
 }
 
-async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
+async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false }) {
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
-        if (existing.connecting) return existing;
+        if (existing.connecting && !_silent) return existing;
+        if (existing.connecting && _silent) {
+            try { if (existing.sock) existing.sock.end(undefined); } catch (_) {}
+            sessions.delete(ownerJid);
+        }
     }
 
     const dir = sessionFolder(ownerJid);
@@ -312,7 +316,9 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
         let version = [2, 3000, 1017531287];
         try {
             const latest = await fetchLatestBaileysVersion();
-            if (latest?.version) version = latest.version;
+            if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
+                version = latest.version;
+            }
         } catch (_) {}
 
         const sock = makeWASocket({
@@ -388,6 +394,20 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
+                    } else if (code === 515 || errMsg.toLowerCase().includes('restart required')) {
+                        dlog(`${hashJid(ownerJid)} 515/restart required → recriando sock automaticamente`);
+                        try { sock.end(undefined); } catch (_) {}
+                        setTimeout(() => {
+                            try {
+                                if (!sessions.has(ownerJid)) return;
+                                startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed })
+                                    .catch(e => dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`));
+                            } catch (_) {}
+                        }, 3000);
+                    } else if (code === 401) {
+                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                        sessions.delete(ownerJid);
+                        await safeCallback(session.onClosed, ownerJid, 'unauthorized');
                     } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
@@ -453,16 +473,25 @@ async function restoreFromDisk(onConnected) {
                 const session = await startLogin(meta.ownerJid, {
                     onQr: async () => {},
                     onConnected: async () => { if (typeof onConnected === 'function') await onConnected(meta.ownerJid); },
-                    onClosed: async () => {}
+                    onClosed: async (jid, reason) => {
+                        if (reason === 'unauthorized' || reason === 'logged-out' || reason === 'close-401' || reason === 'close-403') {
+                            try {
+                                const dir2 = path.join(SUB_SESSIONS_DIR, hashJid(jid));
+                                fs.rmSync(dir2, { recursive: true, force: true });
+                                dlog(`${hashJid(jid)} credenciais inválidas/expiradas → removidas`);
+                            } catch (_) {}
+                        }
+                    },
+                    _silent: true
                 });
                 restored.push(meta.ownerJid);
             } catch (e) {
-                console.error('💥 [sub:restore]', e?.message || e);
+                dlog(`${hashJid(meta.ownerJid)} falha ao restaurar: ${e?.message}`);
             }
         }
         return restored;
     } catch (e) {
-        console.error('💥 [sub:restoreDisk]', e?.message || e);
+        dlog(`restoreDisk erro: ${e?.message}`);
         return [];
     }
 }
