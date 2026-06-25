@@ -537,7 +537,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         ? u.lastDisconnect.error.output?.statusCode
                         : u.lastDisconnect?.error?.statusCode;
                     const errMsg = u.lastDisconnect?.error?.message || 'sem mensagem';
-                    dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" attempts=${session.qrAttempts}`);
+                    const errData = u.lastDisconnect?.error?.data ? JSON.stringify(u.lastDisconnect.error.data).slice(0, 200) : '';
+                    dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" data="${errData}" attempts=${session.qrAttempts}`);
                     if (code === DisconnectReason.loggedOut) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
