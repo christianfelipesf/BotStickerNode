@@ -190,9 +190,19 @@ async function startBot() {
             const ts = new Date().toLocaleString('pt-BR');
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
             try {
+                const principalState = require('./src/services/principalState');
+                const sockId = sock.user?.id?.split?.(':')?.[0] || null;
+                principalState.setConnected({ version, phone: sockId });
+            } catch (_) {}
+            try {
                 dashboard.log('action', 'SISTEMA',
                     `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
                     'Sistema', '—');
+            } catch (_) {}
+        } else if (u.connection === 'close') {
+            try {
+                const principalState = require('./src/services/principalState');
+                principalState.setDisconnected();
             } catch (_) {}
         }
     });

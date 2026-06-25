@@ -20,6 +20,7 @@ function dlog(msg) {
 
 const { readConfig } = require('../database/utils');
 const mediaHandler = require('../events/media');
+const principalState = require('./principalState');
 
 // ============================================================
 // subSessions — múltiplos sockets Baileys paralelos por usuário
@@ -52,6 +53,8 @@ const ALLOWED_BASIC = new Set([
 ]);
 
 const sessions = new Map();
+const loginLocks = new Map();
+const LOGIN_LOCK_TTL_MS = 2000;
 
 function hashJid(jid) {
     return crypto.createHash('sha1').update(String(jid || '')).digest('hex').slice(0, 16);
@@ -331,10 +334,33 @@ function extractText(message, m) {
     );
 }
 
-async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null }) {
+async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null, _waitPrincipal = false }) {
     const baseHash = hashJid(ownerJid);
     const metaEarly = loadSessionMeta(ownerJid) || {};
     const normalizedPhoneEarly = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
+
+    if (_waitPrincipal && !principalState.getState().connected) {
+        dlog(`${hashJid(ownerJid)} aguardando bot principal conectar (timeout 90s)...`);
+        try {
+            await principalState.waitForConnection(90000);
+            dlog(`${hashJid(ownerJid)} bot principal conectou, prosseguindo`);
+        } catch (e) {
+            dlog(`${hashJid(ownerJid)} timeout aguardando principal: ${e?.message}`);
+            await safeCallback(onClosed, ownerJid, 'principal-not-connected');
+            sessions.delete(ownerJid);
+            return null;
+        }
+    }
+
+    if (!_silent && !_reconnect) {
+        const lockUntil = loginLocks.get(ownerJid);
+        if (lockUntil && lockUntil > Date.now()) {
+            dlog(`${hashJid(ownerJid)} login duplicado bloqueado (lock ativo por ${Math.max(0, lockUntil - Date.now())}ms)`);
+            return sessions.get(ownerJid) || null;
+        }
+        loginLocks.set(ownerJid, Date.now() + LOGIN_LOCK_TTL_MS);
+        setTimeout(() => loginLocks.delete(ownerJid), LOGIN_LOCK_TTL_MS).unref?.();
+    }
 
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
@@ -442,16 +468,20 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                     return;
                 }
                 try {
-                    dlog(`${hashJid(ownerJid)} requesting pairing code (tentativa ${attempt})...`);
+                    dlog(`${hashJid(ownerJid)} requesting pairing code (tentativa ${attempt}/3)...`);
                     const code = await sock.requestPairingCode(normalizedPhone);
                     dlog(`${hashJid(ownerJid)} pairing code OK: ${code}`);
                     session.pairCodeSent = true;
                     await safeCallback(session.onPairingCode, ownerJid, { code, phoneNumber: normalizedPhone });
                     armWatchdog();
                 } catch (e) {
-                    dlog(`${hashJid(ownerJid)} erro pairing (tentativa ${attempt}): ${e?.message}`);
-                    if (attempt < 4 && !session.connected && sessions.has(ownerJid)) {
+                    dlog(`${hashJid(ownerJid)} erro pairing (tentativa ${attempt}/3): ${e?.message}`);
+                    if (attempt < 3 && !session.connected && sessions.has(ownerJid)) {
                         setTimeout(() => tryRequestCode(attempt + 1), 3000);
+                    } else if (attempt >= 3 && sessions.has(ownerJid)) {
+                        dlog(`${hashJid(ownerJid)} ❌ 3 tentativas de pairing falharam → limpando tudo automaticamente`);
+                        try { await safeCallback(session.onPairingCode, ownerJid, { code: null, phoneNumber: normalizedPhone, failed: true, attempts: 3 }); } catch (_) {}
+                        await cleanupAndCancel('pairing-failed');
                     }
                 }
             };
@@ -658,7 +688,8 @@ async function restoreFromDisk(onConnected) {
                             } catch (_) {}
                         }
                     },
-                    _silent: true
+                    _silent: true,
+                    _waitPrincipal: true
                 });
                 restored.push(meta.ownerJid);
             } catch (e) {

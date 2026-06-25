@@ -1,4 +1,5 @@
 const subSessions = require('../services/subSessions');
+const principalState = require('../services/principalState');
 
 function normalizePhone(input) {
     if (!input) return null;
@@ -36,6 +37,21 @@ module.exports = {
 
         let currentBotResponse = await react(sock, m, '🔐', lastBotResponse, GLOBAL_COOLDOWN);
 
+        if (!principalState.getState().connected) {
+            await sock.sendMessage(from, {
+                text: '⏳ *Aguardando o bot principal conectar…*\n\nO bot principal ainda não está conectado (🟢). A sub-sessão só inicia depois disso.\n\n⏱️ Vou esperar até 90 segundos.'
+            }, { quoted: m });
+            try {
+                await principalState.waitForConnection(90000);
+            } catch (e) {
+                await sock.sendMessage(from, {
+                    text: '❌ *Bot principal não conectou em 90s.*\n\nTente `!login` novamente em alguns minutos.'
+                }, { quoted: m });
+                return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            }
+            await sock.sendMessage(from, { text: '✅ Bot principal conectado! Iniciando sub-sessão…' }, { quoted: m });
+        }
+
         if (usePairing) {
             await sock.sendMessage(from, {
                 text: `🔐 *Sub-sessão iniciando…*\n\n📞 *Número:* \`${phoneArg}\`\n📲 *Modo:* código de pareamento\n\nVou gerar um *código de 8 dígitos* para você digitar no WhatsApp.\n\n⏱️ Você tem até 5 minutos para parear.`
@@ -64,11 +80,18 @@ module.exports = {
                         }
                     } catch (_) {}
                 },
-                onPairingCode: async (jid, { code, phoneNumber }) => {
+                onPairingCode: async (jid, { code, phoneNumber, failed, attempts }) => {
                     try {
+                        if (failed) {
+                            await sock.sendMessage(from, {
+                                text: `❌ *Falha no pareamento (${attempts} tentativas).*\n\nO WhatsApp rejeitou o código ${attempts}x. Provável rate-limit desta VPS.\n\n✅ *Limpeza automática:*\n• Sub-sessão encerrada\n• Credenciais apagadas do disco\n\n🔄 *Próximas opções:*\n• Use \`!login\` (sem número) → QR Code\n• Aguarde 30-60 min e tente \`!login ${phoneNumber}\` novamente\n• Use \`!subclean\` para limpar antes de tentar de novo`
+                            }, { quoted: m });
+                            return;
+                        }
+                        if (!code) return;
                         const formatted = `${code.slice(0, 4)}-${code.slice(4)}`;
                         await sock.sendMessage(from, {
-                            text: `🔢 *Código de pareamento*\n\n📞 *Número:* \`${phoneNumber}\`\n🔐 *Código:* \`${formatted}\`\n\n📱 *Como usar:*\n1. Abra o WhatsApp no celular\n2. ⋮ (três pontos) → *Aparelhos conectados*\n3. Toque em *Conectar um aparelho*\n4. Toque em *Conectar com número de telefone*\n5. Digite o código acima: *${formatted}*\n\n⏱️ Código válido por ~5 minutos.`
+                            text: `🔢 *Código de pareamento*\n\n📞 *Número:* \`${phoneNumber}\`\n🔐 *Código:* \`${formatted}\`\n\n📱 *Como usar:*\n1. Abra o WhatsApp no celular\n2. ⋮ (três pontos) → *Aparelhos conectados*\n3. Toque em *Conectar um aparelho*\n4. Toque em *Conectar com número de telefone*\n5. Digite o código acima: *${formatted}*\n\n⏱️ Código válido por ~5 minutos.\n🔁 Você tem *3 tentativas* antes da sub-sessão ser limpa.`
                         }, { quoted: m });
                     } catch (_) {}
                 },
