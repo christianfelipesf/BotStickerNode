@@ -1,6 +1,5 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const { revealViewOnce } = require('./media');
 const { getModel } = require('../services/ai');
 const dashboard = require('../dashboard/dashboard');
 const cooldown = require('../services/cooldown');
@@ -124,8 +123,6 @@ setInterval(() => {
 // ============================================================
 const GLOBAL_COOLDOWN = 1000;
 let lastBotResponse = 0;
-const AUTO_VIEW_ONCE = true;
-
 // ============================================================
 // Main message handler
 // ============================================================
@@ -186,11 +183,6 @@ module.exports = {
             // === Activity tracking ===
             if (isBotActive && isGroup) {
                 updateMemberActivity(from, sender, senderName);
-            }
-
-            // === Auto view-once reveal ===
-            if (isBotActive && (AUTO_VIEW_ONCE || (isGroup && isActiveGroup(from))) && !m.key.fromMe) {
-                lastBotResponse = await revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN);
             }
 
             // === Prefix query ===
