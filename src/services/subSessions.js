@@ -432,14 +432,12 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
-        if (!normalizedPhone) {
-            try {
-                const latest = await fetchLatestBaileysVersion();
-                if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
-                    version = latest.version;
-                }
-            } catch (_) {}
-        }
+        try {
+            const latest = await fetchLatestBaileysVersion();
+            if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
+                version = latest.version;
+            }
+        } catch (_) {}
         dlog(`${hashJid(ownerJid)} usando version=${JSON.stringify(version)} (pairing=${!!normalizedPhone})`);
 
         const sock = makeWASocket({
