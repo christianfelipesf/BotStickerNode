@@ -4,6 +4,8 @@ const os = require('os');
 const path = require('path');
 const express = require('express');
 const { Server } = require('socket.io');
+const cookieSession = require('cookie-session');
+const adminAuth = require('./adminAuth');
 const {
     mediaToSticker,
     insertDashboardLog,
@@ -273,6 +275,111 @@ function init(config) {
     });
     app.use(express.json({ limit: '20mb' }));
 
+    adminAuth.ensureDefaultCredentials();
+    app.set('trust proxy', 1);
+    app.use(cookieSession({
+        name: 'admin_session',
+        keys: [adminAuth.getSessionSecret()],
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: 'auto'
+    }));
+
+    const requireAdmin = (req, res, next) => {
+        if (req.session && req.session.adminUser) return next();
+        return res.status(401).json({ ok: false, error: 'Não autenticado' });
+    };
+
+    app.post('/api/admin/login', (req, res) => {
+        try {
+            const { username, password } = req.body || {};
+            if (!username || !password) return res.status(400).json({ ok: false, error: 'Usuário e senha obrigatórios' });
+            if (!adminAuth.verifyCredentials(String(username), String(password))) {
+                return res.status(401).json({ ok: false, error: 'Usuário ou senha inválidos' });
+            }
+            req.session.adminUser = String(username);
+            req.session.adminLoginAt = Date.now();
+            return res.json({ ok: true, username });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
+        }
+    });
+
+    app.post('/api/admin/logout', (req, res) => {
+        try {
+            if (req.session) req.session = null;
+            return res.json({ ok: true });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    app.get('/api/admin/me', (req, res) => {
+        if (req.session && req.session.adminUser) {
+            return res.json({ ok: true, username: req.session.adminUser, info: adminAuth.getInfo() });
+        }
+        return res.status(401).json({ ok: false, error: 'Não autenticado' });
+    });
+
+    app.post('/api/admin/credentials', requireAdmin, (req, res) => {
+        try {
+            const { username, password } = req.body || {};
+            const r = adminAuth.setCredentials(username, password);
+            if (!r.ok) return res.status(400).json(r);
+            return res.json({ ok: true });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    const { readConfig, writeConfig, getVersion, readStats } = require('../database/utils');
+
+    app.get('/api/admin/config', requireAdmin, (req, res) => {
+        try {
+            const cfg = readConfig();
+            const stats = readStats();
+            return res.json({
+                ok: true,
+                config: cfg,
+                botName: cfg.botName,
+                version: getVersion(),
+                platform: process.platform,
+                restarts: stats.restarts
+            });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
+        }
+    });
+
+    app.put('/api/admin/config', requireAdmin, (req, res) => {
+        try {
+            const { updates } = req.body || {};
+            if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+                return res.status(400).json({ ok: false, error: 'Body precisa ter { updates: { key: value } }' });
+            }
+            const current = readConfig();
+            const merged = { ...current, ...updates };
+            writeConfig(merged);
+            try {
+                const newsSvc = global.__botServices && global.__botServices.news;
+                if (newsSvc && 'newsEnabled' in updates) {
+                    const cfgNow = readConfig();
+                    if (cfgNow.newsEnabled !== false) {
+                        try { newsSvc.attachSock(sockRef); } catch (_) {}
+                        try { newsSvc.start(); } catch (_) {}
+                    } else {
+                        try { newsSvc.stop(); } catch (_) {}
+                    }
+                }
+            } catch (_) {}
+            try { dashboard.log('action', 'SISTEMA', 'Config editada via /admin', 'admin', 'admin', null, { toJid: 'admin', messageId: null, senderJid: 'admin', fromMe: false }); } catch (_) {}
+            return res.json({ ok: true, updated: Object.keys(updates).length });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message || 'Erro interno' });
+        }
+    });
+
     app.post('/api/reply', apiHandler(sendReply));
     app.post('/api/send', apiHandler(sendDirect));
     app.get('/api/groups', async (req, res) => {
@@ -460,6 +567,15 @@ function init(config) {
             }
         }
         res.status(204).end();
+    });
+    app.get('/admin', (req, res) => {
+        if (!(req.session && req.session.adminUser)) {
+            return res.redirect('/admin/login');
+        }
+        res.type('html').sendFile(path.join(__dirname, 'admin.html'));
+    });
+    app.get('/admin/login', (req, res) => {
+        res.type('html').sendFile(path.join(__dirname, 'admin.html'));
     });
     app.get('/', (req, res) => res.type('html').send(getHtml(config.botName || 'Bot')));
     app.use((err, req, res, next) => {

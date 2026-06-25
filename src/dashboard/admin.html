@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin — Config Editor</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg2: #161b22;
+    --bg3: #1f2530;
+    --fg: #e6edf3;
+    --fg2: #9aa6b2;
+    --accent: #4f8cff;
+    --accent2: #2f6fe6;
+    --green: #3fb950;
+    --red: #f85149;
+    --orange: #d29922;
+    --border: #30363d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+  }
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 22px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .pill {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--fg2);
+  }
+  header .spacer { flex: 1; }
+  header button {
+    background: var(--bg3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  header button:hover { background: var(--bg); }
+  header button.danger { color: var(--red); border-color: var(--red); }
+
+  .wrap { padding: 22px; max-width: 1100px; margin: 0 auto; }
+  .login-card {
+    max-width: 420px;
+    margin: 80px auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px;
+  }
+  .login-card h2 { margin: 0 0 8px; font-size: 20px; }
+  .login-card p { margin: 0 0 18px; color: var(--fg2); font-size: 14px; }
+  .login-card label { display: block; font-size: 12px; color: var(--fg2); margin: 12px 0 6px; }
+  .login-card input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--fg);
+    font-size: 14px;
+  }
+  .login-card input:focus { outline: none; border-color: var(--accent); }
+  .login-card button.primary {
+    width: 100%;
+    margin-top: 18px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 11px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .login-card button.primary:hover { background: var(--accent2); }
+  .login-card .error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .toolbar input.search {
+    flex: 1;
+    min-width: 220px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 12px;
+    color: var(--fg);
+    font-size: 13px;
+  }
+  .toolbar button {
+    background: var(--bg2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toolbar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .toolbar button.primary:hover { background: var(--accent2); }
+  .toolbar button.danger { color: var(--red); border-color: var(--red); }
+
+  .kv-list { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .kv {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    align-items: start;
+  }
+  .kv:last-child { border-bottom: none; }
+  .kv .key {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--fg);
+    word-break: break-all;
+  }
+  .kv .key .badge {
+    display: inline-block;
+    margin-left: 8px;
+    background: var(--bg3);
+    color: var(--fg2);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  .kv .editor { display: flex; flex-direction: column; gap: 6px; }
+  .kv .editor input[type=text],
+  .kv .editor input[type=number] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 7px 10px;
+    color: var(--fg);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .kv .editor input:focus { outline: none; border-color: var(--accent); }
+  .kv .editor textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 10px;
+    color: var(--fg);
+    font-size: 13px;
+    font-family: var(--mono);
+    resize: vertical;
+    min-height: 60px;
+    max-height: 240px;
+  }
+  .kv .editor .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg2);
+  }
+  .kv .editor .check input { width: 16px; height: 16px; }
+  .kv .editor .array-editor { display: flex; flex-direction: column; gap: 4px; }
+  .kv .editor .array-editor .row { display: flex; gap: 6px; }
+  .kv .editor .array-editor .row input { flex: 1; }
+  .kv .editor .array-editor .row button {
+    background: var(--bg3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .kv .actions { display: flex; gap: 6px; }
+  .kv .actions button {
+    background: var(--bg3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .kv .actions button:hover { background: var(--bg); }
+  .kv.dirty { background: var(--bg2); border-left: 3px solid var(--orange); }
+  .kv.dirty .actions button.save { background: var(--orange); border-color: var(--orange); color: #fff; }
+
+  .toast {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: var(--green); color: var(--green); }
+  .toast.err { border-color: var(--red); color: var(--red); }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    min-width: 360px;
+    max-width: 90vw;
+  }
+  .modal h3 { margin: 0 0 14px; font-size: 16px; }
+  .modal label { display: block; font-size: 12px; color: var(--fg2); margin: 10px 0 4px; }
+  .modal input, .modal textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 10px;
+    color: var(--fg);
+    font-size: 13px;
+  }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal button {
+    background: var(--bg3);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .modal button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .modal button.primary:hover { background: var(--accent2); }
+  .modal button.danger { color: var(--red); border-color: var(--red); }
+
+  .info-bar {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--fg2);
+    margin-bottom: 14px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .info-bar strong { color: var(--fg); margin-right: 4px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛠️ Admin — Config Editor</h1>
+  <span class="pill" id="userPill">—</span>
+  <span class="spacer"></span>
+  <a href="/" style="color: var(--fg2); text-decoration: none; font-size: 13px;">← Dashboard</a>
+  <button class="danger" id="btnLogout">Sair</button>
+</header>
+
+<!-- LOGIN -->
+<div class="login-card" id="loginCard">
+  <h2>🔐 Login Admin</h2>
+  <p>Acesse para editar variáveis do database do bot.</p>
+  <form id="loginForm">
+    <label>Usuário</label>
+    <input type="text" id="loginUser" autocomplete="username" required />
+    <label>Senha</label>
+    <input type="password" id="loginPass" autocomplete="current-password" required />
+    <button class="primary" type="submit">Entrar</button>
+    <div class="error" id="loginError"></div>
+  </form>
+  <p style="margin-top: 18px; font-size: 12px;">
+    Padrão inicial: <code>admin</code> / <code>admin</code> — troque após o primeiro login.
+  </p>
+</div>
+
+<!-- MAIN -->
+<div class="wrap hidden" id="mainApp">
+  <div class="info-bar" id="infoBar">
+    <span><strong>Bot:</strong> <span id="infoBot">—</span></span>
+    <span><strong>Versão:</strong> <span id="infoVersion">—</span></span>
+    <span><strong>Plataforma:</strong> <span id="infoPlatform">—</span></span>
+    <span><strong>Restart #:</strong> <span id="infoRestart">—</span></span>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar chaves (ex: prefix, maxMediaDuration, news)..." />
+    <button id="btnReload">↻ Recarregar</button>
+    <button id="btnSaveAll" class="primary">💾 Salvar Todas Pendentes</button>
+    <button id="btnDiscard" class="danger">✗ Descartar Alterações</button>
+  </div>
+
+  <div class="kv-list" id="kvList"></div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- MODAL: change credentials -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h3>🔑 Alterar Credenciais</h3>
+    <label>Usuário atual</label>
+    <input type="text" id="credCurrentUser" readonly />
+    <label>Novo usuário</label>
+    <input type="text" id="credNewUser" />
+    <label>Nova senha (mín. 4 chars)</label>
+    <input type="password" id="credNewPass" />
+    <label>Confirmar senha</label>
+    <input type="password" id="credConfirmPass" />
+    <div id="credError" style="color: var(--red); font-size: 12px; min-height: 16px; margin-top: 8px;"></div>
+    <div class="row">
+      <button id="credCancel">Cancelar</button>
+      <button class="primary" id="credSave">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: edit JSON / array element -->
+<div class="modal-overlay" id="editOverlay">
+  <div class="modal" style="min-width: 480px;">
+    <h3 id="editTitle">Editar</h3>
+    <label id="editLabel">Valor</label>
+    <textarea id="editValue" rows="6"></textarea>
+    <div id="editError" style="color: var(--red); font-size: 12px; min-height: 16px; margin-top: 6px;"></div>
+    <div class="row">
+      <button id="editCancel">Cancelar</button>
+      <button class="primary" id="editSave">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+let originalConfig = {};
+let currentConfig = {};
+let dirtyKeys = new Set();
+let currentUser = '';
+
+function toast(msg, type='ok') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast ' + type, 2500);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    method: opts.method || 'GET',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await res.json() : await res.text();
+  return { ok: res.ok, status: res.status, data };
+}
+
+function inferType(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v;
+}
+
+function badge(t) {
+  const map = {
+    string: 'string', number: 'number', boolean: 'bool',
+    array: 'array', object: 'object', null: 'null', undefined: 'undef'
+  };
+  return map[t] || t;
+}
+
+function renderRow(key, value) {
+  const type = inferType(value);
+  const row = document.createElement('div');
+  row.className = 'kv';
+  row.dataset.key = key;
+
+  const keyEl = document.createElement('div');
+  keyEl.className = 'key';
+  keyEl.innerHTML = `${escapeHtml(key)} <span class="badge">${badge(type)}</span>`;
+
+  const editor = document.createElement('div');
+  editor.className = 'editor';
+
+  const wrapInput = document.createElement('div');
+
+  if (type === 'boolean') {
+    const check = document.createElement('label');
+    check.className = 'check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!value;
+    cb.addEventListener('change', () => onLocalEdit(key, cb.checked));
+    check.appendChild(cb);
+    check.appendChild(document.createTextNode(value ? 'true' : 'false'));
+    wrapInput.appendChild(check);
+  } else if (type === 'number') {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.value = value;
+    inp.addEventListener('input', () => {
+      const n = parseFloat(inp.value);
+      if (!isNaN(n)) onLocalEdit(key, n);
+      else inp.style.borderColor = 'var(--red)';
+    });
+    inp.addEventListener('blur', () => { inp.style.borderColor = ''; });
+    wrapInput.appendChild(inp);
+  } else if (type === 'array') {
+    const arr = document.createElement('div');
+    arr.className = 'array-editor';
+    value.forEach((item, idx) => arr.appendChild(buildArrayRow(key, item, idx)));
+    const addBtn = document.createElement('button');
+    addBtn.textContent = '+ Adicionar item';
+    addBtn.style.marginTop = '4px';
+    addBtn.onclick = () => {
+      const newArr = getCurrentValue(key);
+      newArr.push('');
+      onLocalEdit(key, newArr);
+      arr.appendChild(buildArrayRow(key, '', newArr.length - 1));
+    };
+    arr.appendChild(addBtn);
+    wrapInput.appendChild(arr);
+  } else if (type === 'object' && value !== null) {
+    const ta = document.createElement('textarea');
+    ta.value = JSON.stringify(value, null, 2);
+    ta.placeholder = 'JSON object';
+    ta.addEventListener('change', () => {
+      try { onLocalEdit(key, JSON.parse(ta.value)); ta.style.borderColor = ''; }
+      catch (_) { ta.style.borderColor = 'var(--red)'; toast('JSON inválido', 'err'); }
+    });
+    wrapInput.appendChild(ta);
+  } else {
+    const isMultiline = typeof value === 'string' && (value.includes('\n') || value.length > 60);
+    if (isMultiline) {
+      const ta = document.createElement('textarea');
+      ta.value = value == null ? '' : value;
+      ta.placeholder = 'texto (Enter envia como \\n)';
+      ta.addEventListener('input', () => onLocalEdit(key, ta.value));
+      wrapInput.appendChild(ta);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = value == null ? '' : value;
+      inp.addEventListener('input', () => onLocalEdit(key, inp.value));
+      wrapInput.appendChild(inp);
+    }
+  }
+
+  editor.appendChild(wrapInput);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = '💾 Salvar';
+  saveBtn.className = 'save';
+  saveBtn.onclick = () => saveOne(key);
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = '↺';
+  resetBtn.title = 'Restaurar valor original';
+  resetBtn.onclick = () => {
+    currentConfig[key] = deepClone(originalConfig[key]);
+    dirtyKeys.delete(key);
+    renderAll();
+  };
+  actions.appendChild(saveBtn);
+  actions.appendChild(resetBtn);
+
+  row.appendChild(keyEl);
+  row.appendChild(editor);
+  row.appendChild(actions);
+
+  if (dirtyKeys.has(key)) row.classList.add('dirty');
+
+  return row;
+}
+
+function buildArrayRow(arrKey, item, idx) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = item == null ? '' : item;
+  inp.addEventListener('input', () => {
+    const arr = getCurrentValue(arrKey);
+    arr[idx] = inp.value;
+    onLocalEdit(arrKey, arr);
+  });
+  const del = document.createElement('button');
+  del.textContent = '✗';
+  del.onclick = () => {
+    const arr = getCurrentValue(arrKey);
+    arr.splice(idx, 1);
+    onLocalEdit(arrKey, arr);
+    renderAll();
+  };
+  row.appendChild(inp);
+  row.appendChild(del);
+  return row;
+}
+
+function getCurrentValue(key) {
+  return currentConfig[key];
+}
+
+function onLocalEdit(key, value) {
+  if (JSON.stringify(value) !== JSON.stringify(originalConfig[key])) {
+    dirtyKeys.add(key);
+  } else {
+    dirtyKeys.delete(key);
+  }
+  currentConfig[key] = value;
+  renderDirtyFlags();
+}
+
+function renderDirtyFlags() {
+  document.querySelectorAll('.kv').forEach(el => {
+    const k = el.dataset.key;
+    if (dirtyKeys.has(k)) el.classList.add('dirty');
+    else el.classList.remove('dirty');
+  });
+  $('btnSaveAll').textContent = dirtyKeys.size > 0
+    ? `💾 Salvar (${dirtyKeys.size}) pendente(s)`
+    : '💾 Salvar Todas Pendentes';
+}
+
+function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function renderAll() {
+  const list = $('kvList');
+  list.innerHTML = '';
+  const filter = $('searchInput').value.toLowerCase().trim();
+  const entries = Object.entries(currentConfig)
+    .filter(([k]) => !filter || k.toLowerCase().includes(filter))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (entries.length === 0) {
+    list.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--fg2);">Nenhuma chave encontrada.</div>';
+    return;
+  }
+  for (const [k, v] of entries) list.appendChild(renderRow(k, v));
+  renderDirtyFlags();
+}
+
+async function loadConfig() {
+  const r = await api('/api/admin/config');
+  if (!r.ok) {
+    if (r.status === 401) { showLogin(); return; }
+    toast('Falha ao carregar: ' + (r.data?.error || r.status), 'err');
+    return;
+  }
+  originalConfig = deepClone(r.data.config);
+  currentConfig = deepClone(r.data.config);
+  dirtyKeys.clear();
+  $('infoBot').textContent = r.data.botName || '—';
+  $('infoVersion').textContent = r.data.version || '—';
+  $('infoPlatform').textContent = r.data.platform || '—';
+  $('infoRestart').textContent = r.data.restarts ?? '—';
+  showMain();
+  renderAll();
+}
+
+async function saveOne(key) {
+  const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { [key]: currentConfig[key] } } });
+  if (!r.ok) { toast('Erro ao salvar ' + key, 'err'); return; }
+  originalConfig[key] = deepClone(currentConfig[key]);
+  dirtyKeys.delete(key);
+  toast(key + ' salvo ✓', 'ok');
+  renderAll();
+}
+
+async function saveAll() {
+  if (dirtyKeys.size === 0) { toast('Nada para salvar', 'err'); return; }
+  const updates = {};
+  for (const k of dirtyKeys) updates[k] = currentConfig[k];
+  const r = await api('/api/admin/config', { method: 'PUT', body: { updates } });
+  if (!r.ok) { toast('Erro: ' + (r.data?.error || r.status), 'err'); return; }
+  for (const k of dirtyKeys) originalConfig[k] = deepClone(currentConfig[k]);
+  dirtyKeys.clear();
+  toast(updates.length === 1 ? '1 chave salva ✓' : Object.keys(updates).length + ' chaves salvas ✓', 'ok');
+  renderAll();
+}
+
+function showLogin() { $('loginCard').classList.remove('hidden'); $('mainApp').classList.add('hidden'); }
+function showMain()  { $('loginCard').classList.add('hidden');    $('mainApp').classList.remove('hidden'); }
+
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const user = $('loginUser').value.trim();
+  const pass = $('loginPass').value;
+  $('loginError').textContent = '';
+  const r = await api('/api/admin/login', { method: 'POST', body: { username: user, password: pass } });
+  if (!r.ok) {
+    $('loginError').textContent = r.data?.error || 'Erro ao entrar';
+    return;
+  }
+  currentUser = user;
+  $('userPill').textContent = '👤 ' + user;
+  await loadConfig();
+});
+
+$('btnLogout').addEventListener('click', async () => {
+  await api('/api/admin/logout', { method: 'POST' });
+  currentUser = '';
+  $('userPill').textContent = '—';
+  showLogin();
+  $('loginUser').value = '';
+  $('loginPass').value = '';
+});
+
+$('btnReload').addEventListener('click', loadConfig);
+$('btnSaveAll').addEventListener('click', saveAll);
+$('btnDiscard').addEventListener('click', () => {
+  currentConfig = deepClone(originalConfig);
+  dirtyKeys.clear();
+  renderAll();
+  toast('Alterações descartadas');
+});
+
+$('searchInput').addEventListener('input', renderAll);
+
+// On load, try to load config (will redirect to login if 401)
+loadConfig();
+</script>
+</body>
+</html>

@@ -16,6 +16,8 @@
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.6.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-session": "^2.1.0",
     "adm-zip": "^0.5.17",
     "axios": "^1.6.7",
     "better-sqlite3": "^12.11.1",
