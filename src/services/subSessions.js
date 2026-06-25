@@ -97,30 +97,38 @@ async function sendImageSilent(sock, jid, buffer, caption, quoted) {
 }
 
 function basicMenuText(prefix, botName) {
-    return `📱 *${botName || 'Sub-sessão'} — Comandos*\n\n` +
-        `╭── *MÍDIA* ──\n` +
-        `│ ${prefix}s — sticker (mande imagem/vídeo)\n` +
-        `│ ${prefix}rv — revelar view-once\n` +
-        `│ ${prefix}toimg — sticker → imagem\n` +
-        `│ ${prefix}acelerar / ${prefix}desacelerar\n` +
-        `╰────────────\n\n` +
-        `╭── *DOWNLOAD* ──\n` +
-        `│ ${prefix}play <nome> — YouTube → mp3\n` +
-        `│ ${prefix}tiktok <link> — baixa mídia\n` +
-        `╰────────────\n\n` +
-        `╭── *CONFIG* ──\n` +
-        `│ ${prefix}prefixo — ver prefixo atual\n` +
-        `│ ${prefix}setprefix <símbolo> — mudar\n` +
-        `╰────────────\n\n` +
-        `💡 *Sair:* ${prefix}logoff / ${prefix}sair`;
+    return `*${botName || 'Sub-sessão'}*\n\n` +
+        `╭── *GERAL* ───\n` +
+        `│ 📂 *${prefix}menu*\n` +
+        `│ 📚 *${prefix}tutorial*\n` +
+        `│ ⌨️ *${prefix}prefixo*\n` +
+        `╰───────────────\n\n` +
+        `╭── *MÍDIA* ───\n` +
+        `│ 🖼️ *${prefix}s* (imagem/vídeo)\n` +
+        `│ 🔓 *${prefix}rv* / ${prefix}revelar\n` +
+        `│ 🔄 *${prefix}toimg*\n` +
+        `│ ⚡ *${prefix}acelerar*\n` +
+        `│ 🐌 *${prefix}desacelerar*\n` +
+        `╰───────────────\n\n` +
+        `╭── *DOWNLOAD* ───\n` +
+        `│ 🎵 *${prefix}play* <nome>\n` +
+        `│ 🎬 *${prefix}tiktok* <link>\n` +
+        `│ 📥 *${prefix}dl* <link>\n` +
+        `╰───────────────\n\n` +
+        `╭── *CONFIG* ───\n` +
+        `│ 🛠️ *${prefix}setprefix* <símbolo>\n` +
+        `│ 🚪 *${prefix}logoff* / ${prefix}sair\n` +
+        `╰───────────────\n\n` +
+        `💡 *Dica:* este menu só responde comandos básicos da sua sub-sessão pessoal. O bot principal tem mais recursos.`;
 }
 
-async function dispatchBasicCommand(session, sock, m, text) {
+async function dispatchBasicCommand(session, sock, m, text, from) {
     const prefix = session.prefix || PER_SESSION_PREFIX_DEFAULT;
     if (!text.startsWith(prefix)) return false;
     const args = text.slice(prefix.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
     const fullArgsText = args.join(' ');
+    const targetJid = from || m.key.remoteJid;
 
     if (commandName === 'logoff' || commandName === 'sair' || commandName === 'logout') {
         await reactSilent(sock, m, '✅');
@@ -128,7 +136,7 @@ async function dispatchBasicCommand(session, sock, m, text) {
     }
 
     if (commandName === 'prefixo' || commandName === 'prefix') {
-        await sendSilent(sock, m.key.remoteJid, `⌨️ Prefixo desta sub-sessão: *${prefix}*\nPara mudar: ${prefix}setprefix <símbolo>`, m);
+        await sendSilent(sock, targetJid, `⌨️ Prefixo desta sub-sessão: *${prefix}*\nPara mudar: ${prefix}setprefix <símbolo>`, m);
         await reactSilent(sock, m, '✅');
         return true;
     }
@@ -141,13 +149,13 @@ async function dispatchBasicCommand(session, sock, m, text) {
         }
         session.prefix = newPrefix;
         try { persistSessionMeta(session); } catch (_) {}
-        await sendSilent(sock, m.key.remoteJid, `✅ Prefixo atualizado para: *${newPrefix}*`, m);
+        await sendSilent(sock, targetJid, `✅ Prefixo atualizado para: *${newPrefix}*`, m);
         await reactSilent(sock, m, '✅');
         return true;
     }
 
     if (commandName === 'menu' || commandName === 'help' || commandName === 'comandos' || commandName === 'tutorial') {
-        await sendSilent(sock, m.key.remoteJid, basicMenuText(session.prefix, `Sub-sessão`), m);
+        await sendSilent(sock, targetJid, basicMenuText(session.prefix, `Sub-sessão`), m);
         await reactSilent(sock, m, '✅');
         return true;
     }
@@ -174,9 +182,9 @@ async function dispatchBasicCommand(session, sock, m, text) {
         const lastBotResponse = Date.now();
 
         await mod.execute(sock, m, {
-            from: m.key.remoteJid,
-            isGroup: !!m.key.remoteJid?.endsWith?.('@g.us'),
-            sender: m.key.participant || m.key.remoteJid,
+            from: targetJid,
+            isGroup: targetJid?.endsWith?.('@g.us'),
+            sender: m.key.participant || targetJid,
             senderName: m.pushName || 'Usuário',
             fullArgsText,
             args,
@@ -192,7 +200,7 @@ async function dispatchBasicCommand(session, sock, m, text) {
         await reactSilent(sock, m, '✅');
         return true;
     } catch (e) {
-        console.error(`💥 [sub:${hashJid(session.ownerJid)}] erro em !${commandName}:`, e?.message || e);
+        dlog(`${hashJid(session.ownerJid)} erro em !${commandName}: ${e?.message || e}`);
         await reactSilent(sock, m, '❌');
         return true;
     }
@@ -237,57 +245,79 @@ function loadSessionMeta(ownerJid) {
 }
 
 function attachMessagesHandler(session, sock) {
-    const selfJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+    const selfJidRaw = (sock.user?.id || '');
+    const selfNorm = selfJidRaw.split(':')[0].split('@')[0];
+    dlog(`${hashJid(session.ownerJid)} handler attached, selfJidRaw=${selfJidRaw} selfNorm=${selfNorm}`);
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
+            dlog(`${hashJid(session.ownerJid)} upsert type=${type} count=${messages?.length || 0}`);
             if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
             for (const m of messages) {
-                if (!m?.message) continue;
+                if (!m?.message) {
+                    dlog(`${hashJid(session.ownerJid)} msg sem .message (skipped)`);
+                    continue;
+                }
 
                 const from = m.key.remoteJid;
-                const isGroup = from?.endsWith('@g.us');
+                if (!from) continue;
 
-                const isSelfChat = from === selfJid || (from?.endsWith?.('@s.whatsapp.net') && from.split('@')[0].split(':')[0] === selfJid.split('@')[0]);
-                const senderJid = m.key.participant || from;
-                const senderNorm = senderJid.split('@')[0].split(':')[0];
-                const selfNorm = selfJid.split('@')[0].split(':')[0];
-                const isFromSelf = senderNorm === selfNorm;
+                const isGroup = from.endsWith('@g.us');
+                const fromNorm = from.split('@')[0].split(':')[0];
 
-                if (m.key.fromMe && !isSelfChat) continue;
+                const isSelfChat = !isGroup && fromNorm === selfNorm;
 
-                if (isGroup && !getSubsGroupsEnabled()) continue;
+                if (m.key.fromMe) {
+                    dlog(`${hashJid(session.ownerJid)} msg fromMe=true (echo da sub-sessão, ignorada)`);
+                    continue;
+                }
 
-                const text = (extractText(m.message) || '').trim();
-                if (!text) continue;
+                if (isGroup && !getSubsGroupsEnabled()) {
+                    dlog(`${hashJid(session.ownerJid)} msg em grupo ignorada (subSessionsGroups=false) from=${from}`);
+                    continue;
+                }
 
-                dlog(`${hashJid(session.ownerJid)} msg recebida from=${from} sender=${senderJid} isGroup=${isGroup} isSelfChat=${isSelfChat} isFromSelf=${isFromSelf} text="${text.slice(0,40)}"`);
+                const text = extractText(m.message, m);
+                if (!text || !text.trim()) {
+                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. keys=${Object.keys(m.message).join(',')}`);
+                    continue;
+                }
+                const t = text.trim();
 
-                if (!text.startsWith(session.prefix)) {
-                    if (text === 'prefixo' || text === 'prefix') {
+                dlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} isSelfChat=${isSelfChat} text="${t.slice(0,60)}"`);
+
+                if (!t.startsWith(session.prefix)) {
+                    if (t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix') {
                         await sendSilent(sock, from, `⌨️ Prefixo desta sub-sessão: *${session.prefix}*`, m);
                         await reactSilent(sock, m, 'ℹ️');
                     }
                     continue;
                 }
 
-                await dispatchBasicCommand(session, sock, m, text);
+                await dispatchBasicCommand(session, sock, m, t, from);
             }
         } catch (e) {
             dlog(`handler error: ${e?.message || e}`);
+            try { dlog(`stack: ${e?.stack?.split('\n').slice(0,3).join(' | ')}`); } catch (_) {}
         }
     });
 }
 
-function extractText(message) {
+function extractText(message, m) {
     if (!message) return '';
+    let inner = message;
+    if (message.ephemeralMessage?.message) inner = message.ephemeralMessage.message;
+    if (message.viewOnceMessage?.message) inner = message.viewOnceMessage.message;
+    if (message.documentWithCaptionMessage?.message) inner = message.documentWithCaptionMessage.message;
+
     return (
-        message.conversation ||
-        message.extendedTextMessage?.text ||
-        message.imageMessage?.caption ||
-        message.videoMessage?.caption ||
-        message.documentMessage?.caption ||
-        message.buttonsResponseMessage?.selectedButtonId ||
-        message.listResponseMessage?.title ||
+        inner.conversation ||
+        inner.extendedTextMessage?.text ||
+        inner.imageMessage?.caption ||
+        inner.videoMessage?.caption ||
+        inner.documentMessage?.caption ||
+        inner.buttonsResponseMessage?.selectedButtonId ||
+        inner.listResponseMessage?.title ||
         ''
     );
 }
