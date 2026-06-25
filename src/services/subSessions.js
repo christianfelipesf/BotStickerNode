@@ -259,6 +259,23 @@ function attachMessagesHandler(session, sock) {
                     continue;
                 }
 
+                if (m.key.fromMe) {
+                    dlog(`${hashJid(session.ownerJid)} msg fromMe=true (echo da sub-sessão, ignorada)`);
+                    continue;
+                }
+
+                const keys = Object.keys(m.message);
+                const isHandshake = keys.length > 0 && keys.every(k =>
+                    k === 'senderKeyDistributionMessage' ||
+                    k === 'messageContextInfo' ||
+                    k === 'protocolMessage' ||
+                    k === 'reactionMessage' ||
+                    k === 'ephemeralMessage'
+                );
+                if (isHandshake && !keys.some(k => k === 'ephemeralMessage' && m.message.ephemeralMessage?.message)) {
+                    continue;
+                }
+
                 const from = m.key.remoteJid;
                 if (!from) continue;
 
@@ -267,11 +284,6 @@ function attachMessagesHandler(session, sock) {
 
                 const isSelfChat = !isGroup && fromNorm === selfNorm;
 
-                if (m.key.fromMe) {
-                    dlog(`${hashJid(session.ownerJid)} msg fromMe=true (echo da sub-sessão, ignorada)`);
-                    continue;
-                }
-
                 if (isGroup && !getSubsGroupsEnabled()) {
                     dlog(`${hashJid(session.ownerJid)} msg em grupo ignorada (subSessionsGroups=false) from=${from}`);
                     continue;
@@ -279,7 +291,7 @@ function attachMessagesHandler(session, sock) {
 
                 const text = extractText(m.message, m);
                 if (!text || !text.trim()) {
-                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. keys=${Object.keys(m.message).join(',')}`);
+                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. keys=${keys.join(',')}`);
                     continue;
                 }
                 const t = text.trim();
