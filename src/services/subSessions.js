@@ -3,13 +3,15 @@ const path = require('path');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const pino = require('pino');
+const baileys = require('@whiskeysockets/baileys');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion
-} = require('@whiskeysockets/baileys');
+} = baileys;
 const { Boom } = require('@hapi/boom');
+const { initAuthCreds, BufferJSON } = baileys;
 
 function dlog(msg) {
     try { process.stderr.write(`[sub] ${msg}\n`); } catch (_) {}
@@ -391,6 +393,17 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
     persistSessionMeta(session);
 
     try {
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const credsPath = path.join(dir, 'creds.json');
+        try {
+            if (!fs.existsSync(credsPath)) {
+                const fresh = initAuthCreds();
+                fs.writeFileSync(credsPath, JSON.stringify(fresh, BufferJSON.replacer, 2), 'utf8');
+                dlog(`${hashJid(ownerJid)} creds.json criado via initAuthCreds em ${dir}`);
+            }
+        } catch (e) {
+            dlog(`${hashJid(ownerJid)} falha ao criar creds: ${e?.message}`);
+        }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
         try {
