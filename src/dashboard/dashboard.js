@@ -499,6 +499,11 @@ function init(config) {
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.sendFile(path.join(__dirname, 'admin.js'));
     });
+    app.get('/configDocs.js', (req, res) => {
+        res.set('Content-Type', 'application/javascript; charset=utf-8');
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.sendFile(path.join(__dirname, 'configDocs.js'));
+    });
     app.get('/dashboard-client.js', (req, res) => {
         res.set('Content-Type', 'application/javascript; charset=utf-8');
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
