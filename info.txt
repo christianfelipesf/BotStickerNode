@@ -6,4 +6,8 @@
 
 -- O SCRIPT É UPADO NA GITHUB E RODA NA VPS LINUX
 
-#[ADD] cOMANDO !LOG Ou !logs mostra ultimos 15 logs do terminal no whtsapp em txt
+[ADD] Adicionar !tutorial  basico do bot resumido para usar comandos
+
+[ADD]!dashlist mostra a lista de pessoas que conectaram no dashboard com data e hora no dashboard.txt
+
+[ADD] A PESSOA DIGITA !login !entrar e mostra qr code no whatsapp pra pessoa se conectar,(o database poderar escolher para funcionar em grupos ou nao padrão "sim") ,o qr code faz 3 tentativas envia a imagem se a pessoa nao se conectar ele para de mandar, pra sair digita !logoff ou !sair quando conectar quero pra guardar a sessao da pessoa usando !logins consegue ver sessoes, no caso dessas subsessoes vai funcioanndo alguns comandos como !play, !prefixo (cada sessao pode mudar o prefixo), !tiktok, !s, !rv, !toimage, !acelerar esses comandos basicos pq pra subseccao vai funcionar se qualquer pessoa responder inclusive o proprio numero mas sera so esse nao tera coisas de restricao em grupos etc e tera o !menu simples mostrando os comandos basicos, caso a pessoa erre o comando ele nao mostrara o texto do erro apenas reagira com ok ou erro 

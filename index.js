@@ -30,6 +30,7 @@ const { handleMessageUpsert } = require('./src/events/message');
 const { setupAI } = require('./src/services/ai');
 const dashboard = require('./src/dashboard/dashboard');
 const news = require('./src/services/news');
+const subSessions = require('./src/services/subSessions');
 
 // Inicializar Filtro de Logs
 initLogger();
@@ -62,6 +63,18 @@ try {
 // Inicializar Inteligência Artificial e Comandos
 setupAI(config);
 const _cmdSummary = loadCommands({ verbose: false });
+
+// Restaurar sub-sessões Baileys persistidas (silencioso — só loga o resultado)
+(async () => {
+    try {
+        const restored = await subSessions.restoreFromDisk();
+        if (restored.length) {
+            console.log(`🔐 [subSessions] restauradas ${restored.length} sessão(ões) do disco`);
+        }
+    } catch (e) {
+        console.error('⚠️ [subSessions] falha ao restaurar:', e.message);
+    }
+})();
 
 // --- Tratamento de Erros Globais ---
 process.on('uncaughtException', (err) => {

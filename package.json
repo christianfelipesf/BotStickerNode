@@ -25,6 +25,7 @@
     "jimp": "^1.6.1",
     "node-webpmux": "^3.2.1",
     "pino": "^9.0.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "socket.io": "^4.8.3",
     "webp-converter": "^2.3.3",
