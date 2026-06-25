@@ -330,20 +330,39 @@ function extractText(message, m) {
 }
 
 async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null }) {
+    const baseHash = hashJid(ownerJid);
+    const metaEarly = loadSessionMeta(ownerJid) || {};
+    const normalizedPhoneEarly = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
+
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
-        if (existing.connecting && !_silent && !_reconnect) return existing;
-        if (existing.connecting) {
-            try { if (existing.sock) existing.sock.end(undefined); } catch (_) {}
-            sessions.delete(ownerJid);
+        if (existing.connecting && !_silent && !_reconnect && !normalizedPhoneEarly) return existing;
+        if (existing.sock) {
+            try {
+                existing.sock.ev?.removeAllListeners?.('connection.update');
+                existing.sock.ev?.removeAllListeners?.('creds.update');
+                existing.sock.ev?.removeAllListeners?.('messages.upsert');
+                existing.sock.end(undefined);
+            } catch (_) {}
+            dlog(`${hashJid(ownerJid)} sock anterior destruído (connecting=${!!existing.connecting})`);
         }
+        sessions.delete(ownerJid);
+    }
+    if (normalizedPhoneEarly) {
+        try {
+            const allDirs = fs.readdirSync(SUB_SESSIONS_DIR);
+            for (const n of allDirs) {
+                if (n.startsWith(baseHash + '_pair_') || n === baseHash) {
+                    try { fs.rmSync(path.join(SUB_SESSIONS_DIR, n), { recursive: true, force: true }); } catch (_) {}
+                }
+            }
+        } catch (_) {}
     }
 
-    const baseHash = hashJid(ownerJid);
     let dir = sessionFolder(ownerJid);
     try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-    const meta = loadSessionMeta(ownerJid) || {};
-    const normalizedPhone = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
+    const meta = metaEarly;
+    const normalizedPhone = normalizedPhoneEarly;
 
     if (normalizedPhone) {
         const stamp = Date.now().toString(36);
@@ -372,6 +391,16 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
     persistSessionMeta(session);
 
     try {
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const credsPath = path.join(dir, 'creds.json');
+        try {
+            if (!fs.existsSync(credsPath)) {
+                fs.writeFileSync(credsPath, JSON.stringify({}), 'utf8');
+                dlog(`${hashJid(ownerJid)} creds.json stub criado em ${dir}`);
+            }
+        } catch (e) {
+            dlog(`${hashJid(ownerJid)} falha ao criar creds stub: ${e?.message}`);
+        }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
         try {
