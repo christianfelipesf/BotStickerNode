@@ -281,11 +281,11 @@ function extractText(message) {
     );
 }
 
-async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false }) {
+async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false }) {
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
-        if (existing.connecting && !_silent) return existing;
-        if (existing.connecting && _silent) {
+        if (existing.connecting && !_silent && !_reconnect) return existing;
+        if (existing.connecting) {
             try { if (existing.sock) existing.sock.end(undefined); } catch (_) {}
             sessions.delete(ownerJid);
         }
@@ -326,7 +326,15 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             logger: pino({ level: 'warn' }),
             printQRInTerminal: false,
             auth: state,
-            browser: ['SubSessao', 'Chrome', '120.0.0.0']
+            browser: ['Antigravity Bot', 'Chrome', '120.0.0.0'],
+            markOnlineOnConnect: false,
+            connectTimeoutMs: 60_000,
+            defaultQueryTimeoutMs: 60_000,
+            emitOwnEvents: true,
+            syncFullHistory: false,
+            retryRequestDelayMs: 2000,
+            maxMsgRetryCount: 3,
+            getMessage: async () => undefined
         });
         session.sock = sock;
         console.log(`🔐 [sub:${hashJid(ownerJid)}] sock criado, auth dir=${dir}, version=${JSON.stringify(version)}`);
@@ -397,13 +405,13 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                     } else if (code === 515 || errMsg.toLowerCase().includes('restart required')) {
                         dlog(`${hashJid(ownerJid)} 515/restart required → recriando sock automaticamente`);
                         try { sock.end(undefined); } catch (_) {}
+                        sessions.delete(ownerJid);
                         setTimeout(() => {
                             try {
-                                if (!sessions.has(ownerJid)) return;
-                                startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed })
+                                startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed, _reconnect: true })
                                     .catch(e => dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`));
                             } catch (_) {}
-                        }, 3000);
+                        }, 5000);
                     } else if (code === 401) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
