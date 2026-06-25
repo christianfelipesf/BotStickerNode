@@ -252,15 +252,10 @@ function attachMessagesHandler(session, sock) {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
             dlog(`${hashJid(session.ownerJid)} upsert type=${type} count=${messages?.length || 0}`);
-            if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
+            if (type !== 'notify' && type !== 'append') return;
             for (const m of messages) {
                 if (!m?.message) {
                     dlog(`${hashJid(session.ownerJid)} msg sem .message (skipped)`);
-                    continue;
-                }
-
-                if (m.key.fromMe) {
-                    dlog(`${hashJid(session.ownerJid)} msg fromMe=true (echo da sub-sessão, ignorada)`);
                     continue;
                 }
 
@@ -268,16 +263,16 @@ function attachMessagesHandler(session, sock) {
                 const isHandshake = keys.length > 0 && keys.every(k =>
                     k === 'senderKeyDistributionMessage' ||
                     k === 'messageContextInfo' ||
-                    k === 'protocolMessage' ||
-                    k === 'reactionMessage' ||
-                    k === 'ephemeralMessage'
+                    k === 'protocolMessage'
                 );
-                if (isHandshake && !keys.some(k => k === 'ephemeralMessage' && m.message.ephemeralMessage?.message)) {
-                    continue;
-                }
+                if (isHandshake) continue;
+
+                const reaction = m.message.reactionMessage;
+                if (reaction && !reaction.text) continue;
 
                 const from = m.key.remoteJid;
                 if (!from) continue;
+                if (from === 'status@broadcast') continue;
 
                 const isGroup = from.endsWith('@g.us');
                 const fromNorm = from.split('@')[0].split(':')[0];
@@ -291,12 +286,12 @@ function attachMessagesHandler(session, sock) {
 
                 const text = extractText(m.message, m);
                 if (!text || !text.trim()) {
-                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. keys=${keys.join(',')}`);
+                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. from=${from} keys=${keys.join(',')}`);
                     continue;
                 }
                 const t = text.trim();
 
-                dlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} isSelfChat=${isSelfChat} text="${t.slice(0,60)}"`);
+                dlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} isSelfChat=${isSelfChat} fromMe=${!!m.key.fromMe} text="${t.slice(0,60)}"`);
 
                 if (!t.startsWith(session.prefix)) {
                     if (t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix') {
