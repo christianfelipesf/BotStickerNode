@@ -237,19 +237,30 @@ function loadSessionMeta(ownerJid) {
 }
 
 function attachMessagesHandler(session, sock) {
+    const selfJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
             if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
             for (const m of messages) {
                 if (!m?.message) continue;
-                if (m.key.fromMe) continue;
 
                 const from = m.key.remoteJid;
                 const isGroup = from?.endsWith('@g.us');
+
+                const isSelfChat = from === selfJid || (from?.endsWith?.('@s.whatsapp.net') && from.split('@')[0].split(':')[0] === selfJid.split('@')[0]);
+                const senderJid = m.key.participant || from;
+                const senderNorm = senderJid.split('@')[0].split(':')[0];
+                const selfNorm = selfJid.split('@')[0].split(':')[0];
+                const isFromSelf = senderNorm === selfNorm;
+
+                if (m.key.fromMe && !isSelfChat) continue;
+
                 if (isGroup && !getSubsGroupsEnabled()) continue;
 
                 const text = (extractText(m.message) || '').trim();
                 if (!text) continue;
+
+                dlog(`${hashJid(session.ownerJid)} msg recebida from=${from} sender=${senderJid} isGroup=${isGroup} isSelfChat=${isSelfChat} isFromSelf=${isFromSelf} text="${text.slice(0,40)}"`);
 
                 if (!text.startsWith(session.prefix)) {
                     if (text === 'prefixo' || text === 'prefix') {
@@ -262,7 +273,7 @@ function attachMessagesHandler(session, sock) {
                 await dispatchBasicCommand(session, sock, m, text);
             }
         } catch (e) {
-            console.error('💥 [sub] handler error:', e?.message || e);
+            dlog(`handler error: ${e?.message || e}`);
         }
     });
 }
