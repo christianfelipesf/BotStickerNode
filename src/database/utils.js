@@ -847,14 +847,14 @@ const _dlSelectAll = db.prepare(`
            sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
            time_label, timestamp
     FROM dashboard_logs
-    ORDER BY timestamp ASC
+    ORDER BY timestamp DESC
 `);
 const _dlSelectAllLimited = db.prepare(`
     SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
            sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
            time_label, timestamp
     FROM dashboard_logs
-    ORDER BY timestamp ASC
+    ORDER BY timestamp DESC
     LIMIT ?
 `);
 const _dlSelectRecent = db.prepare(`
@@ -863,7 +863,7 @@ const _dlSelectRecent = db.prepare(`
            time_label, timestamp
     FROM dashboard_logs
     WHERE timestamp >= ?
-    ORDER BY timestamp ASC
+    ORDER BY timestamp DESC
     LIMIT ?
 `);
 const _dlSelectByMessageId = db.prepare(`
@@ -955,6 +955,7 @@ function loadDashboardHistory({ since = 0, limit = 500 } = {}) {
             : _dlSelectAllLimited.all(lim);
         const out = [];
         for (const r of rows) out.push(_rowToLog(r));
+        out.reverse();
         return out;
     } catch (e) {
         console.error('❌ [dashboard_logs] load:', e.message);
