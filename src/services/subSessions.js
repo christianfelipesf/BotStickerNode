@@ -437,6 +437,10 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         if (normalizedPhone) {
             const tryRequestCode = async (attempt = 1) => {
                 if (session.pairCodeSent || session.connected) return;
+                if (!sessions.has(ownerJid)) {
+                    dlog(`${hashJid(ownerJid)} sessão removida do map, parando tentativas de pairing`);
+                    return;
+                }
                 try {
                     dlog(`${hashJid(ownerJid)} requesting pairing code (tentativa ${attempt})...`);
                     const code = await sock.requestPairingCode(normalizedPhone);
@@ -446,7 +450,7 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                     armWatchdog();
                 } catch (e) {
                     dlog(`${hashJid(ownerJid)} erro pairing (tentativa ${attempt}): ${e?.message}`);
-                    if (attempt < 4 && !session.connected) {
+                    if (attempt < 4 && !session.connected && sessions.has(ownerJid)) {
                         setTimeout(() => tryRequestCode(attempt + 1), 3000);
                     }
                 }
@@ -557,12 +561,19 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                             } catch (_) {}
                         }, 5000);
                     } else if (code === 401) {
+                        dlog(`${hashJid(ownerJid)} 401 → deletando credenciais e sessão`);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'unauthorized');
                     } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
+                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
+                    } else if (code && code >= 400 && code < 500) {
+                        dlog(`${hashJid(ownerJid)} erro ${code} → deletando credenciais e sessão`);
+                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                        sessions.delete(ownerJid);
+                        await safeCallback(session.onClosed, ownerJid, `auth-failed-${code}`);
                     } else {
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, `close-${code}`);

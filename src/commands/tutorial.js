@@ -44,6 +44,14 @@ module.exports = {
             `│ ${p}setprefix <símbolo> — muda o prefixo\n` +
             `│ ${p}set <chave> <valor> — ajusta parâmetros\n` +
             `╰─────────────────────────────\n\n` +
+            `╭── *7. SUB-SESSÃO PESSOAL* ──\n` +
+            `│ 🔐 ${p}login / ${p}entrar — QR Code\n` +
+            `│ 🔢 ${p}login <número> — código de pareamento\n` +
+            `│ 📋 ${p}logins — lista sub-sessões ativas\n` +
+            `│ 🚪 ${p}logoff / ${p}sair — encerra a sua\n` +
+            `│ 🧹 ${p}subclean — limpa sua sessão do disco\n` +
+            `│ 🔍 ${p}subdebug — diagnóstico detalhado\n` +
+            `╰─────────────────────────────\n\n` +
             `💡 *Dica:* o bot só responde em grupos após alguém usar ${p}ativar.`;
 
         await sock.sendMessage(from, { text: tutorial }, { quoted: m });
