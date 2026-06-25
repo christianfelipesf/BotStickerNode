@@ -406,19 +406,22 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
         let version = [2, 3000, 1017531287];
-        try {
-            const latest = await fetchLatestBaileysVersion();
-            if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
-                version = latest.version;
-            }
-        } catch (_) {}
+        if (!normalizedPhone) {
+            try {
+                const latest = await fetchLatestBaileysVersion();
+                if (latest?.version && Array.isArray(latest.version) && latest.version.length === 3) {
+                    version = latest.version;
+                }
+            } catch (_) {}
+        }
+        dlog(`${hashJid(ownerJid)} usando version=${JSON.stringify(version)} (pairing=${!!normalizedPhone})`);
 
         const sock = makeWASocket({
             version,
             logger: pino({ level: 'warn' }),
             printQRInTerminal: false,
             auth: state,
-            browser: ['Antigravity Bot', 'Chrome', '120.0.0.0'],
+            browser: normalizedPhone ? ['Desktop', 'Chrome', '4.0.0'] : ['Antigravity Bot', 'Chrome', '120.0.0.0'],
             markOnlineOnConnect: false,
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 60_000,
