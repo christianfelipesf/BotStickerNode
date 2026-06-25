@@ -11,6 +11,11 @@ const {
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 
+function dlog(msg) {
+    try { process.stderr.write(`[sub] ${msg}\n`); } catch (_) {}
+    try { console.log(`[sub] ${msg}`); } catch (_) {}
+}
+
 const { readConfig } = require('../database/utils');
 const mediaHandler = require('../events/media');
 
@@ -312,17 +317,19 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
 
         const sock = makeWASocket({
             version,
-            logger: pino({ level: 'fatal' }),
+            logger: pino({ level: 'warn' }),
             printQRInTerminal: false,
             auth: state,
             browser: ['SubSessao', 'Chrome', '120.0.0.0']
         });
         session.sock = sock;
+        console.log(`🔐 [sub:${hashJid(ownerJid)}] sock criado, auth dir=${dir}, version=${JSON.stringify(version)}`);
 
         const cleanupAndCancel = async (reason) => {
             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
             try { sock.end(undefined); } catch (_) {}
             sessions.delete(ownerJid);
+            console.log(`🔐 [sub:${hashJid(ownerJid)}] cleanup (${reason})`);
             await safeCallback(session.onClosed, ownerJid, reason);
         };
 
@@ -346,6 +353,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
 
         sock.ev.on('connection.update', async (u) => {
             try {
+                dlog(`${hashJid(ownerJid)} conn.update → connection=${u.connection} qr=${u.qr ? 'YES(len=' + u.qr.length + ')' : 'no'} lastDisconnect=${u.lastDisconnect?.error?.message ? u.lastDisconnect.error.message.slice(0, 80) : 'none'}`);
+
                 if (u.qr) {
                     const qrHash = crypto.createHash('sha1').update(String(u.qr)).digest('hex');
                     const isNewQr = qrHash !== session.lastQrHash;
@@ -353,13 +362,15 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
                         session.lastQrHash = qrHash;
                         session.lastQrAt = Date.now();
                         session.qrAttempts += 1;
+                        dlog(`${hashJid(ownerJid)} novo QR → tentativa ${session.qrAttempts}/${QR_MAX_ATTEMPTS}`);
                         if (session.qrAttempts > QR_MAX_ATTEMPTS) {
+                            dlog(`${hashJid(ownerJid)} limite excedido`);
                             await cleanupAndCancel('qr-exhausted');
                             return;
                         }
                         let buffer = null;
                         try { buffer = await QRCode.toBuffer(u.qr, { type: 'png', width: 512, margin: 2 }); }
-                        catch (_) { buffer = null; }
+                        catch (e) { dlog(`${hashJid(ownerJid)} erro PNG: ${e?.message}`); buffer = null; }
                         await safeCallback(session.onQr, ownerJid, { qr: u.qr, buffer, attempt: session.qrAttempts, max: QR_MAX_ATTEMPTS });
                     }
                     armWatchdog();
@@ -371,6 +382,8 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
                     const code = (u.lastDisconnect?.error instanceof Boom)
                         ? u.lastDisconnect.error.output?.statusCode
                         : u.lastDisconnect?.error?.statusCode;
+                    const errMsg = u.lastDisconnect?.error?.message || 'sem mensagem';
+                    dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" attempts=${session.qrAttempts}`);
                     if (code === DisconnectReason.loggedOut) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
@@ -389,10 +402,14 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed }) {
                     session.phoneNumber = sock.user?.id?.split?.(':')?.[0] || session.phoneNumber;
                     persistSessionMeta(session);
                     attachMessagesHandler(session, sock);
+                    dlog(`${hashJid(ownerJid)} ✅ CONECTADO phone=${session.phoneNumber}`);
                     await safeCallback(session.onConnected, ownerJid, { phoneNumber: session.phoneNumber });
+                } else if (u.connection === 'connecting') {
+                    dlog(`${hashJid(ownerJid)} estado: connecting…`);
                 }
             } catch (e) {
-                console.error('💥 [sub:conn.update]', e?.message || e);
+                dlog(`${hashJid(ownerJid)} conn.update ERRO: ${e?.message || e}`);
+                try { dlog(`stack: ${e?.stack?.split('\n').slice(0, 4).join(' | ')}`); } catch (_) {}
             }
         });
 
