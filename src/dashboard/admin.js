@@ -184,15 +184,15 @@ let busy = false;
 
 let _pendingPkgUpdate = false;
 
-const setStatus = (t, c) => { const el = $('mgmtStatus'); el.textContent = t; el.className = 'mgmt-status' + (c ? ' ' + c : ''); };
+const setStatus = (t, c) => { const el = $('mgmtStatus'); if (!el) return; el.textContent = t; el.className = 'mgmt-status' + (c ? ' ' + c : ''); };
 const setBtn = (btn, kind) => {
     if (!btn) return;
     btn.classList.remove('busy', 'ok', 'err');
-    if (!btn.dataset.orig) btn.dataset.orig = btn.textContent;
+    if (!btn.dataset.orig) btn.dataset.orig = btn.innerHTML;
     if (kind === 'busy') { btn.classList.add('busy'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span> executando…'; }
-    else if (kind === 'ok') { btn.classList.add('ok'); btn.disabled = false; btn.textContent = btn.dataset.orig; }
-    else if (kind === 'err') { btn.classList.add('err'); btn.disabled = false; btn.textContent = btn.dataset.orig; }
-    else { btn.disabled = false; btn.textContent = btn.dataset.orig; }
+    else if (kind === 'ok') { btn.classList.add('ok'); btn.disabled = false; btn.innerHTML = btn.dataset.orig; }
+    else if (kind === 'err') { btn.classList.add('err'); btn.disabled = false; btn.innerHTML = btn.dataset.orig; }
+    else { btn.disabled = false; btn.innerHTML = btn.dataset.orig; }
 };
 
 const ask = (action, extraDesc) => {
@@ -216,12 +216,14 @@ async function checkUpdates() {
         if (!r.ok) return;
         const d = r.data || {};
         const badge = $('updateBadge');
+        if (!badge) return;
         if (d.behind > 0) {
             badge.textContent = d.behind;
             badge.className = 'badge';
             setStatus(d.behind + ' atualização(ões) disponível(is)', 'ok');
         } else {
             badge.className = 'badge hidden';
+            setStatus('pronto');
         }
     } catch (_) {}
 }
