@@ -182,6 +182,8 @@ const cooldown = new Map();
 const COOLDOWN_MS = 8 * 1000;
 let busy = false;
 
+let _pendingPkgUpdate = false;
+
 const setStatus = (t, c) => { const el = $('mgmtStatus'); el.textContent = t; el.className = 'mgmt-status' + (c ? ' ' + c : ''); };
 const setBtn = (btn, kind) => {
     if (!btn) return;
@@ -193,12 +195,12 @@ const setBtn = (btn, kind) => {
     else { btn.disabled = false; btn.textContent = btn.dataset.orig; }
 };
 
-const ask = action => {
+const ask = (action, extraDesc) => {
     const info = MGMT[action]; if (!info) return;
     if (Date.now() - (cooldown.get(action) || 0) < COOLDOWN_MS) return toast('Aguarde alguns segundos', 'err');
     if (busy) return toast('Outra ação em andamento', 'err');
     $('mgmtTitle').textContent = 'Confirmar: ' + info.label;
-    $('mgmtDesc').textContent = info.desc;
+    $('mgmtDesc').textContent = extraDesc || info.desc;
     $('mgmtCmd').textContent = '$ ' + info.cmd;
     $('mgmtErr').textContent = '';
     $('mgmtConfirm').dataset.action = action;
@@ -208,42 +210,138 @@ const ask = action => {
 };
 $('mgmtCancel').addEventListener('click', () => $('mgmtModal').classList.remove('show'));
 
+async function checkUpdates() {
+    try {
+        const r = await api('/api/admin/check-update');
+        if (!r.ok) return;
+        const d = r.data || {};
+        const badge = $('updateBadge');
+        if (d.behind > 0) {
+            badge.textContent = d.behind;
+            badge.className = 'badge';
+            setStatus(d.behind + ' atualização(ões) disponível(is)', 'ok');
+        } else {
+            badge.className = 'badge hidden';
+        }
+    } catch (_) {}
+}
+
+async function doUpdate(btn) {
+    setBtn(btn, 'busy'); setStatus('Executando git pull…');
+    const r = await api('/api/admin/update', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    const txt = d.changed ? `atualizado ${d.before} → ${d.after}` : `sem alterações (${d.after || d.before})`;
+    setBtn(btn, 'ok'); setStatus('✓ ' + txt, 'ok'); toast('git pull: ' + txt, 'ok');
+
+    // Esconde badge de atualização
+    $('updateBadge').className = 'badge hidden';
+
+    if (!d.changed) return;
+
+    // Se package.json mudou, sugere npm install automaticamente
+    if (d.pkgChanged) {
+        toast('📦 package.json alterado — instale as deps!', 'ok');
+        _pendingPkgUpdate = true;
+        $('mgmtTitle').textContent = '📦 Dependências alteradas';
+        $('mgmtDesc').textContent = 'O package.json foi modificado no pull. Recomenda-se rodar npm install para atualizar as dependências. Deseja executar agora?';
+        $('mgmtCmd').textContent = '$ npm install --no-audit --no-fund';
+        $('mgmtErr').textContent = '';
+        $('mgmtConfirm').dataset.action = 'install';
+        $('mgmtConfirm').textContent = 'Instalar';
+        $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
+        $('mgmtModal').classList.add('show');
+    } else {
+        // Sem mudanças no package.json, sugere restart
+        setTimeout(() => {
+            $('mgmtTitle').textContent = '🔄 Reiniciar?';
+            $('mgmtDesc').textContent = 'O código foi atualizado. Deseja reiniciar o bot agora para aplicar as alterações?';
+            $('mgmtCmd').textContent = '$ pm2 restart all';
+            $('mgmtErr').textContent = '';
+            $('mgmtConfirm').dataset.action = 'restart';
+            $('mgmtConfirm').textContent = 'Reiniciar';
+            $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
+            $('mgmtModal').classList.add('show');
+        }, 1500);
+    }
+}
+
+async function doInstall(btn) {
+    _pendingPkgUpdate = false;
+    setBtn(btn, 'busy'); setStatus('Executando npm install…');
+    const r = await api('/api/admin/install', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    const ok = d.ok !== false;
+    setBtn(btn, ok ? 'ok' : 'err');
+    setStatus(ok ? '✓ npm install concluído' : '✗ npm install falhou', ok ? 'ok' : 'err');
+    toast(ok ? 'npm install ✓' : 'npm install falhou', ok ? 'ok' : 'err');
+
+    if (ok) {
+        // Após install bem-sucedido, sugere restart
+        setTimeout(() => {
+            $('mgmtTitle').textContent = '🔄 Reiniciar agora?';
+            $('mgmtDesc').textContent = 'As dependências foram atualizadas. Deseja reiniciar o bot para aplicar tudo?';
+            $('mgmtCmd').textContent = '$ pm2 restart all';
+            $('mgmtErr').textContent = '';
+            $('mgmtConfirm').dataset.action = 'restart';
+            $('mgmtConfirm').textContent = 'Reiniciar';
+            $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
+            $('mgmtModal').classList.add('show');
+        }, 1500);
+    }
+}
+
+async function doRestart(btn) {
+    setBtn(btn, 'busy'); setStatus('Executando pm2 restart…');
+    const r = await api('/api/admin/restart', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    setBtn(btn, d.ok ? 'ok' : 'err');
+    setStatus(d.ok ? '✓ pm2 restart enviado' : '✗ pm2 restart falhou', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Reiniciando…' : 'Falhou', d.ok ? 'ok' : 'err');
+    if (d.ok) setTimeout(() => location.reload(), 3500);
+}
+
 $('mgmtConfirm').addEventListener('click', async () => {
-    const action = $('mgmtConfirm').dataset.action; if (!action) return;
+    const action = $('mgmtConfirm').dataset.action;
+    if (!action) return;
     $('mgmtConfirm').disabled = $('mgmtCancel').disabled = true;
     busy = true; cooldown.set(action, Date.now());
     $('mgmtModal').classList.remove('show');
 
     const btn = $('btnMgmt' + action[0].toUpperCase() + action.slice(1));
-    setBtn(btn, 'busy'); setStatus('Executando ' + action + '…');
 
     try {
-        const r = await api('/api/admin/' + action, { method: 'POST' });
-        const d = r.data || {};
-        if (!r.ok) {
-            const msg = d.error || ('HTTP ' + r.status);
-            setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
-        } else if (action === 'update') {
-            const txt = d.changed ? `atualizado ${d.before} → ${d.after}` : `sem alterações (${d.after || d.before})`;
-            setBtn(btn, 'ok'); setStatus('✓ ' + txt, 'ok'); toast('git pull: ' + txt, 'ok');
-        } else if (action === 'install') {
-            setBtn(btn, d.ok !== false ? 'ok' : 'err');
-            setStatus(d.ok !== false ? '✓ npm install concluído' : '✗ npm install falhou', d.ok !== false ? 'ok' : 'err');
-            toast(d.ok !== false ? 'npm install ✓' : 'npm install falhou', d.ok !== false ? 'ok' : 'err');
-        } else if (action === 'restart') {
-            setBtn(btn, d.ok ? 'ok' : 'err');
-            setStatus(d.ok ? '✓ pm2 restart enviado' : '✗ pm2 restart falhou', d.ok ? 'ok' : 'err');
-            toast(d.ok ? 'Reiniciando…' : 'Falhou', d.ok ? 'ok' : 'err');
-            if (d.ok) setTimeout(() => location.reload(), 3500);
-        }
+        if (action === 'update') await doUpdate(btn);
+        else if (action === 'install') await doInstall(btn);
+        else if (action === 'restart') await doRestart(btn);
     } catch (e) {
         setBtn(btn, 'err'); setStatus('✗ ' + (e?.message || 'erro'), 'err'); toast('Erro: ' + (e?.message || 'falha'), 'err');
     } finally {
         busy = false;
-        setTimeout(() => setBtn(btn, null), 4000);
+        setTimeout(() => {
+            setBtn(btn, null);
+            if (!_pendingPkgUpdate) checkUpdates();
+        }, 4000);
     }
 });
 
-document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => btn.addEventListener('click', () => ask(btn.dataset.mgmt)));
+document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
+    btn.addEventListener('click', () => ask(btn.dataset.mgmt));
+});
 
-load();
+// Verificar atualizações ao carregar a página
+load().then(() => checkUpdates());

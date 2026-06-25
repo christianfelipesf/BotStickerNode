@@ -90,6 +90,8 @@
   .mgmt-status { font-size: 11px; color: #9aa6b2; font-family: ui-monospace, monospace; margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mgmt-status.ok { color: #3fb950; }
   .mgmt-status.err { color: #f85149; }
+  .mgmt-btn .badge { display: inline-block; background: #d29922; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 8px; margin-left: 4px; vertical-align: top; line-height: 1.4; }
+  .mgmt-btn .badge.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -125,7 +127,7 @@
   <div class="wrap">
     <div class="mgmt-bar">
       <span class="lbl">Gerenciar:</span>
-      <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar (git pull)</button>
+      <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar <span id="updateBadge" class="badge hidden"></span></button>
       <button class="mgmt-btn" data-mgmt="install" id="btnMgmtInstall" title="Roda 'npm install'">📦 Instalar deps</button>
       <button class="mgmt-btn" data-mgmt="restart" id="btnMgmtRestart" title="Roda 'pm2 restart all'">🔁 Reiniciar bot</button>
       <span class="mgmt-status" id="mgmtStatus">pronto</span>
