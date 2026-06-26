@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
-const { mediaToSticker } = require('../database/sticker');
+const { addMetadata } = require('../database/sticker');
 const { tempDir } = require('../database/db');
 
 const FONT_DIR = path.join(process.cwd(), 'fonts');
@@ -22,110 +22,99 @@ function escapeDrawtext(val) {
 }
 
 function wrapText(text, maxChars) {
-    const inputLines = text.split('\n');
+    const lines = text.split('\n');
     const result = [];
-    for (const inputLine of inputLines) {
-        const words = inputLine.split(' ');
-        let line = '';
+    for (const line of lines) {
+        const words = line.split(' ');
+        let cur = '';
         for (const w of words) {
-            const test = line ? line + ' ' + w : w;
-            if (test.length > maxChars && line) {
-                result.push(line);
-                line = w;
+            const test = cur ? cur + ' ' + w : w;
+            if (test.length > maxChars && cur) {
+                result.push(cur);
+                cur = w;
             } else {
-                line = test;
+                cur = test;
             }
         }
-        if (line) result.push(line);
+        if (cur) result.push(cur);
     }
     return result.join('\\n');
 }
 
-async function makeAnimatedTextSticker(text) {
+async function makeGlowSticker(text) {
     const id = crypto.randomBytes(4).toString('hex');
     await ensureFont();
 
     const W = 512, H = 512;
-    const fontSize = text.length <= 12 ? 52 : text.length <= 30 ? 36 : 24;
-    const maxLineChars = text.length <= 12 ? 12 : 18;
-    const displayText = wrapText(text, maxLineChars);
+    const maxChars = text.length <= 15 ? 10 : 18;
+    const displayText = wrapText(text, maxChars);
+    const fontfile = FONT_PATH.replace(/\\/g, '/');
+    const escaped = escapeDrawtext(displayText);
+    const lineCount = displayText.split('\\n').length;
+    const fontSize = Math.min(72, Math.max(36, 512 / Math.max(1, lineCount) - 8));
 
-    const charPace = text.length <= 15 ? 0.18 : text.length <= 40 ? 0.10 : 0.06;
-    const holdSec = 0.8;
-    const totalSec = Math.max(2, Math.min(6, Math.ceil(text.length * charPace + holdSec)));
+    const fps = 10;
+    const duration = 4;
 
-    const typingSec = totalSec - holdSec;
-    const steps = Math.min(Math.max(10, Math.ceil(text.length / 2)), 35);
-    const stepSec = typingSec / steps;
-    const charsPerStep = Math.ceil(text.length / steps);
-    const filters = [];
-
-    for (let i = 0; i < steps; i++) {
-        const partial = text.substring(0, Math.min((i + 1) * charsPerStep, text.length));
-        const wrapped = wrapText(partial, maxLineChars);
-        const t0 = +(i * stepSec).toFixed(3);
-        const t1 = +((i + 1) * stepSec).toFixed(3);
-        filters.push(`drawtext=text='${escapeDrawtext(wrapped)}':fontfile=${FONT_PATH.replace(/\\/g, '/')}:fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='between(t,${t0},${t1})'`);
-    }
-
-    const escapedFull = escapeDrawtext(displayText);
-    filters.push(`drawtext=text='${escapedFull}':fontfile=${FONT_PATH.replace(/\\/g, '/')}:fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='between(t,${typingSec},${totalSec})'`);
-
-    const videoPath = path.join(tempDir, `stext_vid_${id}.mp4`);
+    const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
         ffmpeg()
-            .input(`color=c=#1a1a2e:s=${W}x${H}:d=${totalSec}`)
+            .input(`color=c=#00000000:s=${W}x${H}:d=${duration}:r=${fps}`)
             .inputFormat('lavfi')
+            .videoFilter([
+                'format=yuva420p',
+                `drawtext=text='${escaped}':fontfile=${fontfile}:fontcolor=white:bordercolor=#FF3366:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2`,
+                'hue=H=t*360'
+            ].join(','))
             .outputOptions([
-                '-vf', filters.join(','),
-                '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart'
+                '-c:v', 'libwebp',
+                '-lossless', '0',
+                '-q:v', '80',
+                '-pix_fmt', 'yuva420p',
+                '-loop', '0',
+                '-an'
             ])
             .on('end', resolve)
             .on('error', reject)
-            .save(videoPath);
+            .save(outputPath);
     });
 
-    const buf = fs.readFileSync(videoPath);
-    const sticker = await mediaToSticker(buf, 'video/mp4', 'Texto Animado', 'Bot');
-    fs.unlinkSync(videoPath);
-    return sticker;
+    const buf = fs.readFileSync(outputPath);
+    const withMeta = await addMetadata(buf, 'Texto Glow', 'Bot');
+    fs.unlinkSync(outputPath);
+    return withMeta;
 }
 
 module.exports = {
     name: 'stexto',
     aliases: ['textsticker', 'textstick', 'txtsticker'],
     category: 'mídia',
-    description: 'Cria um sticker animado com texto digitando',
+    description: 'Cria sticker animado com texto brilhante e glow colorido',
     async execute(sock, m, { from, args, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, getMessageText } = utils;
 
         let text = args.join(' ').trim();
-
         if (!text && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
             text = getMessageText(m.message.extendedTextMessage.contextInfo.quotedMessage);
         }
-        if (!text) {
-            text = getMessageText(m.message);
-        }
+        if (!text) text = getMessageText(m.message);
 
         if (!text || text.length === 0) {
-            return await sock.sendMessage(from, { text: '❌ Digite o texto ou marque uma mensagem para converter em sticker animado.' }, { quoted: m });
+            return await sock.sendMessage(from, { text: '❌ Digite o texto ou marque uma mensagem para criar o sticker glow.' }, { quoted: m });
         }
-
         if (text.length > 200) {
             return await sock.sendMessage(from, { text: '❌ Texto muito longo. Máximo 200 caracteres.' }, { quoted: m });
         }
 
-        let currentBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await react(sock, m, '✨', lastBotResponse, GLOBAL_COOLDOWN);
 
         try {
-            const sticker = await makeAnimatedTextSticker(text);
+            const sticker = await makeGlowSticker(text);
             await sock.sendMessage(from, { sticker }, { quoted: m });
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (error) {
             console.error('❌ [STEXTO] Erro:', error.message);
-            await sock.sendMessage(from, { text: '❌ Erro ao criar sticker animado. Tente um texto mais curto.' }, { quoted: m });
+            await sock.sendMessage(from, { text: '❌ Erro ao criar sticker glow. Tente novamente.' }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         }
 
