@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
+const { Jimp } = require('jimp');
 const { addMetadata } = require('../database/sticker');
 const { tempDir } = require('../database/db');
 
@@ -66,36 +67,44 @@ async function makeGlowSticker(text) {
         displayText = wrapToWidth(text, maxW, 24);
     }
 
-    // Escreve texto em arquivo temporário para evitar escaping de \n no drawtext
+    // Fundo transparente via PNG com Jimp
+    const bgFile = path.join(tempDir, `stext_bg_${id}.png`);
+    const bg = new Jimp(W, H, 0x00000000);
+    const bgBuf = await bg.getBuffer('image/png');
+    fs.writeFileSync(bgFile, bgBuf);
+
+    // Texto em arquivo para evitar escaping de \n
     const textFile = path.join(tempDir, `stext_txt_${id}.txt`);
     fs.writeFileSync(textFile, displayText, 'utf8');
 
     const fontfile = FONT_PATH.replace(/\\/g, '/');
     const fps = 15;
     const duration = 2;
-    const rainbow = ['#FF0055','#FF6600','#FFCC00','#00FF66','#0066FF','#6633FF','#FF00AA'];
-    const segLen = duration / rainbow.length;
-    const filters = rainbow.map((c, i) => {
-        const t0 = +(i * segLen).toFixed(3);
-        const t1 = +((i + 1) * segLen).toFixed(3);
-        return `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:bordercolor=${c}:enable='between(t,${t0},${t1})'`;
-    });
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
         ffmpeg()
-            .input(`color=c=black@0.0:s=${W}x${H}:r=${fps}:d=${duration}`)
-            .inputFormat('lavfi')
-            .videoFilter(['format=yuva420p', ...filters].join(','))
+            .input(bgFile)
+            .inputOptions(['-loop', '1', '-framerate', String(fps)])
+            .videoFilter([
+                'format=yuva420p',
+                `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:bordercolor=#FF3366`,
+                'hue=h=n*24'
+            ].join(','))
             .outputOptions([
                 '-c:v', 'libwebp',
                 '-lossless', '1',
                 '-preset', 'picture',
                 '-pix_fmt', 'yuva420p',
                 '-loop', '0',
-                '-an'
+                '-an',
+                '-t', String(duration)
             ])
-            .on('end', () => { try { fs.unlinkSync(textFile); } catch {} resolve(); })
+            .on('end', () => {
+                try { fs.unlinkSync(textFile); } catch {}
+                try { fs.unlinkSync(bgFile); } catch {}
+                resolve();
+            })
             .on('error', reject)
             .save(outputPath);
     });
