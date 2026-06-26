@@ -86,7 +86,7 @@ async function makeGlowSticker(text) {
 
     // Ângulo dourado (~137.5°) — garante que cada frame tenha uma cor MUITO diferente do anterior
     const frames = Array.from({ length: totalFrames }, (_, i) => ({
-        c: hsl((i * 137.508) % 360, 100, 50),
+        c: hsl((i * 137.508) % 360, 100, 65),
         n: i
     }));
 
