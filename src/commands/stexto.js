@@ -18,7 +18,11 @@ async function ensureFont() {
 }
 
 function escapeDrawtext(val) {
-    return val.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
+    return val
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/:/g, '\\:')
+        .replace(/\n/g, '\\n');
 }
 
 // Estima largura em pixels do texto para a fonte DejaVu Sans
@@ -28,9 +32,9 @@ function textWidth(text, fontSize) {
 
 // Quebra o texto em linhas que cabem na largura máxima
 function wrapToWidth(text, maxW, fontSize) {
-    const inputLines = text.split('\n');
+    const lines = text.split('\n');
     const result = [];
-    for (const line of inputLines) {
+    for (const line of lines) {
         const words = line.split(' ');
         let cur = '';
         for (const w of words) {
@@ -44,7 +48,7 @@ function wrapToWidth(text, maxW, fontSize) {
         }
         if (cur) result.push(cur);
     }
-    return result.join('\\n');
+    return result.join('\n');
 }
 
 async function makeGlowSticker(text) {
@@ -60,7 +64,7 @@ async function makeGlowSticker(text) {
     let displayText = text;
     for (; fontSize >= 24; fontSize -= 4) {
         displayText = wrapToWidth(text, maxW, fontSize);
-        const lines = displayText.split('\\n');
+        const lines = displayText.split('\n');
         const textH = lines.length * fontSize * 1.3;
         const longest = lines.reduce((a, b) => a.length > b.length ? a : b, '');
         if (textWidth(longest, fontSize) <= maxW && textH <= H - pad * 2) break;
