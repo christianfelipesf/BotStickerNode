@@ -243,8 +243,19 @@ module.exports = {
             let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
             let allFiles = findDownloadedFiles(id);
 
+            if (allFiles.length === 0 && platform === 'instagram' && !hasCookies) {
+                for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
+                    console.log(`[RETRY] Instagram tentando --cookies-from-browser ${browser}...`);
+                    const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                    retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--cookies-from-browser', browser);
+                    result = await runYtDlp(retryArgs, 60000);
+                    allFiles = findDownloadedFiles(id);
+                    if (allFiles.length > 0) break;
+                }
+            }
+
             if (allFiles.length === 0 && platform === 'instagram') {
-                console.log(`[RETRY] Instagram falhou, tentando com --yes-playlist...`);
+                console.log(`[RETRY] Instagram tentando com --yes-playlist...`);
                 const retryArgs = buildYtDlpArgs(url, platform, hd, template);
                 retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
                 result = await runYtDlp(retryArgs);
@@ -255,8 +266,11 @@ module.exports = {
                 const stderrSnippet = result.stderr
                     ? result.stderr.split('\n').filter(l => l.trim() && !l.includes('[debug]') && !l.includes('[info]')).slice(-3).join(' | ').slice(0, 200)
                     : '';
-                let reason = `Instagram não baixou. Atualize o yt-dlp: "yt-dlp -U"`;
-                if (stderrSnippet) reason += `\n🔍 ${stderrSnippet}`;
+                let reason = `Instagram bloqueou. Gere cookies.txt no navegador (extensão Get cookies.txt) e salve na raiz do bot.`;
+                if (!hasCookies && !stderrSnippet.includes('cookies')) {
+                    reason = `Instagram bloqueou. Tente: 1) yt-dlp --cookies-from-browser chrome -v "${url}" no terminal OU 2) gere cookies.txt com extensão Get cookies.txt`;
+                }
+                if (stderrSnippet) reason += `\n🔍 ${stderrSnippet.split('ERROR').slice(-1)[0].trim().slice(0, 250)}`;
                 throw new Error(reason);
             }
 
