@@ -29,17 +29,12 @@ module.exports = {
         const zipPath = path.join(tempDir, zipName);
 
         try {
-            // Arquivos para incluir no dump:
-            //  - database.json: configuração editável (config, stats, botName/menuImage)
-            //  - bot.db:        estado mutável em alto fluxo (active_groups, group_state, messages)
-            //  - bot.db-shm / bot.db-wal: arquivos auxiliares do SQLite em modo WAL
             const filesToInclude = [
                 'database.json',
                 'bot.db',
                 'bot.db-shm',
                 'bot.db-wal',
-                'package.json',
-                '.env'
+                'package.json'
             ];
 
             let includedCount = 0;

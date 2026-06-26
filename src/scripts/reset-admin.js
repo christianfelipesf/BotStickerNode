@@ -40,7 +40,8 @@ async function main() {
     const data = {
         username,
         passwordHash: hash(password),
-        sessionSecret: crypto.randomBytes(32).toString('hex')
+        sessionSecret: crypto.randomBytes(32).toString('hex'),
+        previousSessionSecret: null
     };
     fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
     try { fs.chmodSync(FILE, 0o600); } catch (_) {}

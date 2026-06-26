@@ -1,3 +1,4 @@
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -25,19 +26,41 @@ function ensureDefault() {
     if (d?.username && d?.passwordHash) return d;
     const username = 'admin';
     const password = genPwd(10);
-    d = { username, passwordHash: hash(password), sessionSecret: newSecret() };
+    const envSecret = process.env.SESSION_SECRET;
+    d = { username, passwordHash: hash(password), sessionSecret: envSecret || newSecret(), previousSessionSecret: null };
     save(d);
-    console.log(`\n🔐 ADMIN — Credenciais geradas:\n   Usuário: ${username}\n   Senha:   ${password}\n   ⚠️ Guarde! Aparece só agora.\n   Dica: rode "npm run reset:admin" para trocar.\n`);
+    const src = envSecret ? 'via .env' : 'gerada';
+    console.log(`\n🔐 ADMIN — Credenciais geradas:\n   Usuário: ${username}\n   Senha:   ${password}\n   ⚠️ Guarde! Aparece só agora.\n   Dica: rode "npm run reset:admin" para trocar.\n   🔑 Sessão: chave ${src}\n`);
     return d;
 }
 
 const verify = (u, p) => { const d = load(); return !!(d && d.username === u && verifyHash(d.passwordHash, p)); };
-const setCredentials = (u, p) => save({ ...(load() || {}), username: u, passwordHash: hash(p), sessionSecret: newSecret() });
+const setCredentials = (u, p) => {
+    const cur = load() || {};
+    save({ ...cur, username: u, passwordHash: hash(p), previousSessionSecret: cur.sessionSecret || null, sessionSecret: newSecret() });
+};
 
-function getSessionSecret() {
+function getSessionKeys() {
     const d = load() || {};
-    if (!d.sessionSecret) { d.sessionSecret = newSecret(); save(d); }
-    return d.sessionSecret;
+    if (!d.sessionSecret) { d.sessionSecret = process.env.SESSION_SECRET || newSecret(); d.previousSessionSecret = null; save(d); }
+    const keys = [d.sessionSecret];
+    if (d.previousSessionSecret) keys.push(d.previousSessionSecret);
+    return keys;
 }
 
-module.exports = { ensureDefault, verify, setCredentials, getSessionSecret };
+const ROTATION_INTERVAL = 24 * 60 * 60 * 1000;
+
+function rotateSessionSecret() {
+    const d = load();
+    if (!d) return;
+    d.previousSessionSecret = d.sessionSecret || null;
+    d.sessionSecret = newSecret();
+    save(d);
+    console.log(`🔑 [adminAuth] chave de sessão rotacionada (anterior mantida para validação)`);
+}
+
+function startSessionRotation(intervalMs = ROTATION_INTERVAL) {
+    setInterval(rotateSessionSecret, intervalMs).unref();
+}
+
+module.exports = { ensureDefault, verify, setCredentials, getSessionKeys, startSessionRotation };

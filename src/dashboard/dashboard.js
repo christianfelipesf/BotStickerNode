@@ -274,10 +274,11 @@ function init(config) {
     app.use(express.json({ limit: '20mb' }));
 
     adminAuth.ensureDefault();
+    adminAuth.startSessionRotation();
     app.set('trust proxy', 1);
     app.use(cookieSession({
         name: 'admin_session',
-        keys: [adminAuth.getSessionSecret()],
+        keys: adminAuth.getSessionKeys(),
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
         sameSite: 'lax',
