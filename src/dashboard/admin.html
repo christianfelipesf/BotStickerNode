@@ -147,6 +147,53 @@
       </div>
     </div>
 
+    <!-- === IA Usage Section === -->
+    <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600">🤖 IA — Uso</span>
+        <button id="btnRefreshAI" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer">↻</button>
+        <span id="aiAutoStatus" style="font-size:10px;color:#555">⏵ auto</span>
+      </div>
+      <div id="aiUsageContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:12px;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.6;color:#ccc;min-height:60px">
+        <div class="empty" style="padding:12px;color:#888">Carregando…</div>
+      </div>
+    </div>
+
+    <!-- === Active Users Section === -->
+    <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600">👥 Usuários Ativos (Dashboard)</span>
+        <button id="btnRefreshUsers" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer">↻</button>
+        <span style="font-size:10px;color:#555">janela:</span>
+        <select id="usersTimeWindow" style="background:#0e1116;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px;font-size:11px;font-family:inherit">
+          <option value="30">30 min</option>
+          <option value="60" selected>1 hora</option>
+          <option value="360">6 horas</option>
+          <option value="1440">24 horas</option>
+        </select>
+      </div>
+      <div id="activeUsersContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:10px 12px;max-height:260px;overflow:auto;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.5;color:#ccc">
+        <div class="empty" style="padding:12px;color:#888">Carregando…</div>
+      </div>
+    </div>
+
+    <!-- === Visit History Section === -->
+    <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600">📋 Histórico de Visitas (Dashboard)</span>
+        <button id="btnRefreshVisits" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer">↻</button>
+        <span style="font-size:10px;color:#555">limite:</span>
+        <select id="visitsLimit" style="background:#0e1116;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px;font-size:11px;font-family:inherit">
+          <option value="20">20</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+      <div id="visitHistoryContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:10px 12px;max-height:300px;overflow:auto;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.5;color:#ccc">
+        <div class="empty" style="padding:12px;color:#888">Carregando…</div>
+      </div>
+    </div>
+
     <div class="toolbar">
       <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar..." />
       <button id="btnReload">↻</button>

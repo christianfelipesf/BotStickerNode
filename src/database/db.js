@@ -142,6 +142,15 @@ db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_logs_msgid_unique
         ON dashboard_logs(to_jid, message_id, type)
         WHERE message_id IS NOT NULL AND message_id != '';
+
+    CREATE TABLE IF NOT EXISTS dashboard_visits (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        username    TEXT,
+        ip          TEXT,
+        user_agent  TEXT,
+        timestamp   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dashboard_visits_ts ON dashboard_visits(timestamp);
 `);
 
 function checkpointWal() {

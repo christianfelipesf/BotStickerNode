@@ -422,5 +422,176 @@ let logsTimer = setInterval(loadLogs, 3000);
 $('logsContainer').addEventListener('mouseenter', () => { clearInterval(logsTimer); $('logAutoStatus').textContent = '⏸ pausado'; });
 $('logsContainer').addEventListener('mouseleave', () => { logsTimer = setInterval(loadLogs, 3000); $('logAutoStatus').textContent = '⏵ auto'; });
 
+// === AI Usage ===
+function escHtml(s) { return s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function fmtNumber(n) {
+    if (n == null) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+}
+
+function fmtDuration(ms) {
+    if (!ms) return '—';
+    const s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const parts = [];
+    if (d > 0) parts.push(d + 'd');
+    if (h > 0) parts.push(h + 'h');
+    if (m > 0) parts.push(m + 'min');
+    if (parts.length === 0) parts.push(s + 's');
+    return parts.join(' ');
+}
+
+async function loadAIUsage() {
+    const c = $('aiUsageContainer');
+    if (!c) return;
+    let r;
+    try { r = await api('/api/admin/ai-usage'); } catch {}
+    if (!r || !r.ok) {
+        c.innerHTML = '<div style="color:#FF5555;padding:12px;font-weight:600">⛔ offline</div>';
+        return;
+    }
+    const u = r.data?.usage;
+    if (!u) {
+        c.innerHTML = '<div style="color:#888;padding:12px">Sem dados de uso.</div>';
+        return;
+    }
+    const pctSuccess = u.totalRequests > 0 ? ((u.successfulRequests / u.totalRequests) * 100).toFixed(0) : '—';
+    const pctCache = u.totalRequests > 0 ? ((u.cachedResponses / u.totalRequests) * 100).toFixed(0) : '—';
+    const costEstimate = (u.totalTokensIn * 0.00000015 + u.totalTokensOut * 0.0000006).toFixed(6);
+    c.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:8px">
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;text-align:center">
+          <div style="color:#888;font-size:10px">REQUISIÇÕES</div>
+          <div style="color:#e6edf3;font-size:16px;font-weight:700">${fmtNumber(u.totalRequests)}</div>
+          <div style="color:#3fb950;font-size:10px">${fmtNumber(u.successfulRequests)} ok</div>
+          <div style="color:#f85149;font-size:10px">${fmtNumber(u.failedRequests)} falhas</div>
+        </div>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;text-align:center">
+          <div style="color:#888;font-size:10px">TOKENS</div>
+          <div style="color:#e6edf3;font-size:16px;font-weight:700">${fmtNumber(u.totalTokensOut)}</div>
+          <div style="color:#9aa6b2;font-size:10px">${fmtNumber(u.totalTokensIn)} input</div>
+          <div style="color:#9aa6b2;font-size:10px">${fmtNumber(u.totalTokensOut)} output</div>
+        </div>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;text-align:center">
+          <div style="color:#888;font-size:10px">CACHE</div>
+          <div style="color:#e6edf3;font-size:16px;font-weight:700">${fmtNumber(u.cachedResponses)}</div>
+          <div style="color:#d29922;font-size:10px">${pctCache}% das reqs</div>
+          <div style="color:#9aa6b2;font-size:10px">${fmtNumber(u.cacheSize)} itens</div>
+        </div>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;text-align:center">
+          <div style="color:#888;font-size:10px">SUCESSO</div>
+          <div style="color:#e6edf3;font-size:16px;font-weight:700">${pctSuccess}%</div>
+          <div style="color:#9aa6b2;font-size:10px">custo aprox.</div>
+          <div style="color:#d29922;font-size:10px">US$ ${costEstimate}</div>
+        </div>
+      </div>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin-bottom:6px">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:11px">
+          <span style="color:#888">Modelo:</span><span style="color:#e6edf3">${escHtml(u.config?.aiModel || '—')}</span>
+          <span style="color:#888">Max tokens:</span><span style="color:#e6edf3">${u.config?.aiMaxTokens || '—'}</span>
+          <span style="color:#888">Temperatura:</span><span style="color:#e6edf3">${u.config?.aiTemperature ?? '—'}</span>
+          <span style="color:#888">Uptime:</span><span style="color:#e6edf3">${fmtDuration(u.uptimeMs)}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;justify-content:flex-end">
+        <button onclick="resetAIStats()" style="background:#1f2530;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer">Redefinir</button>
+      </div>`;
+}
+
+async function resetAIStats() {
+    const r = await api('/api/admin/ai-usage', { method: 'POST' });
+    if (r.ok) toast('Estatísticas redefinidas ✓', 'ok');
+    else toast('Erro ao redefinir', 'err');
+    loadAIUsage();
+}
+
+$('btnRefreshAI').addEventListener('click', loadAIUsage);
+let aiTimer = setInterval(loadAIUsage, 5000);
+$('aiUsageContainer').addEventListener('mouseenter', () => { clearInterval(aiTimer); $('aiAutoStatus').textContent = '⏸ pausado'; });
+$('aiUsageContainer').addEventListener('mouseleave', () => { aiTimer = setInterval(loadAIUsage, 5000); $('aiAutoStatus').textContent = '⏵ auto'; });
+
+// === Active Users ===
+async function loadActiveUsers() {
+    const c = $('activeUsersContainer');
+    if (!c) return;
+    const minutes = $('usersTimeWindow')?.value || 60;
+    let r;
+    try { r = await api('/api/admin/active-users?minutes=' + minutes); } catch {}
+    if (!r || !r.ok) {
+        c.innerHTML = '<div style="color:#FF5555;padding:12px;font-weight:600">⛔ offline</div>';
+        return;
+    }
+    const users = r.data?.users || [];
+    if (!users.length) {
+        c.innerHTML = '<div style="color:#888;padding:12px">Nenhum usuário ativo no período.</div>';
+        return;
+    }
+    c.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:11px">'
+        + '<thead><tr style="color:#888;border-bottom:1px solid #333">'
+        + '<th style="text-align:left;padding:4px 6px">Usuário</th>'
+        + '<th style="text-align:left;padding:4px 6px">IP</th>'
+        + '<th style="text-align:right;padding:4px 6px">Visitas</th>'
+        + '<th style="text-align:right;padding:4px 6px">Último acesso</th>'
+        + '</tr></thead><tbody>'
+        + users.map(u => {
+            const last = new Date(u.last_visit).toLocaleString('pt-BR');
+            return `<tr style="border-bottom:1px solid #222">`
+                + `<td style="padding:4px 6px;color:#e6edf3">${escHtml(u.username || '—')}</td>`
+                + `<td style="padding:4px 6px;color:#9aa6b2">${escHtml(u.ip || '—')}</td>`
+                + `<td style="padding:4px 6px;text-align:right;color:#d29922">${u.visit_count}</td>`
+                + `<td style="padding:4px 6px;text-align:right;color:#9aa6b2">${last}</td>`
+                + `</tr>`;
+        }).join('')
+        + '</tbody></table>'
+        + `<div style="text-align:right;color:#888;font-size:10px;margin-top:6px">${users.length} usuário(s) nos últimos ${minutes} min</div>`;
+}
+
+$('btnRefreshUsers').addEventListener('click', loadActiveUsers);
+$('usersTimeWindow').addEventListener('change', loadActiveUsers);
+
+// === Visit History ===
+async function loadVisitHistory() {
+    const c = $('visitHistoryContainer');
+    if (!c) return;
+    const limit = $('visitsLimit')?.value || 50;
+    let r;
+    try { r = await api('/api/admin/visit-history?limit=' + limit); } catch {}
+    if (!r || !r.ok) {
+        c.innerHTML = '<div style="color:#FF5555;padding:12px;font-weight:600">⛔ offline</div>';
+        return;
+    }
+    const visits = r.data?.visits || [];
+    if (!visits.length) {
+        c.innerHTML = '<div style="color:#888;padding:12px">Nenhuma visita registrada.</div>';
+        return;
+    }
+    c.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:11px">'
+        + '<thead><tr style="color:#888;border-bottom:1px solid #333">'
+        + '<th style="text-align:left;padding:4px 6px">Horário</th>'
+        + '<th style="text-align:left;padding:4px 6px">Usuário</th>'
+        + '<th style="text-align:left;padding:4px 6px">IP</th>'
+        + '<th style="text-align:left;padding:4px 6px">User Agent</th>'
+        + '</tr></thead><tbody>'
+        + visits.map(v => {
+            const ts = new Date(v.timestamp).toLocaleString('pt-BR');
+            const ua = (v.user_agent || '').length > 50 ? (v.user_agent || '').slice(0, 50) + '…' : (v.user_agent || '');
+            return `<tr style="border-bottom:1px solid #222">`
+                + `<td style="padding:4px 6px;color:#9aa6b2;white-space:nowrap">${ts}</td>`
+                + `<td style="padding:4px 6px;color:#e6edf3">${escHtml(v.username || '—')}</td>`
+                + `<td style="padding:4px 6px;color:#9aa6b2">${escHtml(v.ip || '—')}</td>`
+                + `<td style="padding:4px 6px;color:#6e7681;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(ua)}</td>`
+                + `</tr>`;
+        }).join('')
+        + '</tbody></table>';
+}
+
+$('btnRefreshVisits').addEventListener('click', loadVisitHistory);
+$('visitsLimit').addEventListener('change', loadVisitHistory);
+
 // Verificar atualizações ao carregar a página
-load().then(() => { checkUpdates(); loadLogs(); });
+load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); });

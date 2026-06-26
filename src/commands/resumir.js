@@ -43,7 +43,15 @@ module.exports = {
                 basePrompt = basePrompt.replace(/{botName}/g, botNameForAI);
             }
 
-            const finalPrompt = `${basePrompt}\n\n${contentToSummarize}`;
+            const maxPromptLength = Number(config?.aiMaxPromptLength) || 2000;
+            let finalPrompt = `${basePrompt}\n\n${contentToSummarize}`;
+            if (finalPrompt.length > maxPromptLength) {
+                const maxContentLength = maxPromptLength - basePrompt.length - 200;
+                if (maxContentLength > 100) {
+                    contentToSummarize = contentToSummarize.slice(0, maxContentLength) + '\n\n[Nota: histórico truncado por limite de tokens.]';
+                    finalPrompt = `${basePrompt}\n\n${contentToSummarize}`;
+                }
+            }
             const result = await model.generateContent(finalPrompt);
             const responseText = result.response.text();
             

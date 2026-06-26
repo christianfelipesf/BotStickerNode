@@ -22,7 +22,8 @@ const {
     upsertDashboardGroupInfo,
     getDashboardGroupInfo,
     listDashboardGroupInfos,
-    deleteDashboardGroupInfo
+    deleteDashboardGroupInfo,
+    insertDashboardVisit
 } = require('../database/utils');
 
 let ioServer = null;
@@ -292,10 +293,14 @@ function init(config) {
 
     app.post('/api/admin/login', (req, res) => {
         const { username, password } = req.body || {};
+        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ua = req.headers['user-agent'] || '';
         if (!username || !password || !adminAuth.verify(username, password)) {
+            insertDashboardVisit(username || 'unknown', ip, ua);
             return json(res, false, { error: 'Credenciais inválidas' }, 401);
         }
         req.session.adminUser = String(username);
+        insertDashboardVisit(username, ip, ua);
         return json(res, true, { username });
     });
 
@@ -378,6 +383,42 @@ function init(config) {
         if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             return json(res, true, { logs: terminalLog.getLast(15) });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.get('/api/admin/ai-usage', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const { getUsageStats } = require('../services/ai');
+            const stats = getUsageStats();
+            return json(res, true, { usage: stats });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.post('/api/admin/ai-usage', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const { resetUsageStats } = require('../services/ai');
+            resetUsageStats();
+            return json(res, true, { ok: true });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.get('/api/admin/active-users', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const minutes = Math.max(5, Math.min(1440, Number(req.query.minutes) || 60));
+            const users = require('../database/utils').getActiveUsers(minutes);
+            return json(res, true, { users, minutes });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.get('/api/admin/visit-history', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const limit = Math.max(10, Math.min(500, Number(req.query.limit) || 100));
+            const visits = require('../database/utils').getVisitHistory(limit);
+            return json(res, true, { visits, limit });
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
@@ -590,10 +631,24 @@ function init(config) {
     const adminHtml = path.join(__dirname, 'admin.html');
     app.get('/admin', (req, res) => {
         if (!(req.session && req.session.adminUser)) return res.redirect('/admin/login');
+        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ua = req.headers['user-agent'] || '';
+        insertDashboardVisit(req.session.adminUser, ip, ua);
         res.type('html').sendFile(adminHtml);
     });
-    app.get('/admin/login', (req, res) => res.type('html').sendFile(adminHtml));
-    app.get('/', (req, res) => res.type('html').send(getHtml(config.botName || 'Bot')));
+    app.get('/admin/login', (req, res) => {
+        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ua = req.headers['user-agent'] || '';
+        insertDashboardVisit('visitante', ip, ua);
+        res.type('html').sendFile(adminHtml);
+    });
+    app.get('/', (req, res) => {
+        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ua = req.headers['user-agent'] || '';
+        const user = (req.session && req.session.adminUser) || 'visitante';
+        insertDashboardVisit(user, ip, ua);
+        res.type('html').send(getHtml(config.botName || 'Bot'));
+    });
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
         const error = status === 413 ? 'Arquivo muito grande para enviar pelo dashboard' : 'JSON invalido';

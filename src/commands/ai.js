@@ -3,7 +3,7 @@ module.exports = {
     aliases: ['ia', 'grok', 'gemini', 'gpt', 'chatgpt'],
     category: 'ai',
     description: 'Pergunta para a inteligência artificial',
-    async execute(sock, m, { from, fullArgsText, utils, model, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus, getMessageText } = utils;
         if (!model) {
             await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
@@ -14,6 +14,7 @@ module.exports = {
             let prompt = fullArgsText;
             const quotedInfo = m.message.extendedTextMessage?.contextInfo;
             const quotedMsg = quotedInfo?.quotedMessage;
+            const maxPromptLength = Number(config?.aiMaxPromptLength) || 2000;
 
             if (quotedMsg) {
                 const quotedText = getMessageText(quotedMsg);
@@ -24,6 +25,11 @@ module.exports = {
             }
 
             if (!prompt) return await react(sock, m, '❓', lastBotResponse, GLOBAL_COOLDOWN);
+
+            if (prompt.length > maxPromptLength * 2) {
+                await sock.sendMessage(from, { text: `❌ Prompt muito longo (${prompt.length} caracteres). Máximo permitido: ${maxPromptLength * 2}.` }, { quoted: m });
+                return lastBotResponse;
+            }
 
             let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN); 
             const result = await model.generateContent(prompt);

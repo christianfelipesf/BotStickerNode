@@ -49,6 +49,12 @@ const DEFAULT_CONFIG = {
     showLogoInMenu: true,
     voiceEffects: true,
     aiModel: "openrouter/free",
+    aiMaxTokens: 500,
+    aiTemperature: 0.7,
+    aiMaxPromptLength: 2000,
+    aiCacheTtl: 300000,
+    aiRetryCount: 2,
+    aiFallbackModel: "gpt-4o-mini",
     summaryLimit: 20,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
@@ -557,6 +563,41 @@ function listDashboardGroupInfos() {
 function deleteDashboardGroupInfo(jid) { try { _dgiDelete.run(jid); return true; } catch (_) { return false; } }
 
 // ============================================================
+// Dashboard Visit Tracking
+// ============================================================
+const _dvInsert = db.prepare('INSERT INTO dashboard_visits (username, ip, user_agent, timestamp) VALUES (?, ?, ?, ?)');
+const _dvActiveUsers = db.prepare('SELECT username, ip, MAX(timestamp) as last_visit, COUNT(*) as visit_count FROM dashboard_visits WHERE timestamp > ? GROUP BY username, ip ORDER BY last_visit DESC LIMIT 50');
+const _dvVisits = db.prepare('SELECT id, username, ip, user_agent, timestamp FROM dashboard_visits ORDER BY timestamp DESC LIMIT ?');
+const _dvCleanup = db.prepare('DELETE FROM dashboard_visits WHERE timestamp < ?');
+
+function insertDashboardVisit(username, ip, userAgent) {
+    try { _dvInsert.run(username || null, ip || null, userAgent ? String(userAgent).slice(0, 512) : null, Date.now()); return true; } catch (_) { return false; }
+}
+
+function getActiveUsers(minutes = 60) {
+    try {
+        const since = Date.now() - (Math.max(1, Number(minutes) || 60) * 60 * 1000);
+        return _dvActiveUsers.all(since);
+    } catch (_) { return []; }
+}
+
+function getVisitHistory(limit = 100) {
+    try {
+        const lim = Math.max(1, Math.min(500, Number(limit) || 100));
+        return _dvVisits.all(lim);
+    } catch (_) { return []; }
+}
+
+function cleanupDashboardVisits(maxAgeDays = 30) {
+    try {
+        const cutoff = Date.now() - (Math.max(1, Number(maxAgeDays) || 30) * 86400 * 1000);
+        const r = _dvCleanup.run(cutoff);
+        if (r.changes > 0) try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
+        return r.changes;
+    } catch (_) { return 0; }
+}
+
+// ============================================================
 // Group Data (mesclado JSON + SQLite)
 // ============================================================
 function getGroupData(jid) {
@@ -970,6 +1011,7 @@ module.exports = {
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
     clearDashboardLogs, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
+    insertDashboardVisit, getActiveUsers, getVisitHistory, cleanupDashboardVisits,
     flushNow, checkpointWal,
     DEFAULT_CONFIG,
     getDefaultConfig: () => ({ ...DEFAULT_CONFIG })
