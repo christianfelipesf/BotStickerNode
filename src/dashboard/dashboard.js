@@ -6,6 +6,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const cookieSession = require('cookie-session');
 const adminAuth = require('./adminAuth');
+const axios = require('axios');
 const {
     mediaToSticker,
     insertDashboardLog,
@@ -1030,6 +1031,14 @@ async function buildContextExtras(toJid, ctxInfo) {
             mediaUrl: ctxInfo.cardUrl || '',
             renderLargerThumbnail: true
         };
+        if (ctxInfo.cardThumb) {
+            try {
+                const resp = await axios.get(ctxInfo.cardThumb, { responseType: 'arraybuffer', timeout: 10000 });
+                if (resp.status === 200 && resp.data) {
+                    card.thumbnail = Buffer.from(resp.data);
+                }
+            } catch (_) {}
+        }
         extras.contextInfo = extras.contextInfo || {};
         extras.contextInfo.externalAdReply = card;
     }
