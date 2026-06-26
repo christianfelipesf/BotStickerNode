@@ -309,7 +309,7 @@ module.exports = {
             }
 
         } catch (e) {
-            console.error(trace.step('evt', 'messages.upsert ERRO', `${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''} (após ${Date.now()-_evtStart}ms)`));
+            console.error(`[${trace.ts()}] [evt] messages.upsert ERRO: ${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''} (após ${Date.now()-_evtStart}ms)`);
             console.error('Erro ao processar mensagem:', e);
         }
     },
