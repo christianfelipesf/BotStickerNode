@@ -43,6 +43,15 @@ function wrapToWidth(text, maxW, fontSize) {
     return result.join('\n');
 }
 
+function hsl(h, s, l) {
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    const hex = n => Math.round(255 * f(n)).toString(16).padStart(2, '0');
+    return '#' + hex(0) + hex(8) + hex(4);
+}
+
 async function makeGlowSticker(text) {
     const id = crypto.randomBytes(4).toString('hex');
     await ensureFont();
@@ -73,18 +82,23 @@ async function makeGlowSticker(text) {
     const fontfile = FONT_PATH.replace(/\\/g, '/');
     const fps = 15;
     const duration = 2;
+    const totalFrames = Math.round(fps * duration);
+
+    // 15 cores fixas do arco-íris (espaçadas em 24° de matiz)
+    const rainbow = Array.from({ length: 15 }, (_, i) => hsl(i * 24, 100, 50));
+
+    // Um drawtext por frame — cada um com uma cor diferente, sem transição suave
+    const tpl = `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:borderw=6:alpha=1`;
+    const filters = Array.from({ length: totalFrames }, (_, i) =>
+        `${tpl}:fontcolor=${rainbow[i % 15]}:bordercolor=${rainbow[i % 15]}:enable='eq(n,${i})'`
+    );
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
         ffmpeg()
             .input(`nullsrc=s=${W}x${H}:r=${fps}:d=${duration}`)
             .inputFormat('lavfi')
-            .videoFilter([
-                'format=yuva420p',
-                'colorchannelmixer=aa=0',
-                `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:bordercolor=#FF3366:alpha=1`,
-                'hue=h=n*24'
-            ].join(','))
+            .videoFilter(['format=yuva420p', 'colorchannelmixer=aa=0', ...filters].join(','))
             .outputOptions([
                 '-c:v', 'libwebp',
                 '-lossless', '1',
