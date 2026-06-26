@@ -183,7 +183,7 @@ module.exports = {
             }
 
             // === Prefix query ===
-            if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && isBotActive) {
+            if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && botActive) {
                 const stats = require('../database/utils').readStats();
                 const now = Date.now();
                 lastBotResponse = await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
