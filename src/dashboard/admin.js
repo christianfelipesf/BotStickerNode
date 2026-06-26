@@ -395,7 +395,7 @@ async function loadLogs() {
         return `<span style="color:#666">[${e.time}]</span> <span style="color:${cl}">${ic}</span> ${escHtml(e.text)}`;
     }).join('\n');
     const timestamp = new Date().toLocaleTimeString();
-    c.innerHTML = `<div style="white-space:pre-wrap;word-break:break-word">${prefix}</div><div class="ps-prompt" style="color:#55FF55;margin-top:2px">PS C:\\bot> <span style="color:#ccc;animation:blink 1s step-end infinite">▌</span></div>`;
+    c.innerHTML = `<div style="white-space:pre-wrap;word-break:break-word">${prefix}</div>`;
     c.scrollTop = c.scrollHeight;
 }
 $('btnRefreshLogs').addEventListener('click', loadLogs);

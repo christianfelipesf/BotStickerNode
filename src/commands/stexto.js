@@ -80,7 +80,7 @@ async function makeGlowSticker(text) {
     fs.writeFileSync(textFile, displayText, 'utf8');
 
     const fontfile = FONT_PATH.replace(/\\/g, '/');
-    const fps = 15;
+    const fps = 12;
     const duration = 2;
     const totalFrames = Math.round(fps * duration);
 
