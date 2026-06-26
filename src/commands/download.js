@@ -13,7 +13,8 @@ const hasCookies = fs.existsSync(cookiesPath);
 const URL_REGEX = /https?:\/\/[^\s<>"']+/i;
 const SUPPORTED_HOSTS = [
     'tiktok.com', 'instagram.com', 'youtube.com', 'youtu.be',
-    'facebook.com', 'fb.watch', 'reddit.com', 'redd.it', 'google.com'
+    'facebook.com', 'fb.watch', 'reddit.com', 'redd.it', 'google.com',
+    'twitter.com', 'x.com', 't.co'
 ];
 
 function extractUrl(text) {
@@ -40,6 +41,7 @@ function getPlatform(url) {
         if (host.includes('facebook') || host.includes('fb.watch')) return 'facebook';
         if (host.includes('reddit') || host.includes('redd.it')) return 'reddit';
         if (host.includes('google')) return 'google';
+        if (host.includes('twitter') || host.includes('x.com') || host.includes('t.co')) return 'twitter';
         return 'desconhecido';
     } catch (e) {
         return 'desconhecido';
@@ -61,6 +63,11 @@ function getFormatSelector(platform, hd) {
         return hd
             ? 'bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best'
             : 'worst[ext=mp4]/worst';
+    }
+    if (platform === 'twitter') {
+        return hd
+            ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            : 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst/best[width<=640]';
     }
     return hd
         ? 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
@@ -87,6 +94,10 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         args.push('--yes-playlist');
         args.push('--extractor-args', 'instagram:allow_direct_url=True');
         args.push('--add-header', 'Referer:https://www.instagram.com/');
+    } else if (platform === 'twitter') {
+        args.push('--yes-playlist');
+        args.push('--add-header', 'Referer:https://x.com/');
+        args.push('--add-header', 'Origin:https://x.com');
     } else {
         args.push('--no-playlist');
     }
@@ -164,9 +175,9 @@ async function sendMedia(sock, from, m, filePath, title) {
 
 module.exports = {
     name: 'download',
-    aliases: ['d', 'dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt'],
+    aliases: ['d', 'dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x'],
     category: 'mídia',
-    description: 'Baixa mídia de TikTok, Instagram, YouTube, Facebook e mais',
+    description: 'Baixa mídia de TikTok, Instagram, YouTube, Facebook, Twitter/X e mais',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus } = utils;
         const hd = commandName === 'downloadhd' || commandName === 'dhd';
@@ -175,14 +186,14 @@ module.exports = {
         if (!url) {
             await react(sock, m, '❓', lastBotResponse, GLOBAL_COOLDOWN);
             return await sock.sendMessage(from, {
-                text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!d'} <link>\n\n✅ *Suportado:*\n• TikTok (videos)\n• Instagram (posts/reels/carrosséis)\n• YouTube (videos)\n• Facebook (videos/reels)\n• Reddit (videos/imagens)\n• Google (imagens)`
+                text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!d'} <link>\n\n✅ *Suportado:*\n• TikTok (videos)\n• Instagram (posts/reels/carrosséis)\n• YouTube (videos)\n• Facebook (videos/reels)\n• Twitter / X (imagens/videos)\n• Reddit (videos/imagens)\n• Google (imagens)`
             }, { quoted: m });
         }
 
         if (!isSupported(url)) {
             await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             return await sock.sendMessage(from, {
-                text: `❌ *Site não suportado!*\n\n🔗 Link: ${url}\n\n✅ *Suportado:*\n• tiktok.com\n• instagram.com\n• youtube.com / youtu.be\n• facebook.com / fb.watch\n• reddit.com / redd.it\n• google.com`
+                text: `❌ *Site não suportado!*\n\n🔗 Link: ${url}\n\n✅ *Suportado:*\n• tiktok.com\n• instagram.com\n• youtube.com / youtu.be\n• facebook.com / fb.watch\n• reddit.com / redd.it\n• twitter.com / x.com\n• google.com`
             }, { quoted: m });
         }
 
@@ -208,16 +219,20 @@ module.exports = {
 
             let title = '';
             try {
-                const dump = spawn('yt-dlp', [
+                const titleArgs = [
                     '--no-warnings',
-                    '--no-playlist',
                     '--ignore-errors',
                     '--no-abort-on-error',
                     '--extractor-args', 'tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com',
                     '--print', '%(title)s',
                     ...(hasCookies ? ['--cookies', cookiesPath] : []),
-                    url
-                ], { shell: false, windowsHide: true });
+                ];
+                if (platform === 'twitter') {
+                    titleArgs.push('--yes-playlist');
+                } else {
+                    titleArgs.push('--no-playlist');
+                }
+                const dump = spawn('yt-dlp', [...titleArgs, url], { shell: false, windowsHide: true });
                 const chunks = [];
                 dump.stdout.on('data', d => chunks.push(d));
                 await new Promise((resolve) => {
