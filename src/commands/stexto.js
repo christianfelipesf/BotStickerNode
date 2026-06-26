@@ -1,53 +1,84 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Jimp } = require('jimp');
-const { loadFont, FONT_SANS_16_WHITE, FONT_SANS_32_WHITE, FONT_SANS_64_WHITE } = require('@jimp/js-fonts');
-const { measureText, measureTextHeight } = require('@jimp/plugin-print');
 const ffmpeg = require('fluent-ffmpeg');
+const axios = require('axios');
 const { mediaToSticker } = require('../database/sticker');
 const { tempDir } = require('../database/db');
 
+const FONT_DIR = path.join(process.cwd(), 'fonts');
+const FONT_PATH = path.join(FONT_DIR, 'DejaVuSans.ttf');
+const FONT_URL = 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf';
+
+async function ensureFont() {
+    if (fs.existsSync(FONT_PATH)) return;
+    fs.mkdirSync(FONT_DIR, { recursive: true });
+    const res = await axios.get(FONT_URL, { responseType: 'arraybuffer', timeout: 15000 });
+    fs.writeFileSync(FONT_PATH, Buffer.from(res.data));
+}
+
+function escapeDrawtext(val) {
+    return val.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
+}
+
+function wrapText(text, maxChars) {
+    const inputLines = text.split('\n');
+    const result = [];
+    for (const inputLine of inputLines) {
+        const words = inputLine.split(' ');
+        let line = '';
+        for (const w of words) {
+            const test = line ? line + ' ' + w : w;
+            if (test.length > maxChars && line) {
+                result.push(line);
+                line = w;
+            } else {
+                line = test;
+            }
+        }
+        if (line) result.push(line);
+    }
+    return result.join('\\n');
+}
+
 async function makeAnimatedTextSticker(text) {
     const id = crypto.randomBytes(4).toString('hex');
-    const frameDir = path.join(tempDir, `stext_${id}`);
-    fs.mkdirSync(frameDir, { recursive: true });
+    await ensureFont();
 
     const W = 512, H = 512;
-    const fontKey = text.length <= 10 ? FONT_SANS_64_WHITE : text.length <= 25 ? FONT_SANS_32_WHITE : FONT_SANS_16_WHITE;
-    const font = await loadFont(fontKey);
+    const fontSize = text.length <= 12 ? 52 : text.length <= 30 ? 36 : 24;
+    const maxLineChars = text.length <= 12 ? 12 : 18;
+    const displayText = wrapText(text, maxLineChars);
 
-    const maxW = W - 60;
-    const textH = measureTextHeight(font, text, maxW);
-    const textY = Math.max(10, (H - textH) / 2);
+    const charPace = text.length <= 15 ? 0.18 : text.length <= 40 ? 0.10 : 0.06;
+    const holdSec = 0.8;
+    const totalSec = Math.max(2, Math.min(6, Math.ceil(text.length * charPace + holdSec)));
 
-    const fps = 10;
-    const holdFrames = 6;
-    const charsPerStep = Math.max(1, Math.ceil(text.length / 30));
-    const steps = Math.ceil(text.length / charsPerStep);
-    const total = steps + holdFrames;
+    const typingSec = totalSec - holdSec;
+    const steps = Math.min(Math.max(10, Math.ceil(text.length / 2)), 35);
+    const stepSec = typingSec / steps;
+    const charsPerStep = Math.ceil(text.length / steps);
+    const filters = [];
 
-    for (let i = 0; i < total; i++) {
-        const img = new Jimp({ width: W, height: H, color: 0x1a1a2eff });
-
-        const show = i < steps
-            ? text.substring(0, Math.min((i + 1) * charsPerStep, text.length))
-            : text;
-
-        const lineW = measureText(font, show);
-        const drawX = (W - Math.min(lineW, maxW)) / 2;
-        img.print({ font, x: drawX, y: textY, text: show, maxWidth: maxW });
-
-        await img.writeAsync(path.join(frameDir, `f_${String(i).padStart(4, '0')}.png`));
+    for (let i = 0; i < steps; i++) {
+        const partial = text.substring(0, Math.min((i + 1) * charsPerStep, text.length));
+        const wrapped = wrapText(partial, maxLineChars);
+        const t0 = +(i * stepSec).toFixed(3);
+        const t1 = +((i + 1) * stepSec).toFixed(3);
+        filters.push(`drawtext=text='${escapeDrawtext(wrapped)}':fontfile=${FONT_PATH.replace(/\\/g, '/')}:fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='between(t,${t0},${t1})'`);
     }
+
+    const escapedFull = escapeDrawtext(displayText);
+    filters.push(`drawtext=text='${escapedFull}':fontfile=${FONT_PATH.replace(/\\/g, '/')}:fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='between(t,${typingSec},${totalSec})'`);
 
     const videoPath = path.join(tempDir, `stext_vid_${id}.mp4`);
     await new Promise((resolve, reject) => {
-        ffmpeg(path.join(frameDir, 'f_%04d.png'))
-            .inputOptions(['-framerate', String(fps)])
+        ffmpeg()
+            .input(`color=c=#1a1a2e:s=${W}x${H}:d=${totalSec}`)
+            .inputFormat('lavfi')
             .outputOptions([
+                '-vf', filters.join(','),
                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                '-vf', 'scale=512:512,setsar=1',
                 '-movflags', '+faststart'
             ])
             .on('end', resolve)
@@ -57,10 +88,7 @@ async function makeAnimatedTextSticker(text) {
 
     const buf = fs.readFileSync(videoPath);
     const sticker = await mediaToSticker(buf, 'video/mp4', 'Texto Animado', 'Bot');
-
-    fs.rmSync(frameDir, { recursive: true, force: true });
     fs.unlinkSync(videoPath);
-
     return sticker;
 }
 
