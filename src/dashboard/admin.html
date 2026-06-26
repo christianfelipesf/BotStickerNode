@@ -147,6 +147,18 @@
       </div>
     </div>
 
+    <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600">🔑 OpenRouter</span>
+        <span id="apiKeyStatus" style="font-size:11px;color:#9aa6b2">—</span>
+      </div>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="password" id="apiKeyInput" placeholder="sk-or-v1-..." style="flex:1;min-width:200px;background:#0e1116;border:1px solid #30363d;border-radius:5px;padding:8px 11px;color:#e6edf3;font-size:13px;font-family:ui-monospace,monospace" />
+        <button id="btnSaveApiKey" style="background:#5b8cff;border-color:#5b8cff;color:#fff;border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:12px;cursor:pointer">💾 Salvar</button>
+        <button id="btnRemoveApiKey" style="background:#1f2530;color:#f85149;border:1px solid #f85149;border-radius:6px;padding:8px 12px;font-size:12px;cursor:pointer">🗑️ Remover</button>
+      </div>
+    </div>
+
     <div class="toolbar">
       <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar..." />
       <button id="btnReload">↻</button>

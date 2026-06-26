@@ -125,7 +125,7 @@ try {
 /* ========== Boot summary (uma linha por componente, status real) ========== */
 
 const _dashOk = !!dashboard && typeof dashboard.init === 'function';
-const _aiOk = !!require('./src/database/utils').getModel && !!require('./src/database/utils').getModel();
+const _aiOk = !!require('./src/services/ai').getModel();
 const _sockDir = fs.existsSync('session') ? '✓' : '✗';
 const _nodeVer = process.version;
 const _os = `${process.platform} ${process.arch}`;
@@ -137,7 +137,7 @@ console.log('═'.repeat(60));
 console.log(`  📦 comandos     carregando em background...`);
 console.log(`  💾 database     logs • bot.db OK`);
 console.log(`  🌐 dashboard    ${_dashOk ? '✓ módulo ok' : '✗ falhou'} na porta ${config.dashboardPort}`);
-console.log(`  🤖 IA Gemini    ${_aiOk ? '✓ ativa (' + (config.geminiModel || 'default') + ')' : '✗ sem API key'}`);
+    console.log(`  🤖 IA OpenRouter ${_aiOk ? '✓ ativa (' + (config.aiModel || 'default') + ')' : '✗ sem API key'}`);
 console.log(`  📰 news         ${config.newsEnabled !== false ? '✓ ativo' : '✗ desativado'}`);
 console.log(`  🎬 ffmpeg       ${_ffmpegChecked ? (_ffmpegFound ? '✓' : 'não encontrado') : '?'}`);
 console.log(`  🔐 sessão       ${_sockDir} ${_sockDir === '✓' ? 'salva' : 'QR necessário'}`);

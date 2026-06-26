@@ -6,7 +6,7 @@ module.exports = {
     async execute(sock, m, { from, fullArgsText, utils, model, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus, getMessageText } = utils;
         if (!model) {
-            await sock.sendMessage(from, { text: '❌ IA não configurada. Defina GEMINI_API_KEY no arquivo .env' }, { quoted: m });
+            await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
             return lastBotResponse;
         }
         

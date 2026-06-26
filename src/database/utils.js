@@ -48,7 +48,7 @@ const DEFAULT_CONFIG = {
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
-    geminiModel: "gemini-3.1-flash-lite",
+    aiModel: "openrouter/free",
     summaryLimit: 20,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
@@ -187,7 +187,7 @@ function readDB() {
 
 function readConfig() {
     const cfg = readDB().config;
-    return { ...cfg, geminiApiKey: process.env.GEMINI_API_KEY || '' };
+    return { ...cfg, openrouterApiKey: process.env.OPENROUTER_API_KEY || '' };
 }
 
 function writeConfig(newConfig) {

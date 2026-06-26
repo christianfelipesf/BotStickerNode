@@ -320,15 +320,46 @@ function init(config) {
         if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             const cfg = readConfig();
+            const { openrouterApiKey, ...safeConfig } = cfg;
             const stats = readStats();
             return json(res, true, {
-                config: cfg,
+                config: safeConfig,
+                hasApiKey: !!openrouterApiKey,
                 botName: cfg.botName,
                 version: getVersion(),
                 platform: process.platform,
                 restarts: stats.restarts,
                 nodeVersion: process.version
             });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.post('/api/admin/env-key', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const { key } = req.body || {};
+            const trimmedKey = (typeof key === 'string' ? key : '').trim();
+            const envPath = require('path').join(process.cwd(), '.env');
+            let envContent = '';
+            try { envContent = require('fs').readFileSync(envPath, 'utf8'); } catch (_) {}
+            const lines = envContent.split(/\r?\n/);
+            const idx = lines.findIndex(l => l.startsWith('OPENROUTER_API_KEY='));
+            if (trimmedKey) {
+                const newLine = `OPENROUTER_API_KEY=${trimmedKey}`;
+                if (idx >= 0) lines[idx] = newLine;
+                else lines.push(newLine);
+                process.env.OPENROUTER_API_KEY = trimmedKey;
+            } else {
+                if (idx >= 0) lines.splice(idx, 1);
+                delete process.env.OPENROUTER_API_KEY;
+            }
+            require('fs').writeFileSync(envPath, lines.join('\n') + '\n', 'utf8');
+            try {
+                const { setupAI } = require('../services/ai');
+                const { readConfig } = require('../database/utils');
+                setupAI(readConfig());
+            } catch (_) {}
+            return json(res, true, { ok: true });
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 

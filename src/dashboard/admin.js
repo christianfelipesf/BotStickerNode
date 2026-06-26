@@ -99,6 +99,9 @@ async function load() {
     cfg = clone(r.data.config); orig = clone(r.data.config); dirty.clear();
     $('userPill').textContent = '👤 ' + user;
     $('infoLine').textContent = `${r.data.botName || 'Bot'} • v${r.data.version || '?'} • ${r.data.platform || '?'} • restart #${r.data.restarts ?? '?'}`;
+    $('apiKeyStatus').textContent = r.data.hasApiKey ? '✅ configurada' : '✗ não definida';
+    $('apiKeyStatus').style.color = r.data.hasApiKey ? '#3fb950' : '#f85149';
+    $('apiKeyInput').value = '';
     showMain(); rerender();
 }
 async function saveOne(k) {
@@ -338,6 +341,26 @@ $('mgmtConfirm').addEventListener('click', async () => {
             if (!_pendingPkgUpdate) checkUpdates();
         }, 4000);
     }
+});
+
+$('btnSaveApiKey').addEventListener('click', async () => {
+    const val = $('apiKeyInput').value.trim();
+    if (!val) { toast('Digite a chave', 'err'); return; }
+    if (!val.startsWith('sk-or-') && !val.startsWith('sk-')) {
+        toast('Chave inválida (deve começar com sk-or-...)', 'err');
+        return;
+    }
+    const r = await api('/api/admin/env-key', { method: 'POST', body: { key: val } });
+    if (!r.ok) { toast(r.data?.error || 'Erro ao salvar', 'err'); return; }
+    toast('Chave salva no .env ✓', 'ok');
+    await load();
+});
+
+$('btnRemoveApiKey').addEventListener('click', async () => {
+    const r = await api('/api/admin/env-key', { method: 'POST', body: { key: '' } });
+    if (!r.ok) { toast(r.data?.error || 'Erro', 'err'); return; }
+    toast('Chave removida', 'ok');
+    await load();
 });
 
 document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {

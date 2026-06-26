@@ -30,7 +30,7 @@ module.exports = {
         `╰─────────────────────────────\n\n` +
         `⏱️ *Limite:* ${p}play e ${p}d (YouTube) baixam no máximo *15 minutos* (configurável com \`${p}set maxMediaDurationSeconds <s>\`).\n\n` +
             `╭── *4. INTELIGÊNCIA ARTIFICIAL* ──\n` +
-            `│ ${p}ai <pergunta> — converse com a IA (Gemini)\n` +
+            `│ ${p}ai <pergunta> — converse com a IA (OpenRouter)\n` +
             `│ ${p}resumir <n> — resume as últimas mensagens do grupo\n` +
             `╰─────────────────────────────\n\n` +
             `╭── *5. GRUPOS* ──\n` +
