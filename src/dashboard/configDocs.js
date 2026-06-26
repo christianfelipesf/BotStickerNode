@@ -12,6 +12,7 @@
         showLogoInMenu: 'Mostra o logotipo do bot no menu principal do WhatsApp.',
         voiceEffects: 'Aplica efeitos de voz em áudios (TTS) quando ligado.',
         aiModel: 'Modelo usado para IA e resumo de conversas (OpenRouter).',
+        openrouterApiKey: 'Chave da API OpenRouter. Salva no .env (não vai pro database.json).',
         summaryLimit: 'Qtde. de mensagens guardadas por grupo para !resumir (alto fluxo).',
         aiPrompt: 'Prompt base da IA. Use {botName} para o nome atual.',
         summaryPrompt: 'Prompt do !resumir — define tom/forma do resumo.',

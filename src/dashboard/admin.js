@@ -27,13 +27,14 @@ function preview(v) {
 
 function renderCard(k, v) {
     const t = inferType(v);
+    const isApiKey = k === 'openrouterApiKey';
     const card = document.createElement('div');
-    card.className = 'card' + (dirty.has(k) ? ' dirty' : '');
+    card.className = 'card' + ((dirty.has(k) || isApiKey) ? '' : '');
     card.dataset.key = k;
 
     const r1 = document.createElement('div'); r1.className = 'row1';
     const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k;
-    const tp = document.createElement('div'); tp.className = 'type'; tp.textContent = t === 'object' ? 'obj' : t;
+    const tp = document.createElement('div'); tp.className = 'type'; tp.textContent = isApiKey ? 'senha' : (t === 'object' ? 'obj' : t);
     r1.append(nm, tp); card.appendChild(r1);
 
     const doc = window.Dashboard && window.Dashboard.configDocs ? window.Dashboard.configDocs[k] : null;
@@ -42,6 +43,44 @@ function renderCard(k, v) {
         desc.style.cssText = 'font-size:11px;color:#9aa6b2;margin:6px 0 4px;line-height:1.4';
         desc.textContent = doc;
         card.appendChild(desc);
+    }
+
+    if (isApiKey) {
+        const inp = document.createElement('input');
+        inp.type = 'password';
+        inp.placeholder = 'sk-or-v1-...';
+        inp.value = v === '••••••••' ? '' : v;
+        inp.style.width = '100%;background:#0e1116;border:1px solid #30363d;border-radius:5px;padding:6px 9px;color:#e6edf3;font-size:12px;font-family:ui-monospace,monospace';
+        inp.addEventListener('input', () => edit(k, inp.value));
+        card.appendChild(inp);
+        const status = document.createElement('div');
+        status.style.cssText = 'font-size:11px;margin-top:4px;font-family:ui-monospace,monospace';
+        status.textContent = v === '••••••••' ? '✅ configurada' : '✗ não definida';
+        status.style.color = v === '••••••••' ? '#3fb950' : '#f85149';
+        card.appendChild(status);
+        const r2 = document.createElement('div'); r2.className = 'row2';
+        r2.style.justifyContent = 'flex-end';
+        const sb = document.createElement('button'); sb.className = 'save'; sb.textContent = '💾';
+        sb.onclick = async () => {
+            const val = cfg.openrouterApiKey || '';
+            if (!val) { toast('Digite a chave', 'err'); return; }
+            const r = await api('/api/admin/env-key', { method: 'POST', body: { key: val } });
+            if (!r.ok) { toast(r.data?.error || 'Erro', 'err'); return; }
+            toast('Chave salva no .env ✓', 'ok');
+            load();
+        };
+        r2.appendChild(sb);
+        const rb = document.createElement('button'); rb.className = 'save'; rb.textContent = '🗑️';
+        rb.style.cssText = 'background:#1f2530;color:#f85149;border:1px solid #f85149;border-radius:5px;padding:5px 9px;font-size:11px;cursor:pointer';
+        rb.onclick = async () => {
+            const r = await api('/api/admin/env-key', { method: 'POST', body: { key: '' } });
+            if (!r.ok) { toast(r.data?.error || 'Erro', 'err'); return; }
+            toast('Chave removida', 'ok');
+            load();
+        };
+        r2.appendChild(rb);
+        card.appendChild(r2);
+        return card;
     }
 
     if (t === 'boolean') {
@@ -99,9 +138,6 @@ async function load() {
     cfg = clone(r.data.config); orig = clone(r.data.config); dirty.clear();
     $('userPill').textContent = '👤 ' + user;
     $('infoLine').textContent = `${r.data.botName || 'Bot'} • v${r.data.version || '?'} • ${r.data.platform || '?'} • restart #${r.data.restarts ?? '?'}`;
-    $('apiKeyStatus').textContent = r.data.hasApiKey ? '✅ configurada' : '✗ não definida';
-    $('apiKeyStatus').style.color = r.data.hasApiKey ? '#3fb950' : '#f85149';
-    $('apiKeyInput').value = '';
     showMain(); rerender();
 }
 async function saveOne(k) {
@@ -341,26 +377,6 @@ $('mgmtConfirm').addEventListener('click', async () => {
             if (!_pendingPkgUpdate) checkUpdates();
         }, 4000);
     }
-});
-
-$('btnSaveApiKey').addEventListener('click', async () => {
-    const val = $('apiKeyInput').value.trim();
-    if (!val) { toast('Digite a chave', 'err'); return; }
-    if (!val.startsWith('sk-or-') && !val.startsWith('sk-')) {
-        toast('Chave inválida (deve começar com sk-or-...)', 'err');
-        return;
-    }
-    const r = await api('/api/admin/env-key', { method: 'POST', body: { key: val } });
-    if (!r.ok) { toast(r.data?.error || 'Erro ao salvar', 'err'); return; }
-    toast('Chave salva no .env ✓', 'ok');
-    await load();
-});
-
-$('btnRemoveApiKey').addEventListener('click', async () => {
-    const r = await api('/api/admin/env-key', { method: 'POST', body: { key: '' } });
-    if (!r.ok) { toast(r.data?.error || 'Erro', 'err'); return; }
-    toast('Chave removida', 'ok');
-    await load();
 });
 
 document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {

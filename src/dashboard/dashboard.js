@@ -320,11 +320,10 @@ function init(config) {
         if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             const cfg = readConfig();
-            const { openrouterApiKey, ...safeConfig } = cfg;
             const stats = readStats();
             return json(res, true, {
-                config: safeConfig,
-                hasApiKey: !!openrouterApiKey,
+                config: { ...cfg, openrouterApiKey: cfg.openrouterApiKey ? '••••••••' : '' },
+                hasApiKey: !!cfg.openrouterApiKey,
                 botName: cfg.botName,
                 version: getVersion(),
                 platform: process.platform,
