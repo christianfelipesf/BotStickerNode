@@ -21,15 +21,21 @@ function escapeDrawtext(val) {
     return val.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
 }
 
-function wrapText(text, maxChars) {
-    const lines = text.split('\n');
+// Estima largura em pixels do texto para a fonte DejaVu Sans
+function textWidth(text, fontSize) {
+    return text.length * fontSize * 0.55;
+}
+
+// Quebra o texto em linhas que cabem na largura máxima
+function wrapToWidth(text, maxW, fontSize) {
+    const inputLines = text.split('\n');
     const result = [];
-    for (const line of lines) {
+    for (const line of inputLines) {
         const words = line.split(' ');
         let cur = '';
         for (const w of words) {
             const test = cur ? cur + ' ' + w : w;
-            if (test.length > maxChars && cur) {
+            if (textWidth(test, fontSize) > maxW && cur) {
                 result.push(cur);
                 cur = w;
             } else {
@@ -46,12 +52,26 @@ async function makeGlowSticker(text) {
     await ensureFont();
 
     const W = 512, H = 512;
-    const maxChars = text.length <= 15 ? 10 : 18;
-    const displayText = wrapText(text, maxChars);
+    const pad = 24;
+    const maxW = W - pad * 2;
+
+    // Encontra o maior tamanho de fonte que cabe na área
+    let fontSize = 72;
+    let displayText = text;
+    for (; fontSize >= 24; fontSize -= 4) {
+        displayText = wrapToWidth(text, maxW, fontSize);
+        const lines = displayText.split('\\n');
+        const textH = lines.length * fontSize * 1.3;
+        const longest = lines.reduce((a, b) => a.length > b.length ? a : b, '');
+        if (textWidth(longest, fontSize) <= maxW && textH <= H - pad * 2) break;
+    }
+    if (fontSize < 24) {
+        fontSize = 24;
+        displayText = wrapToWidth(text, maxW, 24);
+    }
+
     const fontfile = FONT_PATH.replace(/\\/g, '/');
     const escaped = escapeDrawtext(displayText);
-    const lineCount = displayText.split('\\n').length;
-    const fontSize = Math.min(72, Math.max(36, 512 / Math.max(1, lineCount) - 8));
 
     const fps = 10;
     const duration = 4;
