@@ -24,7 +24,18 @@
         // Context info toggles para envio de mensagens
         contextInfo: {
             forwarded: localStorage.getItem('wa_ctx_fwd') === '1',
-            mentionAll: localStorage.getItem('wa_ctx_men') === '1'
+            mentionAll: localStorage.getItem('wa_ctx_men') === '1',
+            ephemeral: localStorage.getItem('wa_ctx_eph') === '1',
+            hasCard: localStorage.getItem('wa_ctx_has') === '1',
+            cardTitle: '',
+            cardBody: '',
+            cardThumb: '',
+            cardUrl: '',
+            hasActionLink: localStorage.getItem('wa_ctx_act') === '1',
+            actionLinkLabel: '',
+            actionLinkUrl: '',
+            hasFwdNewsletter: localStorage.getItem('wa_ctx_fwn') === '1',
+            fwdNewsletterName: ''
         },
 
         // Preferências do usuário (persistidas em localStorage)
@@ -55,9 +66,13 @@
         // Reseta todas as opções de context info
         resetContextInfo: function () {
             for (const k in this.contextInfo) {
-                this.contextInfo[k] = false;
-                const lsKey = 'wa_ctx_' + k.substring(0, 3);
-                localStorage.removeItem(lsKey);
+                if (k === 'cardTitle' || k === 'cardBody' || k === 'cardThumb' || k === 'cardUrl' || k === 'actionLinkLabel' || k === 'actionLinkUrl' || k === 'fwdNewsletterName') {
+                    this.contextInfo[k] = '';
+                } else {
+                    this.contextInfo[k] = false;
+                    const lsKey = 'wa_ctx_' + k.substring(0, 3);
+                    localStorage.removeItem(lsKey);
+                }
             }
         }
     };

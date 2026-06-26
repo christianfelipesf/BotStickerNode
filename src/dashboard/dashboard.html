@@ -53,7 +53,24 @@
             <div class="ctx-bar" id="ctxBar">
                 <button class="ctx-btn" data-ctx="forwarded" onclick="toggleCtx('forwarded')" title="Encaminhada com frequência">🔁 Enc.</button>
                 <button class="ctx-btn" data-ctx="mentionAll" onclick="toggleCtx('mentionAll')" title="Marcar todos os membros">📢 @Todos</button>
+                <button class="ctx-btn" data-ctx="ephemeral" onclick="toggleCtx('ephemeral')" title="Mensagem temporária (24h)">⏳ Temp.</button>
+                <button class="ctx-btn" data-ctx="hasCard" onclick="toggleCtx('hasCard')" title="Card com miniatura (externalAdReply)">📇 Card</button>
+                <button class="ctx-btn" data-ctx="hasActionLink" onclick="toggleCtx('hasActionLink')" title="Botão de ação na mensagem">🔗 Ação</button>
+                <button class="ctx-btn" data-ctx="hasFwdNewsletter" onclick="toggleCtx('hasFwdNewsletter')" title="Simular encaminhamento de canal">📢 Canal</button>
                 <button class="ctx-btn ctx-reset" onclick="resetCtx()" title="Voltar ao padrão (desativar tudo)">🔄 Padrão</button>
+            </div>
+            <div class="card-form" id="cardForm" style="display:none">
+                <input class="card-input" id="cardTitle" placeholder="Título do card" maxlength="72">
+                <input class="card-input" id="cardBody" placeholder="Descrição" maxlength="256">
+                <input class="card-input" id="cardThumb" placeholder="URL da imagem (opcional)">
+                <input class="card-input" id="cardUrl" placeholder="URL do link (opcional)">
+            </div>
+            <div class="card-form" id="actionLinkForm" style="display:none">
+                <input class="card-input" id="actionLinkLabel" placeholder="Texto do botão (ex: Saiba mais)" maxlength="64">
+                <input class="card-input" id="actionLinkUrl" placeholder="URL do link" maxlength="512">
+            </div>
+            <div class="card-form" id="fwdNewsletterForm" style="display:none">
+                <input class="card-input" id="fwdNewsletterName" placeholder="Nome do canal (ex: Notícias Tech)" maxlength="128">
             </div>
             <div class="attachments" id="attachments"></div>
             <div class="cb-input-row">

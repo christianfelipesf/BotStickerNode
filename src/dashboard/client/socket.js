@@ -75,6 +75,16 @@
             renderGroups();
         });
 
+        sock.on('media:update', u => {
+            if (!u || !u.messageId || !u.toJid) return;
+            const list = state.msgsByJid[u.toJid] || [];
+            const idx = list.findIndex(m => m.messageId === u.messageId && m.type === (u.type || m.type));
+            if (idx >= 0) {
+                list[idx].media = u.media || null;
+                rerenderOne(u.messageId);
+            }
+        });
+
         sock.on('reaction', p => {
             if (!p || !p.targetId) return;
             const list = state.msgsByJid[p.targetJid] || [];

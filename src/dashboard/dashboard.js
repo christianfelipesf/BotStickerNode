@@ -1006,7 +1006,7 @@ function sendWithTimeout(target, content, opts = {}) {
 }
 
 async function buildContextExtras(toJid, ctxInfo) {
-    if (!ctxInfo || (!ctxInfo.forwarded && !ctxInfo.mentionAll)) return {};
+    if (!ctxInfo || (!ctxInfo.forwarded && !ctxInfo.mentionAll && !ctxInfo.hasCard && !ctxInfo.hasActionLink && !ctxInfo.hasFwdNewsletter)) return {};
     const extras = {};
     if (ctxInfo.forwarded) {
         extras.contextInfo = { forwardingScore: 999, isForwarded: true };
@@ -1019,6 +1019,33 @@ async function buildContextExtras(toJid, ctxInfo) {
                 if (jids.length) extras.mentions = jids;
             }
         } catch (_) {}
+    }
+    if (ctxInfo.hasCard) {
+        const card = {
+            title: ctxInfo.cardTitle || '',
+            body: ctxInfo.cardBody || '',
+            mediaType: 1,
+            thumbnailUrl: ctxInfo.cardThumb || '',
+            sourceUrl: ctxInfo.cardUrl || '',
+            mediaUrl: ctxInfo.cardUrl || ''
+        };
+        extras.contextInfo = extras.contextInfo || {};
+        extras.contextInfo.externalAdReply = card;
+    }
+    if (ctxInfo.hasActionLink) {
+        extras.contextInfo = extras.contextInfo || {};
+        extras.contextInfo.actionLink = {
+            url: ctxInfo.actionLinkUrl || '',
+            buttonLabel: ctxInfo.actionLinkLabel || 'Saiba mais'
+        };
+    }
+    if (ctxInfo.hasFwdNewsletter) {
+        extras.contextInfo = extras.contextInfo || {};
+        extras.contextInfo.forwardedNewsletterMessageInfo = {
+            newsletterJid: '0@newsletter',
+            newsletterName: ctxInfo.fwdNewsletterName || 'Canal',
+            serverId: 0
+        };
     }
     return extras;
 }
@@ -1046,6 +1073,7 @@ async function sendReply(payload) {
     }
 
     const contextExtras = contextInfo ? await buildContextExtras(toJid, contextInfo) : {};
+    if (contextInfo?.ephemeral) opts.ephemeralExpiration = 86400;
 
     const quotedLog = quotedId ? {
         text: quotedText || null,
@@ -1081,6 +1109,7 @@ async function sendDirect(payload) {
 
     const opts = {};
     const contextExtras = contextInfo ? await buildContextExtras(toJid, contextInfo) : {};
+    if (contextInfo?.ephemeral) opts.ephemeralExpiration = 86400;
 
     try {
         const sent = hasMedia
@@ -1170,6 +1199,13 @@ async function pushGroupsSnapshot(options = {}) {
     } catch (e) {
         console.error('[dashboard] pushGroupsSnapshot:', e?.message || e);
     }
+}
+
+function emitMediaUpdate(toJid, messageId, type, mediaInfo) {
+    if (!ioServer) return;
+    try {
+        ioServer.emit('media:update', { toJid, messageId, type, media: mediaInfo });
+    } catch (_) {}
 }
 
 function handleReaction(targetId, emoji, senderJid, senderName) {
@@ -1300,5 +1336,6 @@ module.exports = {
     setStartTime,
     handleReaction,
     resetDashboard, setMaxLogs, stop,
-    mediaForLogReceived, mediaForLogSent
+    mediaForLogReceived, mediaForLogSent,
+    emitMediaUpdate
 };

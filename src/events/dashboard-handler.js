@@ -10,6 +10,7 @@ const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_
 const safeDashboardCache = (...args) => { try { dashboard.cacheMedia(...args); } catch (_) {} };
 const safeDashboardRememberGroup = (...args) => { try { dashboard.rememberGroupInfo(...args); } catch (_) {} };
 const safeDashboardMediaReceived = (...args) => { try { return dashboard.mediaForLogReceived(...args); } catch (_) { return null; } };
+const safeEmitMediaUpdate = (...args) => { try { dashboard.emitMediaUpdate(...args); } catch (_) {} };
 
 async function handleDashboardLog(sock, m, from, sender, senderName, text, groupMetadata) {
     safeDashboardRememberGroup(from, {
@@ -52,8 +53,10 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
                         if (type === 'document') { info.fileName = inner.fileName || 'documento'; info.mime = mime; info.sizeBytes = inner.fileLength || buffer.length; }
                         try { safeDashboardCache(msgId, { bufferBase64: buffer.toString('base64'), mime, type, fileName: inner.fileName || null, text: inner.caption || null, fromJid: from }); } catch (_) {}
                         updateDashboardLogMedia(from, msgId, type === 'image' || type === 'video' || type === 'audio' && !!inner.viewOnce ? 'viewonce' : 'chat', JSON.stringify(info));
+                        safeEmitMediaUpdate(from, msgId, type === 'image' || type === 'video' || type === 'audio' && !!inner.viewOnce ? 'viewonce' : 'chat', info);
                     } else {
                         updateDashboardLogMedia(from, msgId, 'chat', JSON.stringify({ type, url: null }));
+                        safeEmitMediaUpdate(from, msgId, 'chat', { type, url: null });
                     }
                 } catch (e) {
                     console.error('Erro ao baixar mídia em background:', e.message);

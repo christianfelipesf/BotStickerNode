@@ -100,6 +100,12 @@
             const key = btn.dataset.ctx;
             btn.classList.toggle('active', !!state.contextInfo[key]);
         }
+        const cf = D.refs.cardForm;
+        if (cf) cf.style.display = state.contextInfo.hasCard ? 'flex' : 'none';
+        const af = D.refs.actionLinkForm;
+        if (af) af.style.display = state.contextInfo.hasActionLink ? 'flex' : 'none';
+        const nf = D.refs.fwdNewsletterForm;
+        if (nf) nf.style.display = state.contextInfo.hasFwdNewsletter ? 'flex' : 'none';
     }
 
     function toggleCtx(key) {
@@ -117,6 +123,30 @@
         const out = {};
         if (ctx.forwarded) out.forwarded = true;
         if (ctx.mentionAll) out.mentionAll = true;
+        if (ctx.ephemeral) out.ephemeral = true;
+        if (ctx.hasCard) {
+            out.hasCard = true;
+            const title = (D.refs.cardTitle ? D.refs.cardTitle.value : '').trim();
+            const body = (D.refs.cardBody ? D.refs.cardBody.value : '').trim();
+            const thumb = (D.refs.cardThumb ? D.refs.cardThumb.value : '').trim();
+            const url = (D.refs.cardUrl ? D.refs.cardUrl.value : '').trim();
+            if (title) out.cardTitle = title;
+            if (body) out.cardBody = body;
+            if (thumb) out.cardThumb = thumb;
+            if (url) out.cardUrl = url;
+        }
+        if (ctx.hasActionLink) {
+            out.hasActionLink = true;
+            const label = (D.refs.actionLinkLabel ? D.refs.actionLinkLabel.value : '').trim();
+            const url = (D.refs.actionLinkUrl ? D.refs.actionLinkUrl.value : '').trim();
+            if (label) out.actionLinkLabel = label;
+            if (url) out.actionLinkUrl = url;
+        }
+        if (ctx.hasFwdNewsletter) {
+            out.hasFwdNewsletter = true;
+            const name = (D.refs.fwdNewsletterName ? D.refs.fwdNewsletterName.value : '').trim();
+            if (name) out.fwdNewsletterName = name;
+        }
         return out;
     }
 
@@ -140,7 +170,7 @@
                   }
                 : { toJid: tj, text: text || '' };
             const ctxOpts = getActiveCtxOptions();
-            if (ctxOpts.forwarded || ctxOpts.mentionAll) body.contextInfo = ctxOpts;
+            if (Object.keys(ctxOpts).length) body.contextInfo = ctxOpts;
             if (state.pendingAttachments.length) body.media = state.pendingAttachments[0];
             const r = await fetch(url, {
                 method: 'POST',
