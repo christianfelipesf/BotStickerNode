@@ -73,6 +73,7 @@
                 soundError: $('sound-error'),
                 notifBtn: $('notif-btn'),
                 pushBtn: $('push-btn'),
+                ctxBar: $('ctxBar'),
                 replyBar: $('replyBar'),
                 replyName: $('replyName'),
                 replyText: $('replyText'),

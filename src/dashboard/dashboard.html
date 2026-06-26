@@ -50,6 +50,11 @@
                 </div>
                 <button class="rb-close" onclick="clearReply()" aria-label="Cancelar resposta">✕</button>
             </div>
+            <div class="ctx-bar" id="ctxBar">
+                <button class="ctx-btn" data-ctx="forwarded" onclick="toggleCtx('forwarded')" title="Encaminhada com frequência">🔁 Enc.</button>
+                <button class="ctx-btn" data-ctx="mentionAll" onclick="toggleCtx('mentionAll')" title="Marcar todos os membros">📢 @Todos</button>
+                <button class="ctx-btn ctx-reset" onclick="resetCtx()" title="Voltar ao padrão (desativar tudo)">🔄 Padrão</button>
+            </div>
             <div class="attachments" id="attachments"></div>
             <div class="cb-input-row">
                 <button class="icon-btn" id="attachBtn" title="Anexar mídia" aria-label="Anexar">＋</button>

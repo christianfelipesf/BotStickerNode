@@ -944,19 +944,19 @@ function mediaForLogRef(media, messageId) {
     return { type: sendType, url: `data:${mime};base64,${media.dataBase64}`, mime, fileName: media.fileName || null };
 }
 
-async function sendMediaMessage(toJid, text, media, opts = {}) {
+async function sendMediaMessage(toJid, text, media, opts = {}, contextExtras = {}) {
     const buf = Buffer.from(media.dataBase64, 'base64');
     const caption = text ? String(text).slice(0, 1024) : undefined;
     const sendType = media.sendType || media.type;
 
     if (sendType === 'image') {
-        return sockRef.sendMessage(toJid, { image: buf, mimetype: media.mime || 'image/jpeg', caption }, opts);
+        return sockRef.sendMessage(toJid, { image: buf, mimetype: media.mime || 'image/jpeg', caption, ...contextExtras }, opts);
     }
     if (sendType === 'video') {
-        return sockRef.sendMessage(toJid, { video: buf, mimetype: media.mime || 'video/mp4', caption, gifPlayback: !!media.gif }, opts);
+        return sockRef.sendMessage(toJid, { video: buf, mimetype: media.mime || 'video/mp4', caption, gifPlayback: !!media.gif, ...contextExtras }, opts);
     }
     if (sendType === 'audio' || sendType === 'voice') {
-        return sockRef.sendMessage(toJid, { audio: buf, mimetype: media.mime || 'audio/mp4', ptt: sendType === 'voice' }, opts);
+        return sockRef.sendMessage(toJid, { audio: buf, mimetype: media.mime || 'audio/mp4', ptt: sendType === 'voice', ...contextExtras }, opts);
     }
     if (sendType === 'sticker') {
         const mime = media.mime || 'image/webp';
@@ -964,10 +964,10 @@ async function sendMediaMessage(toJid, text, media, opts = {}) {
             ? buf
             : await mediaToSticker(buf, mime, 'Dashboard', 'Bot');
         if (stickerBuffer.length > 1024 * 1024) return { ok: false, error: 'Sticker muito grande (>1MB)' };
-        return sockRef.sendMessage(toJid, { sticker: stickerBuffer }, opts);
+        return sockRef.sendMessage(toJid, { sticker: stickerBuffer, ...contextExtras }, opts);
     }
     if (sendType === 'document') {
-        return sockRef.sendMessage(toJid, { document: buf, mimetype: media.mime || 'application/octet-stream', fileName: media.fileName || 'arquivo', caption }, opts);
+        return sockRef.sendMessage(toJid, { document: buf, mimetype: media.mime || 'application/octet-stream', fileName: media.fileName || 'arquivo', caption, ...contextExtras }, opts);
     }
     return { ok: false, error: 'Tipo de midia nao suportado: ' + sendType };
 }
@@ -1005,9 +1005,27 @@ function sendWithTimeout(target, content, opts = {}) {
     });
 }
 
+async function buildContextExtras(toJid, ctxInfo) {
+    if (!ctxInfo || (!ctxInfo.forwarded && !ctxInfo.mentionAll)) return {};
+    const extras = {};
+    if (ctxInfo.forwarded) {
+        extras.contextInfo = { forwardingScore: 999, isForwarded: true };
+    }
+    if (ctxInfo.mentionAll && sockRef) {
+        try {
+            const meta = await sockRef.groupMetadata(toJid);
+            if (meta && Array.isArray(meta.participants)) {
+                const jids = meta.participants.map(p => p.id).filter(Boolean);
+                if (jids.length) extras.mentions = jids;
+            }
+        } catch (_) {}
+    }
+    return extras;
+}
+
 async function sendReply(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
-    const { toJid, text, quotedId, quotedParticipant, quotedFromMe, quotedText, media } = payload || {};
+    const { toJid, text, quotedId, quotedParticipant, quotedFromMe, quotedText, media, contextInfo } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
     if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
@@ -1027,6 +1045,8 @@ async function sendReply(payload) {
         }
     }
 
+    const contextExtras = contextInfo ? await buildContextExtras(toJid, contextInfo) : {};
+
     const quotedLog = quotedId ? {
         text: quotedText || null,
         hasMedia: !!getCachedMedia(quotedId),
@@ -1037,8 +1057,8 @@ async function sendReply(payload) {
 
     try {
         const sent = hasMedia
-            ? await sendMediaMessage(toJid, hasText ? text : '', media, opts)
-            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096) }, opts);
+            ? await sendMediaMessage(toJid, hasText ? text : '', media, opts, contextExtras)
+            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096), ...contextExtras }, opts);
         if (sent?.ok === false) return sent;
         const sentId = sent && sent.key && sent.key.id;
         await logSentMessage(toJid, hasText ? text : '', hasMedia ? media : null, sentId, quotedLog);
@@ -1051,7 +1071,7 @@ async function sendReply(payload) {
 
 async function sendDirect(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
-    const { toJid, text, media } = payload || {};
+    const { toJid, text, media, contextInfo } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
     if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
@@ -1059,10 +1079,13 @@ async function sendDirect(payload) {
     const hasMedia = !!(media && media.dataBase64 && (media.type || media.sendType));
     if (!hasText && !hasMedia) return { ok: false, error: 'Mensagem vazia' };
 
+    const opts = {};
+    const contextExtras = contextInfo ? await buildContextExtras(toJid, contextInfo) : {};
+
     try {
         const sent = hasMedia
-            ? await sendMediaMessage(toJid, hasText ? text : '', media)
-            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096) });
+            ? await sendMediaMessage(toJid, hasText ? text : '', media, opts, contextExtras)
+            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096), ...contextExtras }, opts);
         if (sent?.ok === false) return sent;
         const sentId = sent && sent.key && sent.key.id;
         await logSentMessage(toJid, hasText ? text : '', hasMedia ? media : null, sentId);

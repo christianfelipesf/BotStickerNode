@@ -21,6 +21,8 @@
         window.clearReply = D.reply.clearReply;
         window.openReply = D.reply.openReply;
         window.sendCurrent = D.reply.sendCurrent;
+        window.toggleCtx = D.reply.toggleCtx;
+        window.resetCtx = D.reply.resetCtx;
 
         // Estado inicial
         D.ui.setScreen('chats');

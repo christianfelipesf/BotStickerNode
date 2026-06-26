@@ -92,6 +92,34 @@
         el.style.height = Math.min(el.scrollHeight, 120) + 'px';
     }
 
+    function syncCtx() {
+        const bar = D.refs.ctxBar;
+        if (!bar) return;
+        const btns = bar.querySelectorAll('.ctx-btn[data-ctx]');
+        for (const btn of btns) {
+            const key = btn.dataset.ctx;
+            btn.classList.toggle('active', !!state.contextInfo[key]);
+        }
+    }
+
+    function toggleCtx(key) {
+        state.toggleContextInfo(key);
+        syncCtx();
+    }
+
+    function resetCtx() {
+        state.resetContextInfo();
+        syncCtx();
+    }
+
+    function getActiveCtxOptions() {
+        const ctx = state.contextInfo || {};
+        const out = {};
+        if (ctx.forwarded) out.forwarded = true;
+        if (ctx.mentionAll) out.mentionAll = true;
+        return out;
+    }
+
     async function sendCurrent() {
         if (!state.activeJid) return toast('Selecione um grupo');
         const tj = state.currentReply ? state.currentReply.toJid : state.activeJid;
@@ -111,6 +139,8 @@
                     quotedText: state.currentReply.preview || ''
                   }
                 : { toJid: tj, text: text || '' };
+            const ctxOpts = getActiveCtxOptions();
+            if (ctxOpts.forwarded || ctxOpts.mentionAll) body.contextInfo = ctxOpts;
             if (state.pendingAttachments.length) body.media = state.pendingAttachments[0];
             const r = await fetch(url, {
                 method: 'POST',
@@ -149,6 +179,7 @@
                 }
             });
         }
+        syncCtx();
     }
 
     D.reply = {
@@ -156,6 +187,9 @@
         openReply,
         setReply,
         clearReply,
-        sendCurrent
+        sendCurrent,
+        toggleCtx,
+        resetCtx,
+        syncCtx
     };
 })(window.Dashboard = window.Dashboard || {});
