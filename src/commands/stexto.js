@@ -3,7 +3,6 @@ const path = require('path');
 const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
-const { Jimp } = require('jimp');
 const { addMetadata } = require('../database/sticker');
 const { tempDir } = require('../database/db');
 
@@ -67,12 +66,6 @@ async function makeGlowSticker(text) {
         displayText = wrapToWidth(text, maxW, 24);
     }
 
-    // Fundo transparente via PNG com Jimp
-    const bgFile = path.join(tempDir, `stext_bg_${id}.png`);
-    const bg = new Jimp(W, H, 0x00000000);
-    const bgBuf = await bg.getBuffer('image/png');
-    fs.writeFileSync(bgFile, bgBuf);
-
     // Texto em arquivo para evitar escaping de \n
     const textFile = path.join(tempDir, `stext_txt_${id}.txt`);
     fs.writeFileSync(textFile, displayText, 'utf8');
@@ -84,11 +77,12 @@ async function makeGlowSticker(text) {
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
         ffmpeg()
-            .input(bgFile)
-            .inputOptions(['-loop', '1', '-framerate', String(fps)])
+            .input(`nullsrc=s=${W}x${H}:r=${fps}:d=${duration}`)
+            .inputFormat('lavfi')
             .videoFilter([
                 'format=yuva420p',
-                `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:bordercolor=#FF3366`,
+                'colorchannelmixer=aa=0',
+                `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:bordercolor=#FF3366:alpha=1`,
                 'hue=h=n*24'
             ].join(','))
             .outputOptions([
@@ -97,12 +91,10 @@ async function makeGlowSticker(text) {
                 '-preset', 'picture',
                 '-pix_fmt', 'yuva420p',
                 '-loop', '0',
-                '-an',
-                '-t', String(duration)
+                '-an'
             ])
             .on('end', () => {
                 try { fs.unlinkSync(textFile); } catch {}
-                try { fs.unlinkSync(bgFile); } catch {}
                 resolve();
             })
             .on('error', reject)
