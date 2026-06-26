@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Jimp } = require('jimp');
+const { loadFont, FONT_SANS_16_WHITE, FONT_SANS_32_WHITE, FONT_SANS_64_WHITE } = require('@jimp/js-fonts');
+const { measureText, measureTextHeight } = require('@jimp/plugin-print');
 const ffmpeg = require('fluent-ffmpeg');
 const { mediaToSticker } = require('../database/sticker');
 const { tempDir } = require('../database/db');
@@ -12,16 +14,11 @@ async function makeAnimatedTextSticker(text) {
     fs.mkdirSync(frameDir, { recursive: true });
 
     const W = 512, H = 512;
-    const fontSizes = [
-        { max: 10, key: Jimp.FONT_SANS_64_WHITE, label: 64 },
-        { max: 25, key: Jimp.FONT_SANS_32_WHITE, label: 32 },
-        { max: Infinity, key: Jimp.FONT_SANS_16_WHITE, label: 16 }
-    ];
-    const size = fontSizes.find(s => text.length <= s.max);
-    const font = await Jimp.loadFont(size.key);
+    const fontKey = text.length <= 10 ? FONT_SANS_64_WHITE : text.length <= 25 ? FONT_SANS_32_WHITE : FONT_SANS_16_WHITE;
+    const font = await loadFont(fontKey);
 
     const maxW = W - 60;
-    const textH = Jimp.measureTextHeight(font, text, maxW);
+    const textH = measureTextHeight(font, text, maxW);
     const textY = Math.max(10, (H - textH) / 2);
 
     const fps = 10;
@@ -37,7 +34,7 @@ async function makeAnimatedTextSticker(text) {
             ? text.substring(0, Math.min((i + 1) * charsPerStep, text.length))
             : text;
 
-        const lineW = Jimp.measureText(font, show);
+        const lineW = measureText(font, show);
         const drawX = (W - Math.min(lineW, maxW)) / 2;
         img.print({ font, x: drawX, y: textY, text: show, maxWidth: maxW });
 

@@ -25,6 +25,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fluent-ffmpeg": "^2.1.2",
+    "@jimp/js-fonts": "^1.6.1",
     "jimp": "^1.6.1",
     "node-webpmux": "^3.2.1",
     "p-queue": "^9.3.0",
