@@ -1,6 +1,6 @@
 const {
     getMediaMessage, getContextInfo, getMessageText,
-    insertDashboardLog, isDashboardEnabled,
+    insertDashboardLog, isDashboardEnabled, isViewOnce,
     groupMetadataCached
 } = require('../database/utils');
 
@@ -22,7 +22,7 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
 
     const mediaMsg = getMediaMessage(m.message);
     let mediaInfo = null;
-    let hidden = false;
+    let hidden = isViewOnce(m.message);
     let ephemeral = false;
 
     if (mediaMsg) {
@@ -52,8 +52,9 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
                         const info = persisted || { type, url: `data:${mime};base64,${buffer.toString('base64')}` };
                         if (type === 'document') { info.fileName = inner.fileName || 'documento'; info.mime = mime; info.sizeBytes = inner.fileLength || buffer.length; }
                         try { safeDashboardCache(msgId, { bufferBase64: buffer.toString('base64'), mime, type, fileName: inner.fileName || null, text: inner.caption || null, fromJid: from }); } catch (_) {}
-                        updateDashboardLogMedia(from, msgId, type === 'image' || type === 'video' || type === 'audio' && !!inner.viewOnce ? 'viewonce' : 'chat', JSON.stringify(info));
-                        safeEmitMediaUpdate(from, msgId, type === 'image' || type === 'video' || type === 'audio' && !!inner.viewOnce ? 'viewonce' : 'chat', info);
+                        const updateType = isViewOnce(m.message) ? 'viewonce' : 'chat';
+                        updateDashboardLogMedia(from, msgId, updateType, JSON.stringify(info));
+                        safeEmitMediaUpdate(from, msgId, updateType, info);
                     } else {
                         updateDashboardLogMedia(from, msgId, 'chat', JSON.stringify({ type, url: null }));
                         safeEmitMediaUpdate(from, msgId, 'chat', { type, url: null });
