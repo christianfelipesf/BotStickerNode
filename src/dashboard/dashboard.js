@@ -1027,7 +1027,8 @@ async function buildContextExtras(toJid, ctxInfo) {
             mediaType: 1,
             thumbnailUrl: ctxInfo.cardThumb || '',
             sourceUrl: ctxInfo.cardUrl || '',
-            mediaUrl: ctxInfo.cardUrl || ''
+            mediaUrl: ctxInfo.cardUrl || '',
+            renderLargerThumbnail: true
         };
         extras.contextInfo = extras.contextInfo || {};
         extras.contextInfo.externalAdReply = card;
@@ -1036,15 +1037,17 @@ async function buildContextExtras(toJid, ctxInfo) {
         extras.contextInfo = extras.contextInfo || {};
         extras.contextInfo.actionLink = {
             url: ctxInfo.actionLinkUrl || '',
-            buttonLabel: ctxInfo.actionLinkLabel || 'Saiba mais'
+            buttonTitle: ctxInfo.actionLinkLabel || 'Saiba mais'
         };
     }
     if (ctxInfo.hasFwdNewsletter) {
         extras.contextInfo = extras.contextInfo || {};
+        extras.contextInfo.isForwarded = true;
         extras.contextInfo.forwardedNewsletterMessageInfo = {
             newsletterJid: '0@newsletter',
             newsletterName: ctxInfo.fwdNewsletterName || 'Canal',
-            serverId: 0
+            serverMessageId: 0,
+            contentType: 1
         };
     }
     return extras;
