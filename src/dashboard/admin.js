@@ -364,28 +364,37 @@ document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
     btn.addEventListener('click', () => ask(btn.dataset.mgmt));
 });
 
-// === Logs do terminal ===
+// === Terminal style logs ===
+const LOG_COLORS = { error: '#FF5555', warn: '#FFAA00', info: '#55CCCC', log: '#55FF55' };
+const LOG_ICONS = { error: '✖', warn: '⚠', info: 'ℹ', log: '✓' };
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 async function loadLogs() {
     const r = await api('/api/admin/logs');
     if (!r.ok) return;
     const logs = r.data?.logs || [];
     const c = $('logsContainer');
     const cnt = $('logCount');
-    cnt.textContent = logs.length + ' entradas';
+    cnt.textContent = logs.length + (logs.length === 1 ? ' entrada' : ' entradas');
     if (!logs.length) {
-        c.innerHTML = '<div class="empty" style="padding:20px">Nenhum log.</div>';
+        c.innerHTML = '<div style="color:#888;padding:20px">Nenhum log no buffer.</div><div style="color:#555">PS> </div>';
         return;
     }
-    c.innerHTML = logs.map(e => {
-        const t = document.createElement('div');
-        const cls = e.level === 'error' ? 'err' : e.level === 'warn' ? '' : '';
-        const color = e.level === 'error' ? '#f85149' : e.level === 'warn' ? '#d29922' : '#9aa6b2';
-        t.innerHTML = `<span style="color:#6e7681">[${e.time}]</span> <span style="color:${color}">${e.level.toUpperCase()}</span> ${e.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}`;
-        return t.outerHTML;
-    }).join('<br/>');
+    const ps = c.querySelector('.ps-prompt');
+    const prefix = logs.map(e => {
+        const cl = LOG_COLORS[e.level] || '#ccc';
+        const ic = LOG_ICONS[e.level] || '·';
+        return `<span style="color:#666">[${e.time}]</span> <span style="color:${cl}">${ic}</span> ${escHtml(e.text)}`;
+    }).join('\n');
+    const timestamp = new Date().toLocaleTimeString();
+    c.innerHTML = `<div style="white-space:pre-wrap;word-break:break-word">${prefix}</div><div class="ps-prompt" style="color:#55FF55;margin-top:2px">PS C:\\bot> <span style="color:#ccc;animation:blink 1s step-end infinite">▌</span></div>`;
     c.scrollTop = c.scrollHeight;
 }
 $('btnRefreshLogs').addEventListener('click', loadLogs);
+let logsTimer = setInterval(loadLogs, 3000);
+$('logsContainer').addEventListener('mouseenter', () => { clearInterval(logsTimer); $('logAutoStatus').textContent = '⏸ pausado'; });
+$('logsContainer').addEventListener('mouseleave', () => { logsTimer = setInterval(loadLogs, 3000); $('logAutoStatus').textContent = '⏵ auto'; });
 
 // Verificar atualizações ao carregar a página
 load().then(() => { checkUpdates(); loadLogs(); });

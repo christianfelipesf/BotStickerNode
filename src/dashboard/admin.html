@@ -92,6 +92,7 @@
   .mgmt-status.err { color: #f85149; }
   .badge { display: inline-flex; align-items: center; justify-content: center; background: #d29922; color: #fff; font-size: 10px; font-weight: 700; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; margin-left: 2px; vertical-align: middle; line-height: 1; }
   .badge.hidden { display: none; }
+  @keyframes blink { 50% { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -143,12 +144,13 @@
 
     <div style="margin-top:24px;border-top:1px solid #30363d;padding-top:16px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <span style="font-size:13px;font-weight:600">📋 Últimos logs</span>
+        <span style="font-size:13px;font-weight:600">⚡ Terminal</span>
         <button id="btnRefreshLogs" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button>
-        <span id="logCount" style="font-size:10px;color:#9aa6b2">—</span>
+        <span id="logCount" style="font-size:10px;color:#888">—</span>
+        <span style="font-size:10px;color:#555" id="logAutoStatus">⏵ auto</span>
       </div>
-      <div id="logsContainer" style="background:#0e1116;border:1px solid #30363d;border-radius:6px;padding:8px;max-height:400px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;line-height:1.6">
-        <div class="empty" style="padding:20px">Carregando…</div>
+      <div id="logsContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:10px 12px;max-height:360px;overflow:auto;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.5;color:#ccc">
+        <div class="empty" style="padding:20px;color:#888">Carregando…</div>
       </div>
     </div>
   </div>
