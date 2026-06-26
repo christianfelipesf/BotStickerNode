@@ -66,6 +66,28 @@ function serialize(args) {
     }
 }
 
+// Buffer de logs para evitar fs.appendFileSync por chamada
+const _logBuffer = [];
+const _LOG_FLUSH_INTERVAL = 3000;
+
+function _flushLogBuffer() {
+    if (!_logBuffer.length) return;
+    const lines = _logBuffer.splice(0);
+    try {
+        const now = new Date();
+        fs.appendFileSync(getSessionLogFile(now), lines.join(''));
+    } catch (_) {}
+}
+
+let _logFlushTimer = null;
+function _scheduleLogFlush() {
+    if (_logFlushTimer) return;
+    _logFlushTimer = setTimeout(() => {
+        _logFlushTimer = null;
+        _flushLogBuffer();
+    }, _LOG_FLUSH_INTERVAL);
+}
+
 function push(level, args) {
     const text = serialize(args);
     if (!text) return;
@@ -79,11 +101,12 @@ function push(level, args) {
     };
     ring.push(entry);
     if (ring.length > RING_MAX) ring.shift();
-    try {
-        const line = `[${tsLabel(now)}] [${level.toUpperCase()}] ${text}\n`;
-        fs.appendFileSync(getSessionLogFile(now), line);
-    } catch (_) {}
+    _logBuffer.push(`[${tsLabel(now)}] [${level.toUpperCase()}] ${text}\n`);
+    if (_logBuffer.length >= 20) { _flushLogBuffer(); } else { _scheduleLogFlush(); }
 }
+
+// Flush no exit
+process.on('beforeExit', _flushLogBuffer);
 
 function getLast(n = 15) {
     const limit = Math.max(1, Math.min(RING_MAX, Number(n) || 15));
