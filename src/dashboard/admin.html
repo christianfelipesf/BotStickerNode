@@ -134,6 +134,19 @@
       <span class="mgmt-status" id="mgmtStatus">pronto</span>
     </div>
     <div class="info-line" id="infoLine">—</div>
+
+    <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600">⚡ Terminal</span>
+        <button id="btnRefreshLogs" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer">↻</button>
+        <span id="logCount" style="font-size:10px;color:#888">—</span>
+        <span style="font-size:10px;color:#555" id="logAutoStatus">⏵ auto</span>
+      </div>
+      <div id="logsContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:10px 12px;max-height:320px;overflow:auto;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.5;color:#ccc">
+        <div class="empty" style="padding:20px;color:#888">Carregando…</div>
+      </div>
+    </div>
+
     <div class="toolbar">
       <input type="text" class="search" id="searchInput" placeholder="🔎 Filtrar..." />
       <button id="btnReload">↻</button>
@@ -141,18 +154,6 @@
       <button id="btnDiscard" class="danger">✗</button>
     </div>
     <div class="grid" id="grid"></div>
-
-    <div style="margin-top:24px;border-top:1px solid #30363d;padding-top:16px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <span style="font-size:13px;font-weight:600">⚡ Terminal</span>
-        <button id="btnRefreshLogs" style="background:#1f2530;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button>
-        <span id="logCount" style="font-size:10px;color:#888">—</span>
-        <span style="font-size:10px;color:#555" id="logAutoStatus">⏵ auto</span>
-      </div>
-      <div id="logsContainer" style="background:#0C0C0C;border:1px solid #333;border-radius:4px;padding:10px 12px;max-height:360px;overflow:auto;font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;line-height:1.5;color:#ccc">
-        <div class="empty" style="padding:20px;color:#888">Carregando…</div>
-      </div>
-    </div>
   </div>
 </div>
 

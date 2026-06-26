@@ -71,8 +71,8 @@ async function makeGlowSticker(text) {
     fs.writeFileSync(textFile, displayText, 'utf8');
 
     const fontfile = FONT_PATH.replace(/\\/g, '/');
-    const fps = 10;
-    const duration = 4;
+    const fps = 15;
+    const duration = 2;
     const rainbow = ['#FF0055','#FF6600','#FFCC00','#00FF66','#0066FF','#6633FF','#FF00AA'];
     const segLen = duration / rainbow.length;
     const filters = rainbow.map((c, i) => {
