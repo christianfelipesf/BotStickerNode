@@ -1,17 +1,13 @@
-const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const pino = require('pino');
 const { getModel } = require('../services/ai');
-const dashboard = require('../dashboard/dashboard');
 const cooldown = require('../services/cooldown');
 const trace = require('../services/trace');
 const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('./dashboard-handler');
 const { enforceMuteAndAntilink } = require('./enforcement');
 
 const {
-    isActiveGroup, isPartialActive, activatePartial, deactivatePartial, getPartialWaitMs,
-    getGroupData, setGroupData,
+    isActiveGroup, isPartialActive, getPartialWaitMs,
     incrementCommand, formatUptime,
-    readConfig, saveMessage, getChatHistory,
+    readConfig, saveMessage,
     getBotName, react, getMessageText,
     isDashboardEnabled, groupMetadataCached, updateMemberActivity
 } = require('../database/utils');
@@ -135,7 +131,7 @@ module.exports = {
             if (!m.message || processedMessages.has(m.key.id)) return;
 
             const messageTime = m.messageTimestamp?.low || m.messageTimestamp || 0;
-            if (messageTime < Math.floor(startTime / 1000) + 10) return;
+            if (messageTime < Math.floor(startTime / 1000) + 2) return;
 
             processedMessages.add(m.key.id);
 
@@ -161,27 +157,28 @@ module.exports = {
             // === Protocol messages (deleted, etc) ===
             if (await handleProtocolMessage(sock, m, from, sender, senderName)) return;
 
-            const isBotActive = !isGroup || isActiveGroup(from);
+            const botActive = !isGroup || isActiveGroup(from);
+            const dashOn = isGroup && isDashboardEnabled(from);
 
             // === Mute & Antilink enforcement ===
-            if (isGroup && isBotActive) {
+            if (isGroup && botActive) {
                 const enforcement = await enforceMuteAndAntilink(sock, m, from, sender, text);
                 if (enforcement === 'muted' || enforcement === 'antilink') return;
             }
 
-            // === Dashboard logging ===
-            if (isGroup && isDashboardEnabled(from)) {
+            // === Dashboard logging (mídia baixada em background via fila) ===
+            if (dashOn) {
                 const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
                 await handleDashboardLog(sock, m, from, sender, senderName, text, groupMetadata);
             }
 
             // === Save message for !resumir ===
-            if (isGroup && isActiveGroup(from) && text && !text.startsWith(config.prefix)) {
+            if (isGroup && botActive && text && !text.startsWith(config.prefix)) {
                 saveMessage(from, m.pushName || senderName, text);
             }
 
-            // === Activity tracking ===
-            if (isBotActive && isGroup) {
+            // === Activity tracking (bufferizado em memória, flush periódico) ===
+            if (botActive && isGroup) {
                 updateMemberActivity(from, sender, senderName);
             }
 
@@ -206,8 +203,9 @@ module.exports = {
 
             // === Activation control commands always work ===
             const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel'];
-            if (isGroup && !isActiveGroup(from) && !activationControlCmds.includes(cmd.name)) {
-                if (!isPartialActive(from)) return;
+            const isPartActive = isGroup && isPartialActive(from);
+            if (isGroup && !botActive && !isPartActive && !activationControlCmds.includes(cmd.name)) {
+                return;
             }
 
             // === Cooldown ===
@@ -221,7 +219,7 @@ module.exports = {
             }
 
             // === Partial activation ===
-            if (isGroup && isPartialActive(from)) {
+            if (isPartActive) {
                 if (PARTIAL_BYPASS_COMMANDS.has(cmd.name)) {
                     // bypass
                 } else if (!_isPartialAllowed(cmd)) {
@@ -254,7 +252,7 @@ module.exports = {
                 ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
             });
 
-            const botActiveInGroup = isGroup && (isActiveGroup(from) || isPartialActive(from));
+            const botActiveInGroup = botActive || isPartActive;
             if (botActiveInGroup || !isGroup) {
                 safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
@@ -270,56 +268,44 @@ module.exports = {
                 ai: require('../services/ai')
             };
 
-            // === Tracing setup ===
+            // === Tracing setup (leve, sem monkey-patch de console) ===
             const t0 = Date.now();
-            const stepStart = t0;
             let stepN = 0;
-            const fmtTs = () => new Date().toLocaleTimeString('pt-BR', { hour12: false });
             const traceTag = `cmd.!${commandName}`;
-            const traceLog = (label, detail) => {
-                const now = Date.now();
-                const delta = now - stepStart;
-                const total = now - t0;
-                stepN += 1;
-                console.log(`   └─ [${fmtTs()}] [+${String(delta).padStart(5,' ')}ms / total ${total}ms] ${traceTag} #${stepN} ${label}${detail ? ` — ${detail}` : ''}`);
-            };
+            let _traceCapture = false;
             const origLog = console.log.bind(console);
-            const origInfo = console.info?.bind(console);
-            const origWarn = console.warn?.bind(console);
-
             console.log = (...a) => {
-                try {
-                    const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
-                    if (msg && !msg.includes('[INTERAÇÃO]') && !msg.startsWith('   └─')) { traceLog('log', msg); return; }
-                } catch (_) {}
-                return origLog(...a);
+                if (!_traceCapture) return origLog(...a);
+                const now = Date.now();
+                const delta = now - t0;
+                stepN += 1;
+                const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
+                origLog(`   └─ [${new Date().toLocaleTimeString('pt-BR', { hour12: false })}] [+${String(delta).padStart(5,' ')}ms / total ${now - t0}ms] ${traceTag} #${stepN}${msg ? ` ${msg}` : ''}`);
             };
-            if (origInfo) console.info = (...a) => { try { traceLog('info', a.map(x => typeof x === 'string' ? x : String(x)).join(' ')); } catch (_) {} };
-            if (origWarn) console.warn = (...a) => { try { traceLog('warn', a.map(x => typeof x === 'string' ? x : String(x)).join(' ')); } catch (_) {} };
 
-            traceLog('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
+            _traceCapture = true;
+            console.log('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
             // === Command execution ===
             try {
                 const result = await cmd.execute(sock, m, context);
                 if (result !== undefined) lastBotResponse = result;
                 const elapsed = Date.now() - t0;
-                traceLog('fim', `ok em ${elapsed}ms`);
+                console.log('fim', `ok em ${elapsed}ms`);
                 if (botActiveInGroup && elapsed >= 800) {
                     safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
                 console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
-                traceLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
+                console.log('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
                 if (botActiveInGroup || !isGroup) {
                     safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
                 throw cmdErr;
             } finally {
+                _traceCapture = false;
                 console.log = origLog;
-                if (origInfo) console.info = origInfo;
-                if (origWarn) console.warn = origWarn;
             }
 
         } catch (e) {

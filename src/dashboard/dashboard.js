@@ -700,8 +700,13 @@ function apiHandler(fn) {
             const r = await fn(req.body || {});
             res.status(r && r.ok ? 200 : 400).json(r);
         } catch (e) {
-            console.error('[dashboard] api error:', e?.message || e);
-            res.status(500).json({ ok: false, error: 'Erro interno' });
+            console.error('[dashboard] api error:', e?.stack || e?.message || e);
+            const msg = e?.message || 'Erro interno';
+            if (msg.includes('Timeout')) {
+                res.status(504).json({ ok: false, error: msg });
+            } else {
+                res.status(500).json({ ok: false, error: msg });
+            }
         }
     };
 }
@@ -807,7 +812,7 @@ function mediaForLog(media) {
     if (!media || !media.dataBase64) return null;
     const sendType = media.sendType || media.type || 'document';
     const mime = media.mime || (sendType === 'sticker' ? 'image/webp' : 'application/octet-stream');
-    if (!['image', 'video', 'audio', 'sticker'].includes(sendType)) return null;
+    if (!['image', 'video', 'audio', 'voice', 'sticker'].includes(sendType)) return null;
     return { type: sendType, url: `data:${mime};base64,${media.dataBase64}` };
 }
 
@@ -815,7 +820,7 @@ function mediaForLogSent(media, messageId) {
     if (!media || !media.dataBase64) return null;
     const sendType = media.sendType || media.type || 'document';
     const mime = media.mime || (sendType === 'sticker' ? 'image/webp' : 'application/octet-stream');
-    if (!['image', 'video', 'audio', 'sticker'].includes(sendType)) return null;
+    if (!['image', 'video', 'audio', 'voice', 'sticker'].includes(sendType)) return null;
     if (messageId) {
         try {
             persistMedia(messageId, media.dataBase64, mime);
@@ -828,7 +833,7 @@ function mediaForLogSent(media, messageId) {
 function mediaForLogReceived(media, messageId) {
     if (!media) return null;
     const type = media.type;
-    if (!['image', 'video', 'audio', 'sticker', 'document'].includes(type)) return null;
+    if (!['image', 'video', 'audio', 'voice', 'sticker', 'document'].includes(type)) return null;
     if (media.url && media.url.startsWith('data:') && messageId) {
         const m = /^data:([^;]+);base64,(.+)$/.exec(media.url);
         if (m) {
@@ -929,7 +934,7 @@ function mediaForLogRef(media, messageId) {
     if (!media || !media.dataBase64) return null;
     const sendType = media.sendType || media.type || 'document';
     const mime = media.mime || (sendType === 'sticker' ? 'image/webp' : 'application/octet-stream');
-    if (!['image', 'video', 'audio', 'sticker'].includes(sendType)) return null;
+    if (!['image', 'video', 'audio', 'voice', 'sticker'].includes(sendType)) return null;
     if (messageId) {
         try {
             const pathOnDisk = persistMedia(messageId, media.dataBase64, mime);
@@ -950,14 +955,15 @@ async function sendMediaMessage(toJid, text, media, opts = {}) {
     if (sendType === 'video') {
         return sockRef.sendMessage(toJid, { video: buf, mimetype: media.mime || 'video/mp4', caption, gifPlayback: !!media.gif }, opts);
     }
-    if (sendType === 'audio') {
-        return sockRef.sendMessage(toJid, { audio: buf, mimetype: media.mime || 'audio/mp4', ptt: !!media.ptt }, opts);
+    if (sendType === 'audio' || sendType === 'voice') {
+        return sockRef.sendMessage(toJid, { audio: buf, mimetype: media.mime || 'audio/mp4', ptt: sendType === 'voice' }, opts);
     }
     if (sendType === 'sticker') {
         const mime = media.mime || 'image/webp';
         const stickerBuffer = mime === 'image/webp'
             ? buf
             : await mediaToSticker(buf, mime, 'Dashboard', 'Bot');
+        if (stickerBuffer.length > 1024 * 1024) return { ok: false, error: 'Sticker muito grande (>1MB)' };
         return sockRef.sendMessage(toJid, { sticker: stickerBuffer }, opts);
     }
     if (sendType === 'document') {
@@ -988,6 +994,15 @@ async function logSentMessage(toJid, text, media, sentId, quoted = null) {
     } catch (e) {
         console.error('[dashboard] logSentMessage:', e.message);
     }
+}
+
+const SEND_TIMEOUT_MS = 30000;
+
+function sendWithTimeout(target, content, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Timeout — WhatsApp não respondeu em ' + (SEND_TIMEOUT_MS / 1000) + 's')), SEND_TIMEOUT_MS);
+        sockRef.sendMessage(target, content, opts).then(r => { clearTimeout(timer); resolve(r); }).catch(e => { clearTimeout(timer); reject(e); });
+    });
 }
 
 async function sendReply(payload) {
@@ -1023,7 +1038,7 @@ async function sendReply(payload) {
     try {
         const sent = hasMedia
             ? await sendMediaMessage(toJid, hasText ? text : '', media, opts)
-            : await sockRef.sendMessage(toJid, { text: String(text).slice(0, 4096) }, opts);
+            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096) }, opts);
         if (sent?.ok === false) return sent;
         const sentId = sent && sent.key && sent.key.id;
         await logSentMessage(toJid, hasText ? text : '', hasMedia ? media : null, sentId, quotedLog);
@@ -1047,7 +1062,7 @@ async function sendDirect(payload) {
     try {
         const sent = hasMedia
             ? await sendMediaMessage(toJid, hasText ? text : '', media)
-            : await sockRef.sendMessage(toJid, { text: String(text).slice(0, 4096) });
+            : await sendWithTimeout(toJid, { text: String(text).slice(0, 4096) });
         if (sent?.ok === false) return sent;
         const sentId = sent && sent.key && sent.key.id;
         await logSentMessage(toJid, hasText ? text : '', hasMedia ? media : null, sentId);

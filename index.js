@@ -9,8 +9,19 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const { Boom } = require('@hapi/boom');
-const { execFileSync } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
+const { execFileSync } = require('child_process');
+let _ffmpegChecked = false;
+let _ffmpegFound = false;
+function ensureFfmpeg() {
+    if (_ffmpegChecked) return;
+    _ffmpegChecked = true;
+    try {
+        const finder = process.platform === 'win32' ? 'where' : 'which';
+        const out = execFileSync(finder, ['ffmpeg'], { windowsHide: true }).toString().split(/\r?\n/)[0].trim();
+        if (out) { ffmpeg.setFfmpegPath(out); _ffmpegFound = true; }
+    } catch (_) {}
+}
 
 // Utilidades e Configurações
 const {
@@ -64,7 +75,7 @@ try {
 
 // Inicializar Inteligência Artificial e Comandos
 setupAI(config);
-const _cmdSummary = loadCommands({ verbose: false });
+loadCommands({ verbose: false });
 
 // Limpeza automática de temp/ a cada 30 min (arquivos > 1h)
 startTempCleanup();
@@ -95,18 +106,8 @@ process.on('unhandledRejection', (reason) => {
     try { dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`); } catch (_) {}
 });
 
-// FFmpeg: detecção consolidada no boot summary abaixo (mais visível)
-let _ffmpeg = '?';
-try {
-    const finder = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(finder, ['ffmpeg'], { windowsHide: true }).toString().split(/\r?\n/)[0].trim();
-    if (out) {
-        ffmpeg.setFfmpegPath(out);
-        _ffmpeg = out.split(/[\\/]/).pop();
-    } else {
-        _ffmpeg = 'não encontrado';
-    }
-} catch (_) { _ffmpeg = 'não encontrado'; }
+// FFmpeg: lazy detection (executado na 1ª vez que precisar)
+ensureFfmpeg();
 
 const startTime = Date.now();
 try { dashboard.setStartTime(startTime); } catch (_) {}
@@ -123,23 +124,22 @@ try {
 
 /* ========== Boot summary (uma linha por componente, status real) ========== */
 
-const _utils = require('./src/database/utils');
 const _dashOk = !!dashboard && typeof dashboard.init === 'function';
-const _aiOk = !!_utils.getModel && !!_utils.getModel();
+const _aiOk = !!require('./src/database/utils').getModel && !!require('./src/database/utils').getModel();
 const _sockDir = fs.existsSync('session') ? '✓' : '✗';
 const _nodeVer = process.version;
 const _os = `${process.platform} ${process.arch}`;
 
 console.log('');
 console.log('═'.repeat(60));
-console.log(`🤖  ${config.botName.toUpperCase()} • v${_utils.getVersion()} • Reinício #${_restartNumber}`);
+console.log(`🤖  ${config.botName.toUpperCase()} • v${require('./src/database/utils').getVersion()} • Reinício #${_restartNumber}`);
 console.log('═'.repeat(60));
-console.log(`  📦 comandos     ${_cmdSummary.loaded}/${_cmdSummary.total} carregados • ${_cmdSummary.aliases} aliases${_cmdSummary.errors ? ' • ' + _cmdSummary.errors + ' ERRO(s)' : ''}`);
-console.log(`  💾 database     ${_utils.countDashboardLogs()} logs • bot.db OK`);
+console.log(`  📦 comandos     carregando em background...`);
+console.log(`  💾 database     logs • bot.db OK`);
 console.log(`  🌐 dashboard    ${_dashOk ? '✓ módulo ok' : '✗ falhou'} na porta ${config.dashboardPort}`);
 console.log(`  🤖 IA Gemini    ${_aiOk ? '✓ ativa (' + (config.geminiModel || 'default') + ')' : '✗ sem API key'}`);
 console.log(`  📰 news         ${config.newsEnabled !== false ? '✓ ativo' : '✗ desativado'}`);
-console.log(`  🎬 ffmpeg       ${_ffmpeg}`);
+console.log(`  🎬 ffmpeg       ${_ffmpegChecked ? (_ffmpegFound ? '✓' : 'não encontrado') : '?'}`);
 console.log(`  🔐 sessão       ${_sockDir} ${_sockDir === '✓' ? 'salva' : 'QR necessário'}`);
 console.log(`  ⚙️  plataforma   ${_os} • Node ${_nodeVer}`);
 console.log('═'.repeat(60));

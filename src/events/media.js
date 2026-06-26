@@ -1,5 +1,14 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+
+const DOWNLOAD_TIMEOUT = 30000;
+
+function downloadWithTimeout(msg, opts) {
+    return Promise.race([
+        downloadMediaMessage(msg, 'buffer', {}, opts),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Download timeout')), DOWNLOAD_TIMEOUT))
+    ]);
+}
 const {
     getMediaMessage, react, reactStatus, isViewOnce,
     stickerToMedia, getBotName, mediaToSticker,
@@ -18,10 +27,10 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
 
         lastBotResponse = await react(sock, m, '👀', lastBotResponse, GLOBAL_COOLDOWN);
 
-        const buffer = await downloadMediaMessage({ key: m.key, message: mediaMessage }, 'buffer', {}, {
-            logger: pino({ level: 'silent' }),
-            reuploadRequest: sock.updateMediaMessage
-        }).catch(() => null);
+        const buffer = await downloadWithTimeout(
+            { key: m.key, message: mediaMessage },
+            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        ).catch(() => null);
 
         if (!buffer) {
             return await reactStatus(sock, m, from, false, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
@@ -97,10 +106,10 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             lastBotResponse = await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        const buffer = await downloadMediaMessage(targetMsg, 'buffer', {}, {
-            logger: pino({ level: 'silent' }),
-            reuploadRequest: sock.updateMediaMessage
-        });
+        const buffer = await downloadWithTimeout(
+            targetMsg,
+            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        );
 
         if (!buffer) throw new Error();
 
@@ -129,6 +138,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 try {
                     const stickerBuffer = await mediaToSticker(buffer, detectedMime, requesterName, `${botName}`);
                     if (!stickerBuffer || stickerBuffer.length < 64) throw new Error('Sticker gerado vazio');
+                    if (stickerBuffer.length > 1024 * 1024) throw new Error('Sticker muito grande (>1MB)');
                     const header = Buffer.isBuffer(stickerBuffer) ? stickerBuffer.slice(0, 12) : null;
                     if (header && (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP')) {
                         throw new Error('Sticker gerado inválido');

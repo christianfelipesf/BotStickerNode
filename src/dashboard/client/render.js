@@ -39,6 +39,9 @@
         if (m.type === 'audio') {
             return `<div class="msg-media"><audio src="${esc(m.url)}" controls></audio></div>`;
         }
+        if (m.type === 'voice') {
+            return `<div class="msg-media msg-voice" data-src="${esc(m.url)}"><button class="msg-voice-play">▶</button><canvas class="msg-voice-wave" width="180" height="40"></canvas><span class="msg-voice-time">0:00</span><audio class="msg-voice-audio" src="${esc(m.url)}" preload="auto"></audio></div>`;
+        }
         if (m.type === 'sticker') {
             return `<div class="msg-media"><img src="${esc(m.url)}" style="width:140px;height:140px;"></div>`;
         }
@@ -88,10 +91,106 @@
         return daySep + msgBubbleHtml(d);
     }
 
+    // ============================================================
+    // Voice message player (waveform)
+    // ============================================================
+    function initVoicePlayers() {
+        document.querySelectorAll('.msg-voice:not([data-initialized])').forEach(el => {
+            el.dataset.initialized = '1';
+            const audio = el.querySelector('.msg-voice-audio');
+            const canvas = el.querySelector('.msg-voice-wave');
+            const playBtn = el.querySelector('.msg-voice-play');
+            const timeEl = el.querySelector('.msg-voice-time');
+            if (!audio || !canvas || !playBtn || !timeEl) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            const BAR_COUNT = 50, BAR_W = 3, GAP = 1;
+            let peaks = [];
+            let playing = false;
+
+            function formatTime(s) {
+                const m = Math.floor(s / 60);
+                const sec = Math.floor(s % 60);
+                return m + ':' + (sec < 10 ? '0' : '') + sec;
+            }
+
+            function drawWaveform(progress) {
+                ctx.clearRect(0, 0, W, H);
+                const totalBars = Math.min(BAR_COUNT, peaks.length);
+                const done = Math.round(totalBars * progress);
+                for (let i = 0; i < totalBars; i++) {
+                    const h = Math.max(2, peaks[i] * H);
+                    const x = i * (BAR_W + GAP);
+                    const y = (H - h) / 2;
+                    ctx.fillStyle = i < done ? 'var(--g, #0078d4)' : 'rgba(255,255,255,.3)';
+                    ctx.fillRect(x, y, BAR_W, h);
+                }
+            }
+
+            audio.addEventListener('loadedmetadata', () => {
+                timeEl.textContent = formatTime(audio.duration || 0);
+            });
+
+            audio.addEventListener('timeupdate', () => {
+                if (audio.duration) {
+                    drawWaveform(audio.currentTime / audio.duration);
+                    timeEl.textContent = formatTime(audio.currentTime) + ' / ' + formatTime(audio.duration);
+                }
+            });
+
+            audio.addEventListener('ended', () => {
+                playing = false;
+                playBtn.textContent = '▶';
+                drawWaveform(1);
+                timeEl.textContent = formatTime(audio.duration || 0);
+            });
+
+            function togglePlay() {
+                if (playing) {
+                    audio.pause();
+                    playBtn.textContent = '▶';
+                } else {
+                    audio.play().catch(() => {});
+                    playBtn.textContent = '⏸';
+                }
+                playing = !playing;
+            }
+
+            playBtn.addEventListener('click', togglePlay);
+            canvas.addEventListener('click', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const pct = Math.max(0, Math.min(1, x / rect.width));
+                if (audio.duration) audio.currentTime = pct * audio.duration;
+                togglePlay();
+            });
+
+            fetch(audio.src).then(r => r.arrayBuffer()).then(buf => {
+                const ac = new (window.AudioContext || window.webkitAudioContext)();
+                ac.decodeAudioData(buf, (data) => {
+                    const raw = data.getChannelData(0);
+                    const seg = Math.floor(raw.length / BAR_COUNT);
+                    for (let i = 0; i < BAR_COUNT; i++) {
+                        let max = 0;
+                        for (let j = 0; j < seg; j++) {
+                            const v = Math.abs(raw[i * seg + j] || 0);
+                            if (v > max) max = v;
+                        }
+                        peaks.push(max);
+                    }
+                    drawWaveform(0);
+                    if (!audio.duration) audio.duration = data.duration;
+                    timeEl.textContent = formatTime(data.duration);
+                }, () => {});
+            }).catch(() => {});
+        });
+    }
+
     function append(d) {
         const chat = D.refs.chat;
         chat.insertAdjacentHTML('beforeend', msgHtml(d));
         D.utils.play(D.refs.soundChat);
+        initVoicePlayers();
     }
 
     function rerender() {
@@ -122,6 +221,7 @@
         if (!newWrapper) return;
         wrapper.replaceWith(newWrapper);
         chat.scrollTop = prevTop + (chat.scrollHeight - prevHeight);
+        initVoicePlayers();
     }
 
     function rerenderBatch() {
@@ -136,6 +236,7 @@
         chat.insertAdjacentHTML('beforeend', frag.join(''));
         setTimeout(() => { chat.scrollTop = chat.scrollHeight; }, 30);
         D.utils.play(D.refs.soundChat);
+        initVoicePlayers();
     }
 
     D.render = {
@@ -150,6 +251,7 @@
         rerender,
         rerenderOne,
         rerenderBatch,
+        initVoicePlayers,
         allMsgs: function () { return state.allMsgs(); }
     };
 })(window.Dashboard = window.Dashboard || {});

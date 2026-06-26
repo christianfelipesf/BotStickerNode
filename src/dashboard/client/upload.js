@@ -18,7 +18,7 @@
         const t = (f.type || '').toLowerCase();
         if (t.startsWith('image/')) return [{ id: 'image', l: '📷 Imagem' }, { id: 'sticker', l: '🏷️ Sticker' }];
         if (t.startsWith('video/')) return [{ id: 'video', l: '🎥 Vídeo' }];
-        if (t.startsWith('audio/')) return [{ id: 'audio', l: '🎵 Áudio' }];
+        if (t.startsWith('audio/')) return [{ id: 'voice', l: '🎤 Voz' }, { id: 'audio', l: '🎵 Áudio' }];
         return [{ id: 'document', l: '📎 Documento' }];
     }
 
@@ -60,6 +60,9 @@
     function changeAttType(i, t) {
         state.pendingAttachments[i].sendType = t;
         state.pendingAttachments[i].type = t;
+        if (state.pendingAttachments[i].detectedType === 'audio') {
+            state.pendingAttachments[i].ptt = (t === 'voice');
+        }
         renderAtts();
     }
 
@@ -79,7 +82,7 @@
             const preview = a.type === 'image' || a.type === 'sticker'
                 ? `<img src="${a.previewUrl}">`
                 : a.type === 'video' ? `<video src="${a.previewUrl}" muted></video>`
-                : a.type === 'audio' ? '🎵' : '📎';
+                : (a.type === 'audio' || a.type === 'voice') ? '🎵' : '📎';
             const opts = allowedTypes({ type: a.mime }).map(o =>
                 `<button onclick="Dashboard.upload.changeAttType(${i},'${o.id}')" style="padding:2px 8px;font-size:11px;border-radius:999px;border:1px solid var(--b);background:${a.sendType === o.id ? 'var(--g)' : 'var(--pn2)'};color:${a.sendType === o.id ? '#00210e' : 'var(--tx)'};cursor:pointer;">${o.l}</button>`
             ).join('');
@@ -106,7 +109,7 @@
                 mime: f.type,
                 fileName: f.name,
                 previewUrl: dataUrl,
-                ptt: detected === 'audio' && sendType === 'audio'
+                ptt: sendType === 'voice'
             });
             added++;
         }

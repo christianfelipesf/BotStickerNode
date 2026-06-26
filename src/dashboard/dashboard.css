@@ -118,6 +118,12 @@ button{font:inherit}
 .msg-system{align-self:center;background:var(--w);color:#2a1700;padding:6px 12px;border-radius:999px;font-size:12px;margin:8px 0;max-width:80%;text-align:center}
 .msg-error{background:var(--er);color:#2a0000}
 .msg-reactions{margin-top:4px;background:var(--pn2);border-radius:999px;padding:2px 8px;font-size:12px;display:inline-flex;gap:4px;border:1px solid var(--b)}
+.msg-voice{display:flex;align-items:center;gap:8px;padding:4px 0;min-width:220px}
+.msg-voice-play{width:32px;height:32px;border-radius:50%;border:none;background:var(--g);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.msg-voice-play:hover{opacity:.85}
+.msg-voice-wave{border-radius:6px;cursor:pointer;flex-shrink:0}
+.msg-voice-time{font-size:11px;color:var(--dm);white-space:nowrap;flex-shrink:0;min-width:55px;text-align:right}
+.msg-voice-audio{display:none}
 
 /* Painel de estatísticas (coluna 3) */
 .st-head{display:flex;align-items:center;justify-content:space-between}

@@ -60,7 +60,7 @@ const DEFAULT_CONFIG = {
     dashboardHistoryHours: 12,
     adminCanControl: false,
     clearDefaultLimit: 10,
-    partialWaitMs: 10000,
+    partialWaitMs: 2000,
     newsSubreddits: ['ShitpostBR', 'pics'],
     newsPollIntervalMinutes: 15,
     newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -164,6 +164,7 @@ function mergeWithDefaults(obj) {
 
 function scheduleJsonFlush() {
     _jsonDirty = true;
+    _cachedSummaryLimit = null;
     if (_jsonFlushTimer) return;
     _jsonFlushTimer = setTimeout(() => {
         _jsonFlushTimer = null;
@@ -327,7 +328,7 @@ function listPartialGroups() {
 
 function getPartialWaitMs() {
     try { const v = Number(readConfig().partialWaitMs); if (Number.isFinite(v) && v >= 0) return v; } catch (_) {}
-    return 10000;
+    return 2000;
 }
 
 function setPartialWaitMs(ms) {
@@ -613,18 +614,51 @@ async function saveGroupMenuImage(jid, buffer) {
 }
 
 // ============================================================
-// Activity
+// Activity (bufferizado em memória, flush periódico)
 // ============================================================
+const _activityBuffer = new Map();
+const ACTIVITY_FLUSH_INTERVAL = 30000;
+
+function _flushActivity() {
+    if (!_activityBuffer.size) return;
+    const entries = Array.from(_activityBuffer.entries());
+    _activityBuffer.clear();
+    for (const [jid, members] of entries) {
+        try {
+            const row = ensureGroupState(jid);
+            const act = safeJson(row.activity, {});
+            if (!act[jid]) act[jid] = {};
+            for (const [sender, info] of members) {
+                if (!act[jid][sender]) act[jid][sender] = { name: info.name, count: 0 };
+                act[jid][sender].count += info.count;
+            }
+            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act));
+        } catch (_) {}
+    }
+}
+
+let _activityFlushTimer = null;
+function _scheduleActivityFlush() {
+    if (_activityFlushTimer) return;
+    _activityFlushTimer = setTimeout(() => {
+        _activityFlushTimer = null;
+        _flushActivity();
+    }, ACTIVITY_FLUSH_INTERVAL);
+}
+
 function updateMemberActivity(jid, sender, senderName) {
-    const row = ensureGroupState(jid);
-    const act = safeJson(row.activity, {});
-    if (!act[jid]) act[jid] = {};
-    if (!act[jid][sender]) act[jid][sender] = { name: senderName, count: 0 };
-    act[jid][sender].count += 1;
-    _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act));
+    if (!jid || !sender) return;
+    if (!_activityBuffer.has(jid)) _activityBuffer.set(jid, new Map());
+    const members = _activityBuffer.get(jid);
+    if (!members.has(sender)) members.set(sender, { name: senderName || 'Usuário', count: 0 });
+    members.get(sender).count += 1;
+    _scheduleActivityFlush();
 }
 
 function getTopMember(jid) {
+    // Flush antes de ler para ter dados consistentes
+    if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+    _flushActivity();
     try {
         const row = _gsGet.get(jid);
         if (!row) return 'Nenhum registro hoje';
@@ -674,10 +708,20 @@ function scheduleMsgFlush() {
     _msgFlushTimer = setTimeout(() => { _msgFlushTimer = null; flushMessagesSync(); }, MSG_FLUSH_INTERVAL);
 }
 
+let _cachedSummaryLimit = null;
+function _getSummaryLimit() {
+    if (_cachedSummaryLimit !== null) return _cachedSummaryLimit;
+    try { _cachedSummaryLimit = Number(readConfig().summaryLimit) || 20; } catch (_) { _cachedSummaryLimit = 20; }
+    return _cachedSummaryLimit;
+}
+// Re-read limit on explicit config write
+const _origWriteConfig = module.exports.writeConfig || (() => {});
+// Patch via scheduleJsonFlush — simpler: just clear cache when dirty
+const _origScheduleFlush = scheduleJsonFlush;
+
 function saveMessage(jid, pushName, text) {
     if (!text) return;
-    const j = readDB();
-    const limit = j.config.summaryLimit || 20;
+    const limit = _getSummaryLimit();
     _msgBuffer.push({ jid, pushName: pushName || '', text: String(text), time: Date.now(), limit });
     const cnt = (_msgBufferByJid.get(jid) || 0) + 1;
     _msgBufferByJid.set(jid, cnt);
@@ -752,7 +796,7 @@ function getVersion() {
     return _cachedVersion;
 }
 
-function flushNow() { flushJsonNow(); flushMessagesSync(); }
+function flushNow() { flushJsonNow(); flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); }
 
 // ============================================================
 // Group metadata cache & admin helpers
@@ -852,52 +896,49 @@ migrateLegacyMessagesJson();
 migrateLegacyActiveGroups();
 loadJsonDB();
 
-const today = new Date().toLocaleDateString();
-try {
-    const rows = _gsAll.all();
-    const tx = db.transaction((rs) => {
-        for (const r of rs) {
-            _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}');
+// Background init — não bloqueia startup
+setTimeout(() => {
+    try {
+        const today = new Date().toLocaleDateString();
+        const rows = _gsAll.all();
+        const tx = db.transaction((rs) => {
+            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}');
+        });
+        const j = _jsonCache;
+        if (j.stats._activityDate !== today) {
+            tx(rows);
+            j.stats._activityDate = today;
+            scheduleJsonFlush();
+            console.log(`📅 Activity diária resetada para ${today}`);
         }
-    });
-    const j = _jsonCache;
-    if (j.stats._activityDate !== today) {
-        tx(rows);
-        j.stats._activityDate = today;
-        scheduleJsonFlush();
-        console.log(`📅 Activity diária resetada para ${today}`);
-    }
-} catch (e) {
-    console.error('❌ Falha ao resetar activity:', e.message);
-}
+    } catch (e) { console.error('❌ Falha ao resetar activity:', e.message); }
 
-try {
-    const rows = _gsAll.all();
-    let converted = 0, expired = 0;
-    const now = Date.now();
-    for (const r of rows) {
-        let raw;
-        try { raw = JSON.parse(r.muted); } catch (_) { raw = []; }
-        if (Array.isArray(raw)) {
-            const obj = {};
-            for (const p of raw) if (p) obj[p] = now;
-            _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity);
-            converted++;
-        } else if (raw && typeof raw === 'object') {
-            let changed = false;
-            for (const k of Object.keys(raw)) {
-                const ts = Number(raw[k]);
-                if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
+    try {
+        const rows = _gsAll.all();
+        let converted = 0, expired = 0;
+        const now = Date.now();
+        for (const r of rows) {
+            let raw;
+            try { raw = JSON.parse(r.muted); } catch (_) { raw = []; }
+            if (Array.isArray(raw)) {
+                const obj = {};
+                for (const p of raw) if (p) obj[p] = now;
+                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity);
+                converted++;
+            } else if (raw && typeof raw === 'object') {
+                let changed = false;
+                for (const k of Object.keys(raw)) {
+                    const ts = Number(raw[k]);
+                    if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
+                }
+                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity);
             }
-            if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity);
         }
-    }
-    if (converted > 0 || expired > 0) {
-        console.log(`🧹 Mute: ${converted} grupo(s) migrados para formato novo, ${expired} mute(s) expirado(s) removido(s).`);
-    }
-} catch (e) {
-    console.error('❌ Falha ao migrar/limpar muted:', e.message);
-}
+        if (converted > 0 || expired > 0) {
+            console.log(`🧹 Mute: ${converted} grupo(s) migrados para formato novo, ${expired} mute(s) expirado(s) removido(s).`);
+        }
+    } catch (e) { console.error('❌ Falha ao migrar/limpar muted:', e.message); }
+}, 0).unref();
 
 process.on('beforeExit', flushNow);
 process.on('SIGINT', () => { flushNow(); process.exit(0); });

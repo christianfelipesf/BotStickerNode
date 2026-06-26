@@ -1,6 +1,3 @@
-const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-
 const {
     getMediaMessage, getContextInfo, getMessageText,
     insertDashboardLog, isDashboardEnabled,
@@ -8,6 +5,7 @@ const {
 } = require('../database/utils');
 
 const dashboard = require('../dashboard/dashboard');
+const { enqueueProcess } = require('../services/queue');
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
 const safeDashboardCache = (...args) => { try { dashboard.cacheMedia(...args); } catch (_) {} };
 const safeDashboardRememberGroup = (...args) => { try { dashboard.rememberGroupInfo(...args); } catch (_) {} };
@@ -27,36 +25,41 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
     let ephemeral = false;
 
     if (mediaMsg) {
-        try {
-            const buffer = await downloadMediaMessage(m, 'buffer', {}, {
-                logger: pino({ level: 'fatal' }),
-                reuploadRequest: sock.updateMediaMessage
-            }).catch(() => null);
+        const innerKey = Object.keys(mediaMsg).find(k => /Message$/.test(k));
+        const inner = innerKey ? mediaMsg[innerKey] : null;
+        const type = mediaMsg?.imageMessage ? 'image' :
+                     mediaMsg?.videoMessage ? 'video' :
+                     mediaMsg?.audioMessage ? 'audio' :
+                     mediaMsg?.stickerMessage ? 'sticker' :
+                     mediaMsg?.documentMessage ? 'document' : null;
+        const mime = inner?.mimetype || 'application/octet-stream';
 
-            const innerKey = mediaMsg ? Object.keys(mediaMsg).find(k => /Message$/.test(k)) : null;
-            const inner = innerKey ? mediaMsg[innerKey] : null;
-            const type = mediaMsg?.imageMessage ? 'image' :
-                         mediaMsg?.videoMessage ? 'video' :
-                         mediaMsg?.audioMessage ? 'audio' :
-                         mediaMsg?.stickerMessage ? 'sticker' :
-                         mediaMsg?.documentMessage ? 'document' : null;
-            const mime = inner?.mimetype || 'application/octet-stream';
-
-            if (type) {
-                if (buffer) {
-                    const isVO = type !== 'document' && !!inner.viewOnce;
-                    const persisted = safeDashboardMediaReceived({ type, url: `data:${mime};base64,${buffer.toString('base64')}` }, m.key.id);
-                    mediaInfo = persisted || { type, url: `data:${mime};base64,${buffer.toString('base64')}` };
-                    if (type === 'image' || type === 'video' || type === 'audio') hidden = isVO;
-                    if (type === 'document') { mediaInfo.fileName = inner.fileName || 'documento'; mediaInfo.mime = mime; mediaInfo.sizeBytes = inner.fileLength || buffer.length; }
-                    try { safeDashboardCache(m.key.id, { bufferBase64: buffer.toString('base64'), mime, type, fileName: inner.fileName || null, text: inner.caption || null, fromJid: from }); } catch (_) {}
-                } else {
-                    mediaInfo = { type, url: null };
-                    if (type === 'document') { mediaInfo.fileName = inner?.fileName || 'documento'; mediaInfo.mime = mime; }
+        if (type) {
+            // Download em background via fila — não bloqueia o hot path
+            const msgId = m.key.id;
+            enqueueProcess(async () => {
+                try {
+                    const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+                    const pino = require('pino');
+                    const buffer = await downloadMediaMessage(m, 'buffer', {}, {
+                        logger: pino({ level: 'fatal' }),
+                        reuploadRequest: sock.updateMediaMessage
+                    }).catch(() => null);
+                    const { updateDashboardLogMedia } = require('../database/utils');
+                    if (buffer) {
+                        const persisted = safeDashboardMediaReceived({ type, url: `data:${mime};base64,${buffer.toString('base64')}` }, msgId);
+                        const info = persisted || { type, url: `data:${mime};base64,${buffer.toString('base64')}` };
+                        if (type === 'document') { info.fileName = inner.fileName || 'documento'; info.mime = mime; info.sizeBytes = inner.fileLength || buffer.length; }
+                        try { safeDashboardCache(msgId, { bufferBase64: buffer.toString('base64'), mime, type, fileName: inner.fileName || null, text: inner.caption || null, fromJid: from }); } catch (_) {}
+                        updateDashboardLogMedia(from, msgId, type === 'image' || type === 'video' || type === 'audio' && !!inner.viewOnce ? 'viewonce' : 'chat', JSON.stringify(info));
+                    } else {
+                        updateDashboardLogMedia(from, msgId, 'chat', JSON.stringify({ type, url: null }));
+                    }
+                } catch (e) {
+                    console.error('Erro ao baixar mídia em background:', e.message);
                 }
-            }
-        } catch (e) {
-            console.error('Erro ao baixar mídia para o dashboard:', e.message);
+            });
+            mediaInfo = { type, url: null };
         }
     }
 
