@@ -242,10 +242,6 @@ module.exports = {
                 title = Buffer.concat(chunks).toString('utf8').trim().split('\n')[0];
             } catch (_) { title = '' }
 
-            setTimeout(async () => {
-                try { currentBotResponse = await react(sock, m, '🔄', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
-            }, 4000);
-
             const result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
 
             const allFiles = findDownloadedFiles(id);
