@@ -277,17 +277,7 @@ async function doUpdate(btn) {
         $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
         $('mgmtModal').classList.add('show');
     } else {
-        // Sem mudanças no package.json, sugere restart
-        setTimeout(() => {
-            $('mgmtTitle').textContent = '🔄 Reiniciar?';
-            $('mgmtDesc').textContent = 'O código foi atualizado. Deseja reiniciar o bot agora para aplicar as alterações?';
-            $('mgmtCmd').textContent = '$ pm2 restart all';
-            $('mgmtErr').textContent = '';
-            $('mgmtConfirm').dataset.action = 'restart';
-            $('mgmtConfirm').textContent = 'Reiniciar';
-            $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
-            $('mgmtModal').classList.add('show');
-        }, 1500);
+        toast('✅ Código atualizado. Reinicie manualmente quando quiser aplicar.', 'ok');
     }
 }
 
@@ -307,17 +297,7 @@ async function doInstall(btn) {
     toast(ok ? 'npm install ✓' : 'npm install falhou', ok ? 'ok' : 'err');
 
     if (ok) {
-        // Após install bem-sucedido, sugere restart
-        setTimeout(() => {
-            $('mgmtTitle').textContent = '🔄 Reiniciar agora?';
-            $('mgmtDesc').textContent = 'As dependências foram atualizadas. Deseja reiniciar o bot para aplicar tudo?';
-            $('mgmtCmd').textContent = '$ pm2 restart all';
-            $('mgmtErr').textContent = '';
-            $('mgmtConfirm').dataset.action = 'restart';
-            $('mgmtConfirm').textContent = 'Reiniciar';
-            $('mgmtConfirm').disabled = $('mgmtCancel').disabled = false;
-            $('mgmtModal').classList.add('show');
-        }, 1500);
+        toast('✅ Dependências instaladas. Reinicie manualmente se necessário.', 'ok');
     }
 }
 
