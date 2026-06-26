@@ -122,6 +122,19 @@ function init() {
     if (initialized) return;
     initialized = true;
 
+    // Pré-carrega últimos logs do arquivo no ring, pra dashboard ver histórico pós-restart
+    try {
+        const logFile = getSessionLogFile(new Date());
+        if (fs.existsSync(logFile)) {
+            const content = fs.readFileSync(logFile, 'utf8');
+            const lines = content.split('\n').filter(Boolean).slice(-RING_MAX);
+            for (const line of lines) {
+                const m = line.match(/^\[(\d{2}:\d{2}:\d{2})\] \[(\w+)\] (.+)$/);
+                if (m) ring.push({ ts: Date.now(), time: m[1], level: m[2].toLowerCase(), text: m[3] });
+            }
+        }
+    } catch (_) {}
+
     const wrap = (level, orig) => function (...args) {
         try { push(level, args); } catch (_) {}
         return orig.apply(console, args);
@@ -136,6 +149,8 @@ function init() {
     console.info = wrap('info', origInfo);
     console.warn = wrap('warn', origWarn);
     console.error = wrap('error', origError);
+
+    console.log('🚀 [SISTEMA] Bot iniciado — painel online');
 }
 
 module.exports = {

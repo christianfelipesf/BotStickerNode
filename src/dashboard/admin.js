@@ -371,8 +371,15 @@ const LOG_ICONS = { error: '✖', warn: '⚠', info: 'ℹ', log: '✓' };
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 async function loadLogs() {
-    const r = await api('/api/admin/logs');
-    if (!r.ok) return;
+    let r;
+    try { r = await api('/api/admin/logs'); } catch {}
+    if (!r || !r.ok) {
+        const c = $('logsContainer');
+        if (c) c.innerHTML = '<div style="color:#FF5555;padding:16px;font-weight:600">⛔ OFFLINE — servidor reiniciando…</div>';
+        const cnt = $('logCount');
+        if (cnt) cnt.textContent = '⛔ offline';
+        return;
+    }
     const logs = r.data?.logs || [];
     const c = $('logsContainer');
     const cnt = $('logCount');

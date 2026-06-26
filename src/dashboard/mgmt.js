@@ -76,7 +76,7 @@ const handlers = {
         };
     },
     restart: async () => {
-        console.warn('⚠️ [ADMIN] Reiniciando bot (pm2 restart all)…');
+        console.warn('⛔ [ADMIN] Bot offline — reiniciando (pm2 restart all)…');
         const r = await run('pm2 restart all', 60 * 1000);
         if (r.ok) console.log('✅ [ADMIN] Bot reiniciado');
         else console.error('❌ [ADMIN] Falha ao reiniciar: ' + (r.err || 'erro'));
