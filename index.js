@@ -101,6 +101,11 @@ process.on('uncaughtException', (err) => {
 });
 process.on('unhandledRejection', (reason) => {
     if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
+    if (reason?.isBoom) {
+        const code = reason.output?.statusCode;
+        if (code === 428 || code === 515 || code === 502) return;
+    }
+    if (reason?.message?.includes('Connection Closed') || reason?.message?.includes('Precondition Required')) return;
     console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
     try { flushNow(); } catch (_) {}
     try { dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`); } catch (_) {}
@@ -207,6 +212,14 @@ async function startBot() {
                 principalState.setDisconnected();
             } catch (_) {}
         }
+    });
+
+    // Evento de erro do socket (evita unhandled rejection com Boom 428 etc)
+    sock.ev.on('error', (err) => {
+        const code = err?.output?.statusCode;
+        if (code === 428 || code === 515 || code === 502) return;
+        if (err?.message?.includes('Connection Closed') || err?.message?.includes('Precondition Required')) return;
+        console.error('🔌 [SOCKET ERROR]:', err?.message || err);
     });
 
     // Evento de Participantes do Grupo (Adição/Remoção/Admin)

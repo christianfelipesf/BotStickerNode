@@ -51,8 +51,8 @@ function getPlatform(url) {
 function getFormatSelector(platform, hd) {
     if (platform === 'instagram') {
         return hd
-            ? 'bestvideo+bestaudio/best'
-            : 'worstvideo+bestaudio/worst/worst';
+            ? 'best[height<=1080]/best'
+            : 'best[height<=720]/best';
     }
     if (platform === 'tiktok') {
         return hd
@@ -91,8 +91,6 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
     ];
 
     if (platform === 'instagram') {
-        args.push('--yes-playlist');
-        args.push('--extractor-args', 'instagram:allow_direct_url=True');
         args.push('--add-header', 'Referer:https://www.instagram.com/');
     } else if (platform === 'twitter') {
         args.push('--yes-playlist');
@@ -242,13 +240,28 @@ module.exports = {
                 title = Buffer.concat(chunks).toString('utf8').trim().split('\n')[0];
             } catch (_) { title = '' }
 
-            const result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
+            let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
+            let allFiles = findDownloadedFiles(id);
 
-            const allFiles = findDownloadedFiles(id);
-            if (allFiles.length === 0) {
-                let reason = 'Mídia não encontrada ou protegida.';
-                if (platform === 'instagram') reason = 'Instagram bloqueou. Tente adicionar cookies.txt na raiz.';
+            if (allFiles.length === 0 && platform === 'instagram') {
+                console.log(`[RETRY] Instagram falhou, tentando com --yes-playlist...`);
+                const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
+                result = await runYtDlp(retryArgs);
+                allFiles = findDownloadedFiles(id);
+            }
+
+            if (allFiles.length === 0 && platform === 'instagram') {
+                const stderrSnippet = result.stderr
+                    ? result.stderr.split('\n').filter(l => l.trim() && !l.includes('[debug]') && !l.includes('[info]')).slice(-3).join(' | ').slice(0, 200)
+                    : '';
+                let reason = `Instagram não baixou. Atualize o yt-dlp: "yt-dlp -U"`;
+                if (stderrSnippet) reason += `\n🔍 ${stderrSnippet}`;
                 throw new Error(reason);
+            }
+
+            if (allFiles.length === 0) {
+                throw new Error('Mídia não encontrada ou protegida.');
             }
 
             const totalSize = allFiles.reduce((acc, f) => acc + fs.statSync(f).size, 0);
