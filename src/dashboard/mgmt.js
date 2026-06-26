@@ -32,6 +32,7 @@ const handlers = {
         return { behind, summary: summary.split('\n').filter(Boolean) };
     },
     update: async () => {
+        console.log('⚙️ [ADMIN] Atualizando repositório (git pull)…');
         const statusCheck = await run('git status --porcelain', 15 * 1000);
         const hasLocalChanges = statusCheck.ok && statusCheck.out.trim().length > 0;
 
@@ -60,6 +61,8 @@ const handlers = {
             const files = (diff.out || '').split('\n').map(f => f.trim()).filter(Boolean);
             pkgChanged = files.some(f => f === 'package.json' || f === 'package-lock.json');
         }
+        if (changed) console.log(`✅ [ADMIN] Atualizado ${before.out?.trim()} → ${after.out?.trim()}${pkgChanged ? ' (package.json alterado)' : ''}`);
+        else console.warn('⚠️ [ADMIN] Nenhuma atualização disponível');
         return {
             command: usedFallback ? 'git pull --no-ff' : 'git pull --ff-only',
             before: before.out || '?',
@@ -73,11 +76,17 @@ const handlers = {
         };
     },
     restart: async () => {
+        console.warn('⚠️ [ADMIN] Reiniciando bot (pm2 restart all)…');
         const r = await run('pm2 restart all', 60 * 1000);
+        if (r.ok) console.log('✅ [ADMIN] Bot reiniciado');
+        else console.error('❌ [ADMIN] Falha ao reiniciar: ' + (r.err || 'erro'));
         return { command: 'pm2 restart all', ok: r.ok, out: r.out, err: r.err };
     },
     install: async () => {
+        console.log('📦 [ADMIN] Instalando dependências (npm install)…');
         const r = await run('npm install --no-audit --no-fund', 10 * 60 * 1000);
+        if (r.ok) console.log('✅ [ADMIN] npm install concluído');
+        else console.error('❌ [ADMIN] npm install falhou: ' + (r.err || 'erro'));
         return { command: 'npm install', ok: r.ok, out: r.out, err: r.err };
     }
 };

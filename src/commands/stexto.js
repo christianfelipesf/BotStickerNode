@@ -84,13 +84,16 @@ async function makeGlowSticker(text) {
     const duration = 2;
     const totalFrames = Math.round(fps * duration);
 
-    // 15 cores fixas do arco-íris (espaçadas em 24° de matiz)
-    const rainbow = Array.from({ length: 15 }, (_, i) => hsl(i * 24, 100, 50));
+    // Ângulo dourado (~137.5°) — garante que cada frame tenha uma cor MUITO diferente do anterior
+    const frames = Array.from({ length: totalFrames }, (_, i) => ({
+        c: hsl((i * 137.508) % 360, 100, 50),
+        n: i
+    }));
 
-    // Um drawtext por frame — cada um com uma cor diferente, sem transição suave
+    // Um drawtext por frame, cada um com cor imprevisível, sem transição
     const tpl = `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:borderw=6:alpha=1`;
-    const filters = Array.from({ length: totalFrames }, (_, i) =>
-        `${tpl}:fontcolor=${rainbow[i % 15]}:bordercolor=${rainbow[i % 15]}:enable='eq(n,${i})'`
+    const filters = frames.map(f =>
+        `${tpl}:fontcolor=${f.c}:bordercolor=${f.c}:enable='eq(n,${f.n})'`
     );
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
