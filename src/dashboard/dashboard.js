@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const cookieSession = require('cookie-session');
 const adminAuth = require('./adminAuth');
 const axios = require('axios');
+const terminalLog = require('../services/terminalLog');
 const {
     mediaToSticker,
     insertDashboardLog,
@@ -340,6 +341,13 @@ function init(config) {
             }
             writeConfig({ ...readConfig(), ...updates });
             return json(res, true, { updated: Object.keys(updates).length });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.get('/api/admin/logs', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            return json(res, true, { logs: terminalLog.getLast(15) });
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 

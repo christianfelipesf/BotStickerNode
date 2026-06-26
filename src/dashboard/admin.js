@@ -364,5 +364,28 @@ document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
     btn.addEventListener('click', () => ask(btn.dataset.mgmt));
 });
 
+// === Logs do terminal ===
+async function loadLogs() {
+    const r = await api('/api/admin/logs');
+    if (!r.ok) return;
+    const logs = r.data?.logs || [];
+    const c = $('logsContainer');
+    const cnt = $('logCount');
+    cnt.textContent = logs.length + ' entradas';
+    if (!logs.length) {
+        c.innerHTML = '<div class="empty" style="padding:20px">Nenhum log.</div>';
+        return;
+    }
+    c.innerHTML = logs.map(e => {
+        const t = document.createElement('div');
+        const cls = e.level === 'error' ? 'err' : e.level === 'warn' ? '' : '';
+        const color = e.level === 'error' ? '#f85149' : e.level === 'warn' ? '#d29922' : '#9aa6b2';
+        t.innerHTML = `<span style="color:#6e7681">[${e.time}]</span> <span style="color:${color}">${e.level.toUpperCase()}</span> ${e.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}`;
+        return t.outerHTML;
+    }).join('<br/>');
+    c.scrollTop = c.scrollHeight;
+}
+$('btnRefreshLogs').addEventListener('click', loadLogs);
+
 // Verificar atualizações ao carregar a página
-load().then(() => checkUpdates());
+load().then(() => { checkUpdates(); loadLogs(); });

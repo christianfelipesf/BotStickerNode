@@ -79,17 +79,19 @@ async function makeGlowSticker(text) {
 
     const fps = 10;
     const duration = 4;
+    const rainbow = ['#FF0055','#FF6600','#FFCC00','#00FF66','#0066FF','#6633FF','#FF00AA'];
+    const segLen = duration / rainbow.length;
+    const fText = `drawtext=text='${escaped}':fontfile=${fontfile}:fontcolor=white:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2`;
+    const filters = rainbow.map((c, i) =>
+        `${fText}:bordercolor=${c}:enable='between(t,${+(i*segLen).toFixed(3)},${+((i+1)*segLen).toFixed(3)})'`
+    );
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
         ffmpeg()
             .input(`color=c=#00000000:s=${W}x${H}:d=${duration}:r=${fps}`)
             .inputFormat('lavfi')
-            .videoFilter([
-                'format=yuva420p',
-                `drawtext=text='${escaped}':fontfile=${fontfile}:fontcolor=white:bordercolor=#FF3366:borderw=8:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2`,
-                'hue=H=t*360'
-            ].join(','))
+            .videoFilter(['format=yuva420p', ...filters].join(','))
             .outputOptions([
                 '-c:v', 'libwebp',
                 '-lossless', '0',
