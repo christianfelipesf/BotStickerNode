@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const axios = require('axios');
 const { getMaxDurationSeconds, fetchYouTubeDuration, buildDurationErrorMessage } = require('../services/durationLimit');
 
 const tempDir = path.join(process.cwd(), 'temp');
@@ -124,6 +125,29 @@ function runYtDlp(args, timeoutMs = 300000) {
             clearTimeout(timer);
             resolve({ code, stdout, stderr });
         });
+    });
+}
+
+async function fetchBtchApi(url) {
+    const apiUrl = 'https://backend1.tioo.eu.org/igdl?url=' + encodeURIComponent(url);
+    const res = await axios.get(apiUrl, {
+        headers: { 'User-Agent': 'btch/6.0.36', 'X-Client-Version': '6.0.36' },
+        timeout: 30000
+    });
+    if (res.status !== 200) throw new Error('API retornou status ' + res.status);
+    const data = res.data;
+    if (!Array.isArray(data) || data.length === 0 || !data[0].url)
+        throw new Error('API não retornou mídia');
+    return data;
+}
+
+async function downloadFromUrl(fileUrl, destPath) {
+    const writer = fs.createWriteStream(destPath);
+    const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000 });
+    res.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+        writer.on('finish', resolve);
+        writer.on('error', reject);
     });
 }
 
@@ -260,6 +284,21 @@ module.exports = {
                 retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
                 result = await runYtDlp(retryArgs);
                 allFiles = findDownloadedFiles(id);
+            }
+
+            if (allFiles.length === 0 && platform === 'instagram') {
+                console.log(`[BTCH] Instagram fallback via btch-downloader API...`);
+                try {
+                    const btchData = await fetchBtchApi(url);
+                    const mediaUrl = btchData[0].url;
+                    const ext = mediaUrl.match(/\.(\w+)(?:\?|$)/)?.[1] || 'mp4';
+                    const destPath = path.join(tempDir, `dl_${id}_btch.${ext}`);
+                    currentBotResponse = await react(sock, m, '📥', currentBotResponse, GLOBAL_COOLDOWN);
+                    await downloadFromUrl(mediaUrl, destPath);
+                    allFiles = [destPath];
+                } catch (btchErr) {
+                    console.log(`[BTCH] Fallback falhou: ${btchErr.message}`);
+                }
             }
 
             if (allFiles.length === 0 && platform === 'instagram') {
