@@ -91,9 +91,9 @@ async function makeGlowSticker(text) {
     }));
 
     // Um drawtext por frame, cada um com cor imprevisível, sem transição
-    const tpl = `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:borderw=6:alpha=1`;
+    const tpl = `drawtext=textfile='${textFile.replace(/\\/g, '/')}':fontfile=${fontfile}:fontsize=${fontSize}:x=(w-tw)/2:y=(h-th)/2:alpha=1`;
     const filters = frames.map(f =>
-        `${tpl}:fontcolor=${f.c}:bordercolor=${f.c}:enable='eq(n,${f.n})'`
+        `${tpl}:fontcolor=${f.c}:enable='eq(n,${f.n})'`
     );
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
