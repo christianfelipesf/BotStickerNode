@@ -8,7 +8,7 @@ const { tempDir } = require('../database/db');
 
 const FONT_DIR = path.join(process.cwd(), 'fonts');
 const FONT_PATH = path.join(FONT_DIR, 'DejaVuSans.ttf');
-const FONT_URL = 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf';
+const FONT_URL = 'https://github.com/prawnpdf/prawn/raw/master/data/fonts/DejaVuSans.ttf';
 
 async function ensureFont() {
     if (fs.existsSync(FONT_PATH)) return;
