@@ -75,85 +75,58 @@ function _isAuthError(err) {
     return msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden') || msg.includes('invalid api key');
 }
 
-// === Fallback models ===
-const FALLBACK_MODELS = [
-    'mistralai/mistral-7b-instruct:free',
-    'gpt-4o-mini',
-    'openrouter/free'
-];
-
-// === API call with retry + fallback ===
+// === API call with retry ===
 async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTokens, temperature, retryCount) {
     const retries = Math.max(0, Math.min(3, Number(retryCount) || 1));
     const backoffs = _buildBackoffs(2000);
 
-    let lastError;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const { data } = await axios.post(`${OPENROUTER_BASE}/chat/completions`, {
+                model: modelName,
+                max_tokens: maxTokens,
+                temperature: temperature,
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ]
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://github.com/BotStickerNode',
+                    'X-Title': 'BotStickerNode',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            });
 
-    const modelsToTry = [modelName];
-    for (const fb of FALLBACK_MODELS) {
-        if (fb !== modelName) modelsToTry.push(fb);
-    }
+            const content = data?.choices?.[0]?.message?.content || '';
+            const usage = data?.usage || {};
 
-    for (let mi = 0; mi < modelsToTry.length; mi++) {
-        const currentModel = modelsToTry[mi];
-        const isFallback = mi > 0;
+            usageStats.totalRequests++;
+            usageStats.successfulRequests++;
+            usageStats.totalTokensIn += usage.prompt_tokens || 0;
+            usageStats.totalTokensOut += usage.completion_tokens || 0;
 
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const { data } = await axios.post(`${OPENROUTER_BASE}/chat/completions`, {
-                    model: currentModel,
-                    max_tokens: maxTokens,
-                    temperature: temperature,
-                    messages: [
-                        { role: 'system', content: systemInstruction },
-                        { role: 'user', content: prompt }
-                    ]
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'HTTP-Referer': 'https://github.com/BotStickerNode',
-                        'X-Title': 'BotStickerNode',
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 30000
-                });
+            return { text: content, tokensIn: usage.prompt_tokens || 0, tokensOut: usage.completion_tokens || 0, model: modelName, cached: false };
 
-                const content = data?.choices?.[0]?.message?.content || '';
-                const usage = data?.usage || {};
-
+        } catch (err) {
+            if (_isAuthError(err)) {
                 usageStats.totalRequests++;
-                usageStats.successfulRequests++;
-                usageStats.totalTokensIn += usage.prompt_tokens || 0;
-                usageStats.totalTokensOut += usage.completion_tokens || 0;
-
-                if (isFallback) {
-                    console.log(`[IA] Modelo primário falhou, usou fallback: ${currentModel}`);
-                }
-
-                return { text: content, tokensIn: usage.prompt_tokens || 0, tokensOut: usage.completion_tokens || 0, model: currentModel, cached: false };
-
-            } catch (err) {
-                lastError = err;
-                if (_isAuthError(err)) {
-                    usageStats.totalRequests++;
-                    usageStats.failedRequests++;
-                    throw new Error('Chave de API inválida ou sem acesso ao modelo');
-                }
-                if (!_isRetryableError(err) || attempt >= retries) {
-                    if (mi >= modelsToTry.length - 1) {
-                        usageStats.totalRequests++;
-                        usageStats.failedRequests++;
-                        throw err;
-                    }
-                    break;
-                }
-                const wait = backoffs[attempt] || backoffs[backoffs.length - 1];
-                await new Promise(r => setTimeout(r, wait));
+                usageStats.failedRequests++;
+                throw new Error('Chave de API inválida ou sem acesso ao modelo');
             }
+            if (!_isRetryableError(err) || attempt >= retries) {
+                usageStats.totalRequests++;
+                usageStats.failedRequests++;
+                throw err;
+            }
+            const wait = backoffs[attempt] || backoffs[backoffs.length - 1];
+            await new Promise(r => setTimeout(r, wait));
         }
     }
 
-    throw lastError || new Error('Falha na comunicação com a IA');
+    throw new Error('Falha na comunicação com a IA');
 }
 
 function setupAI(config) {

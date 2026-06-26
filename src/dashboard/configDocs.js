@@ -17,7 +17,6 @@
         aiMaxPromptLength: 'Máx. de caracteres no prompt do usuário (corta automaticamente).',
         aiCacheTtl: 'Tempo (ms) que respostas idênticas ficam em cache (0=desliga cache).',
         aiRetryCount: 'Tentativas automáticas se a API falhar (ex.: rate limit).',
-        aiFallbackModel: 'Modelo alternativo se o principal falhar (OpenRouter).',
         openrouterApiKey: 'Chave da API OpenRouter. Salva no .env (não vai pro database.json).',
         summaryLimit: 'Qtde. de mensagens guardadas por grupo para !resumir (alto fluxo).',
         aiPrompt: 'Prompt base da IA. Use {botName} para o nome atual.',
