@@ -188,7 +188,8 @@ function activateGroup(jid) {
 
 function deactivateGroup(jid) {
     const r = _agDelete.run(jid);
-    if (r.changes === 0) return false;
+    const rp = r.changes === 0 ? _agpDelete.run(jid) : { changes: 0 };
+    if (r.changes === 0 && rp.changes === 0) return false;
     try {
         const row = _gsGet.get(jid);
         if (row && row.menu_image) {
