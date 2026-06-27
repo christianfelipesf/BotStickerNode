@@ -391,7 +391,13 @@ const escHtml = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/<
 
 async function loadLogs() {
     let r;
-    try { r = await api('/api/admin/logs'); } catch {}
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        r = await fetch('/api/admin/logs', { credentials: 'same-origin', signal: controller.signal });
+        clearTimeout(timer);
+        r = { ok: r.ok, status: r.status, data: r.headers.get('content-type')?.includes('json') ? await r.json() : await r.text() };
+    } catch {}
     if (!r || !r.ok) {
         const c = $('logsContainer');
         if (c) c.innerHTML = '<div style="color:#FF5555;padding:16px;font-weight:600">⛔ OFFLINE — servidor reiniciando…</div>';
@@ -407,20 +413,23 @@ async function loadLogs() {
         c.innerHTML = '<div style="color:#888;padding:20px">Nenhum log no buffer.</div><div style="color:#555">PS> </div>';
         return;
     }
-    const ps = c.querySelector('.ps-prompt');
     const prefix = logs.map(e => {
         const cl = LOG_COLORS[e.level] || '#ccc';
         const ic = LOG_ICONS[e.level] || '·';
         return `<span style="color:#666">[${e.time}]</span> <span style="color:${cl}">${ic}</span> ${escHtml(e.text)}`;
     }).join('\n');
-    const timestamp = new Date().toLocaleTimeString();
     c.innerHTML = `<div style="white-space:pre-wrap;word-break:break-word">${prefix}</div>`;
     c.scrollTop = c.scrollHeight;
 }
-$('btnRefreshLogs').addEventListener('click', loadLogs);
-let logsTimer = setInterval(loadLogs, 3000);
-$('logsContainer').addEventListener('mouseenter', () => { clearInterval(logsTimer); $('logAutoStatus').textContent = '⏸ pausado'; });
-$('logsContainer').addEventListener('mouseleave', () => { logsTimer = setInterval(loadLogs, 3000); $('logAutoStatus').textContent = '⏵ auto'; });
+$('btnRefreshLogs').addEventListener('click', () => loadLogs());
+let logsTimer = null, logsPaused = false;
+function scheduleLogs() { if (!logsPaused) logsTimer = setTimeout(() => loadLogs(), 3000); }
+// Sobrescreve loadLogs para auto-agendar após cada execução
+const _origLoadLogs = loadLogs;
+loadLogs = async () => { await _origLoadLogs(); scheduleLogs(); };
+scheduleLogs();
+$('logsContainer').addEventListener('mouseenter', () => { logsPaused = true; clearTimeout(logsTimer); $('logAutoStatus').textContent = '⏸ pausado'; });
+$('logsContainer').addEventListener('mouseleave', () => { logsPaused = false; scheduleLogs(); $('logAutoStatus').textContent = '⏵ auto'; });
 
 // === AI Usage ===
 function fmtNumber(n) {
