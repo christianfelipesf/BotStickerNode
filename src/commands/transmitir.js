@@ -23,29 +23,37 @@ module.exports = {
         const quotedMsg = quotedInfo?.quotedMessage;
         let mediaBuf = null, mediaType = null, mimeType = null;
 
-        if (quotedMsg) {
-            const media = getMediaMessage(quotedMsg);
-            if (media) {
-                const mediaKey = Object.keys(media).find(k => k.endsWith('Message'));
-                if (mediaKey) {
-                    mediaType = mediaKey.replace('Message', '');
-                    mimeType = media[mediaKey]?.mimetype || '';
-                    try {
-                        const targetMsg = {
-                            key: { remoteJid: from, id: quotedInfo.stanzaId, participant: quotedInfo.participant || from },
-                            message: media
-                        };
-                        mediaBuf = await downloadMediaMessage(targetMsg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
-                    } catch (e) {
-                        console.error('[transmitir] download media error:', e.message);
-                    }
-                }
-                if (!text) text = media[mediaKey]?.caption || '';
-            }
-            if (!mediaBuf && !text) text = getMessageText(quotedMsg) || '';
+        // Tenta obter mídia: primeiro de mensagem respondida, depois da própria mensagem
+        let media = quotedMsg ? getMediaMessage(quotedMsg) : null;
+        let downloadKey = null;
+
+        if (!media) {
+            media = getMediaMessage(m.message);
+            if (media) downloadKey = m.key;
+        } else if (quotedInfo) {
+            downloadKey = { remoteJid: from, id: quotedInfo.stanzaId, participant: quotedInfo.participant || from };
         }
 
-        if (!text && !mediaBuf) return sock.sendMessage(from, { text: '❌ Use: !transmitir <mensagem> ou responda a uma mídia' }, { quoted: m });
+        if (media) {
+            const mediaKey = Object.keys(media).find(k => k.endsWith('Message'));
+            if (mediaKey && downloadKey) {
+                mediaType = mediaKey.replace('Message', '');
+                mimeType = media[mediaKey]?.mimetype || '';
+                try {
+                    mediaBuf = await downloadMediaMessage(
+                        { key: downloadKey, message: media },
+                        'buffer', {},
+                        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                    );
+                } catch (e) {
+                    console.error('[transmitir] download media error:', e.message);
+                }
+            }
+            if (!text) text = media[mediaKey]?.caption || '';
+        }
+
+        if (!text && !mediaBuf && quotedMsg) text = getMessageText(quotedMsg) || '';
+        if (!text && !mediaBuf) return sock.sendMessage(from, { text: '❌ Use: !transmitir <mensagem> ou envie/responda uma mídia' }, { quoted: m });
 
         let success = 0, fail = 0;
         let currentBotResponse = await react(sock, m, '📡', lastBotResponse, GLOBAL_COOLDOWN);
