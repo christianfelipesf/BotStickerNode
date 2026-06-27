@@ -810,7 +810,7 @@ function init(config) {
         res.type('html').sendFile(adminHtml);
     });
     app.get('/', (req, res) => {
-        res.type('html').sendFile(path.join(__dirname, 'downloader.html'));
+        res.type('html').sendFile(path.join(__dirname, 'menu.html'));
     });
 
     app.get('/dashboard', (req, res) => {
