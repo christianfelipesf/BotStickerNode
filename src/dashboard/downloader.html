@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baixar Mídia - WhatsApp Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100vh;color:#fff}
+.container{max-width:680px;margin:0 auto;padding:2rem 1rem}
+.header{display:flex;align-items:center;gap:1rem;margin-bottom:2rem}
+.back{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;text-decoration:none;color:#fff;font-size:1.2rem;transition:all .2s}
+.back:hover{background:rgba(255,255,255,.15)}
+.header h1{font-size:1.4rem;font-weight:600}
+.subtitle{color:#a0a0c0;font-size:.9rem;margin-bottom:1.5rem}
+.card{background:rgba(255,255,255,.06);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:1.5rem;margin-bottom:1.5rem}
+.input-group{display:flex;gap:.75rem;flex-wrap:wrap}
+.input-group input{flex:1;min-width:200px;padding:.85rem 1rem;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;font-size:.95rem;outline:none;transition:border .2s}
+.input-group input:focus{border-color:#667eea}
+.input-group input::placeholder{color:#666}
+.input-group button{padding:.85rem 1.6rem;border-radius:12px;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:.95rem;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.input-group button:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(102,126,234,.4)}
+.input-group button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.hd-toggle{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.85rem;color:#a0a0c0}
+.hd-toggle input[type=checkbox]{accent-color:#667eea;width:16px;height:16px;cursor:pointer}
+.platforms{margin-top:.75rem;font-size:.8rem;color:#666;line-height:1.6}
+.platforms strong{color:#a0a0c0}
+.status{display:none;padding:.85rem 1rem;border-radius:12px;margin-bottom:1rem;font-size:.9rem;align-items:center;gap:.6rem}
+.status.show{display:flex}
+.status.loading{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24}
+.status.error{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:#f87171}
+.status.success{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:#4ade80}
+.spinner{width:18px;height:18px;border:2px solid rgba(251,191,36,.3);border-top-color:#fbbf24;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.results{display:none;gap:.75rem;flex-direction:column}
+.results.show{display:flex}
+.result-item{display:flex;align-items:center;gap:1rem;padding:1rem;background:rgba(255,255,255,.06);border-radius:12px;border:1px solid rgba(255,255,255,.08);text-decoration:none;color:#fff;transition:all .2s}
+.result-item:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15)}
+.result-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0}
+.result-icon.video{background:linear-gradient(135deg,#f093fb,#f5576c)}
+.result-icon.image{background:linear-gradient(135deg,#4facfe,#00f2fe)}
+.result-icon.audio{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+.result-icon.file{background:linear-gradient(135deg,#fa709a,#fee140)}
+.result-info{flex:1;min-width:0}
+.result-info h3{font-size:.9rem;margin-bottom:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-info p{font-size:.78rem;color:#a0a0c0}
+.result-dl{width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;text-decoration:none;flex-shrink:0}
+.result-dl:hover{background:#667eea}
+.cache-info{text-align:center;font-size:.75rem;color:#555;margin-top:.5rem}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <a href="/" class="back">←</a>
+        <h1>Downloader de Mídia</h1>
+    </div>
+    <p class="subtitle">Cole o link de qualquer rede social e baixe a mídia diretamente pelo navegador</p>
+
+    <div class="card">
+        <div class="input-group">
+            <input type="url" id="urlInput" placeholder="https://www.instagram.com/reel/..." autocomplete="url" spellcheck="false">
+            <button id="downloadBtn">Baixar</button>
+        </div>
+        <div class="hd-toggle">
+            <input type="checkbox" id="hdToggle">
+            <label for="hdToggle">Qualidade HD (quando disponível)</label>
+        </div>
+        <div class="platforms">
+            <strong>Plataformas:</strong> Instagram, TikTok, YouTube, Facebook, Twitter/X, CapCut, Pinterest, Google Drive, MediaFire, Douyin, Spotify, SoundCloud, Threads, Kuaishou, Reddit, Google Imagens
+        </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="results" id="results"></div>
+</div>
+
+<script>
+const urlInput = document.getElementById('urlInput');
+const downloadBtn = document.getElementById('downloadBtn');
+const hdToggle = document.getElementById('hdToggle');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+function setStatus(type, msg) {
+    statusEl.className = 'status show ' + type;
+    if (type === 'loading') {
+        statusEl.innerHTML = '<div class="spinner"></div>' + msg;
+    } else {
+        statusEl.textContent = msg;
+    }
+}
+
+function hideStatus() {
+    statusEl.className = 'status';
+}
+
+function formatSize(bytes) {
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+    if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return bytes + ' B';
+}
+
+function getFileIcon(mime) {
+    if (mime.startsWith('video/')) return { cls: 'video', icon: '🎬' };
+    if (mime.startsWith('image/')) return { cls: 'image', icon: '🖼️' };
+    if (mime.startsWith('audio/')) return { cls: 'audio', icon: '🎵' };
+    return { cls: 'file', icon: '📁' };
+}
+
+function getFileName(mime) {
+    if (mime.startsWith('video/')) return 'video.mp4';
+    if (mime.startsWith('image/jpeg')) return 'imagem.jpg';
+    if (mime.startsWith('image/png')) return 'imagem.png';
+    if (mime.startsWith('image/gif')) return 'imagem.gif';
+    if (mime.startsWith('image/webp')) return 'imagem.webp';
+    if (mime.startsWith('audio/mpeg')) return 'audio.mp3';
+    if (mime.startsWith('audio/mp4')) return 'audio.m4a';
+    if (mime.startsWith('audio/ogg')) return 'audio.ogg';
+    return 'arquivo';
+}
+
+async function doDownload() {
+    const url = urlInput.value.trim();
+    if (!url) {
+        setStatus('error', 'Cole um link primeiro');
+        return;
+    }
+
+    const hd = hdToggle.checked;
+    downloadBtn.disabled = true;
+    hideStatus();
+    resultsEl.className = 'results';
+    resultsEl.innerHTML = '';
+    setStatus('loading', 'Analisando link e baixando mídia...');
+
+    try {
+        const res = await fetch('/api/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, hd })
+        });
+
+        const data = await res.json();
+
+        if (!data.ok) {
+            setStatus('error', data.error || 'Erro ao baixar mídia');
+            downloadBtn.disabled = false;
+            return;
+        }
+
+        setStatus('success', data.cached ? '✅ Mídia carregada do cache!' : '✅ Download concluído!');
+        resultsEl.className = 'results show';
+
+        const files = data.files || [data];
+
+        files.forEach((file, i) => {
+            const fi = getFileIcon(file.mime);
+            const size = formatSize(file.size);
+            const dlUrl = '/api/download-cache/' + encodeURIComponent(file.filename) + '/download';
+            const fileName = getFileName(file.mime);
+
+            const item = document.createElement('a');
+            item.className = 'result-item';
+            item.href = dlUrl;
+            item.target = '_blank';
+
+            item.innerHTML = `
+                <div class="result-icon ${fi.cls}">${fi.icon}</div>
+                <div class="result-info">
+                    <h3>${file.platform ? file.platform.charAt(0).toUpperCase() + file.platform.slice(1) : 'Mídia'} ${i > 0 ? (i + 1) : ''}</h3>
+                    <p>${file.mime.split('/')[1].toUpperCase()} &middot; ${size}</p>
+                </div>
+                <div class="result-dl" download="${fileName}">⬇</div>
+            `;
+
+            item.addEventListener('click', (e) => {
+                if (e.target.closest('.result-dl')) {
+                    e.preventDefault();
+                    const a = document.createElement('a');
+                    a.href = dlUrl;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }
+            });
+
+            resultsEl.appendChild(item);
+        });
+
+        if (data.cached) {
+            const info = document.createElement('div');
+            info.className = 'cache-info';
+            info.textContent = '📦 Servido do cache (expira em 1h)';
+            resultsEl.appendChild(info);
+        }
+
+    } catch (e) {
+        setStatus('error', 'Erro de conexão: ' + e.message);
+    }
+
+    downloadBtn.disabled = false;
+}
+
+downloadBtn.addEventListener('click', doDownload);
+urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doDownload();
+});
+</script>
+</body>
+</html>

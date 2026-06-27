@@ -26,6 +26,7 @@ const {
     deleteDashboardGroupInfo,
     insertDashboardVisit
 } = require('../database/utils');
+const webDownloader = require('../services/webDownloader');
 
 let ioServer = null;
 let sockRef = null;
@@ -760,11 +761,71 @@ function init(config) {
         res.type('html').sendFile(adminHtml);
     });
     app.get('/', (req, res) => {
+        res.type('html').sendFile(path.join(__dirname, 'menu.html'));
+    });
+
+    app.get('/dashboard', (req, res) => {
         const ip = getClientIp(req, true) || req.ip || 'unknown';
         const ua = req.headers['user-agent'] || '';
         const user = (req.session && req.session.adminUser) || 'visitante';
         insertDashboardVisit(user, ip, ua);
         res.type('html').send(getHtml(config.botName || 'Bot'));
+    });
+
+    app.get('/baixar', (req, res) => {
+        res.type('html').sendFile(path.join(__dirname, 'downloader.html'));
+    });
+
+    app.get('/download', (req, res) => {
+        res.redirect('/baixar');
+    });
+
+    app.post('/api/download', async (req, res) => {
+        try {
+            const { url, hd } = req.body || {};
+            if (!url) return json(res, false, { error: 'URL é obrigatória' }, 400);
+            const result = await webDownloader.downloadMedia(url, !!hd);
+            if (result.cached) {
+                return json(res, true, {
+                    cached: true,
+                    filename: result.filename,
+                    mime: result.mime,
+                    size: result.size
+                });
+            }
+            return json(res, true, {
+                cached: false,
+                files: result.files
+            });
+        } catch (e) {
+            return json(res, false, { error: e.message }, 400);
+        }
+    });
+
+    function serveCachedFile(filename, asDownload, req, res) {
+        if (!/^[a-zA-Z0-9_\-\.]+$/.test(filename)) return res.status(400).end();
+        const filePath = path.join(webDownloader.CACHE_DIR, filename);
+        const resolved = path.resolve(filePath);
+        const cacheRoot = path.resolve(webDownloader.CACHE_DIR);
+        if (!resolved.startsWith(cacheRoot)) return res.status(403).end();
+        if (!require('fs').existsSync(resolved)) return res.status(404).end();
+        const mime = webDownloader.getFileMime ? webDownloader.getFileMime(filePath) : 'application/octet-stream';
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        if (asDownload) {
+            res.setHeader('Content-Disposition', 'attachment; filename="' + filename.replace(/"/g, '') + '"');
+        }
+        require('fs').createReadStream(resolved).pipe(res);
+    }
+
+    app.get('/api/download-cache/:filename', (req, res) => {
+        try { serveCachedFile(req.params.filename, false, req, res); }
+        catch (e) { res.status(500).end(); }
+    });
+
+    app.get('/api/download-cache/:filename/download', (req, res) => {
+        try { serveCachedFile(req.params.filename, true, req, res); }
+        catch (e) { res.status(500).end(); }
     });
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
