@@ -54,7 +54,8 @@ function setConnectionState(state) {
             const cfg = safe(() => require('../database/utils').readConfig(), {});
             ioServer.emit('connection:update', {
                 ...getConnectionState(),
-                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true,
+                dashboardChatBlocked: cfg && cfg.dashboardChatBlocked === true
             });
         } catch (_) {}
     }
@@ -462,7 +463,8 @@ function init(config) {
             const cfg = safe(() => require('../database/utils').readConfig(), {});
             return json(res, true, {
                 ...getConnectionState(),
-                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true,
+                dashboardChatBlocked: cfg && cfg.dashboardChatBlocked === true
             });
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
@@ -476,11 +478,20 @@ function init(config) {
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
+    function isChatBlocked() {
+        try {
+            const cfg = safe(() => require('../database/utils').readConfig(), {});
+            return cfg && cfg.dashboardChatBlocked === true;
+        } catch (_) { return false; }
+    }
+
     app.post('/api/reply', (req, res, next) => {
+        if (isChatBlocked()) return res.status(503).json({ ok: false, error: 'Chat do dashboard bloqueado pelo admin' });
         if (!rateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitas requisições. Aguarde alguns segundos.' });
         next();
     }, apiHandler(sendReply));
     app.post('/api/send', (req, res, next) => {
+        if (isChatBlocked()) return res.status(503).json({ ok: false, error: 'Chat do dashboard bloqueado pelo admin' });
         if (!rateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitas requisições. Aguarde alguns segundos.' });
         next();
     }, apiHandler(sendDirect));
@@ -728,7 +739,8 @@ function init(config) {
             const cfg = safe(() => require('../database/utils').readConfig(), {});
             socket.emit('connection:update', {
                 ...getConnectionState(),
-                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true,
+                dashboardChatBlocked: cfg && cfg.dashboardChatBlocked === true
             });
         } catch (_) {}
         try {
@@ -1294,6 +1306,10 @@ async function getGroupName(jid) {
 
 function shouldEmit(data) {
     if (!data) return false;
+    try {
+        const cfg = safe(() => require('../database/utils').readConfig(), {});
+        if (cfg && cfg.dashboardChatBlocked === true) return false;
+    } catch (_) {}
     if (data.fromMe) return true;
     if (data.toJid && (data.toJid.endsWith('@g.us') || data.toJid.endsWith('@s.whatsapp.net') || data.toJid.endsWith('@c.us'))) return true;
     return false;

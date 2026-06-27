@@ -152,6 +152,7 @@
 
     async function sendCurrent() {
         if (!state.activeJid) return toast('Selecione um grupo');
+        if (state.chatBlocked) return toast('🔒 Chat bloqueado pelo admin');
         const tj = state.currentReply ? state.currentReply.toJid : state.activeJid;
         if (tj === D.ALL) return toast('Responda uma mensagem ou selecione um grupo');
         const text = (D.refs.messageInput ? D.refs.messageInput.value : '').trim();

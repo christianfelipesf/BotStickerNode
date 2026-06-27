@@ -10,10 +10,6 @@
 </head>
 <body data-screen="chats">
 <div class="app">
-    <div id="qrBanner" style="display:none;background:#1a1f2e;border-bottom:2px solid #d29922;padding:14px;text-align:center">
-        <div style="color:#d29922;font-size:13px;font-weight:600;margin-bottom:10px">📱 Bot desconectado — Escaneie o QR Code para reconectar</div>
-        <img id="qrImage" style="width:180px;height:180px;border-radius:8px;background:#fff;padding:8px;image-rendering:pixelated;display:inline-block;cursor:pointer" alt="QR Code">
-    </div>
     <aside class="col col-chats">
         <header class="ch-head">
             <div class="ch-head-row">
@@ -125,28 +121,5 @@
 <script src="/dashboard-client/stats.js"></script>
 <script src="/dashboard-client/socket.js"></script>
 <script src="/dashboard-client/index.js"></script>
-<script>
-(function() {
-    var qrBanner = document.getElementById('qrBanner');
-    var qrImage = document.getElementById('qrImage');
-    if (!qrBanner || !qrImage) return;
-
-    function updateQR(d) {
-        if (!d) return;
-        if (d.status === 'qr' && d.dashboardShowQR && d.qr) {
-            qrBanner.style.display = 'block';
-            qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(d.qr);
-        } else {
-            qrBanner.style.display = 'none';
-        }
-    }
-
-    window.__onConnUpdate = updateQR;
-
-    fetch('/api/connection-status').then(function(r) { return r.json(); }).then(function(d) {
-        if (d && d.ok) updateQR(d);
-    }).catch(function() {});
-})();
-</script>
 </body>
 </html>

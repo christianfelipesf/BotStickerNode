@@ -133,12 +133,12 @@ function rerender() {
 }
 
 function updateDashToggle() {
-    const on = cfg.dashboardEnabled !== false;
+    const on = cfg.dashboardChatBlocked !== true;
     const btn = $('btnDashToggle');
-    btn.textContent = on ? '🔌 Ativo' : '🔌 Desligado';
+    btn.textContent = on ? '💬 Ativo' : '💬 Bloqueado';
     btn.className = 'mgmt-btn' + (on ? '' : ' err');
-    btn.title = on ? 'Clique para desligar o painel' : 'Clique para ligar o painel';
-    $('dashStatus').textContent = on ? 'online' : 'offline';
+    btn.title = on ? 'Clique para bloquear o chat do dashboard' : 'Clique para liberar o chat do dashboard';
+    $('dashStatus').textContent = on ? 'chat liberado' : 'chat bloqueado';
     $('dashStatus').className = 'mgmt-status' + (on ? ' ok' : ' err');
 }
 
@@ -394,13 +394,12 @@ document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
 });
 
 $('btnDashToggle').addEventListener('click', async () => {
-    const on = cfg.dashboardEnabled !== false;
-    if (!confirm(on ? 'Desligar o dashboard? O painel web será desativado.' : 'Ligar o dashboard?')) return;
-    const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { dashboardEnabled: !on } } });
+    const on = cfg.dashboardChatBlocked !== true;
+    const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { dashboardChatBlocked: !on } } });
     if (!r.ok) { toast('Erro ao alterar', 'err'); return; }
-    cfg.dashboardEnabled = !on;
+    cfg.dashboardChatBlocked = !on;
     updateDashToggle();
-    toast(on ? 'Dashboard desligado' : 'Dashboard ligado', 'ok');
+    toast(on ? 'Chat do dashboard bloqueado' : 'Chat do dashboard liberado', 'ok');
 });
 
 function updateQRCodeToggle() {

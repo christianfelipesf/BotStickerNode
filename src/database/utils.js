@@ -94,7 +94,8 @@ const DEFAULT_CONFIG = {
     maxMediaDurationSeconds: 900,
     subSessionsGroups: true,
     dashboardMuted: false,
-    dashboardShowQR: false
+    dashboardShowQR: false,
+    dashboardChatBlocked: false
 };
 
 function readConfig() {

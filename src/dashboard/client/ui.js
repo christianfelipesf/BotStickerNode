@@ -15,6 +15,14 @@
 
         const frag = document.createDocumentFragment();
 
+        if (state.showQr && state.qrCode) {
+            const qr = document.createElement('li');
+            qr.className = 'group-item' + (state.activeJid === '__qr__' ? ' active' : '');
+            qr.innerHTML = `<div class="group-avatar" style="background:#d29922;color:#fff;">📱</div><div class="group-meta"><div class="group-name" style="color:#d29922">QR Code</div><div class="group-sub">Bot desconectado — escaneie para conectar</div></div><div class="group-side"><div class="group-dot" style="background:#d29922"></div></div>`;
+            qr.onclick = () => selG('__qr__');
+            frag.appendChild(qr);
+        }
+
         const all = document.createElement('li');
         all.className = 'group-item' + (state.activeJid === D.ALL ? ' active' : '');
         all.innerHTML = `<div class="group-avatar" style="background:var(--g);color:#00210e;">T</div><div class="group-meta"><div class="group-name">Todos</div><div class="group-sub">${ac} mensagem${ac !== 1 ? 's' : ''}</div></div>${ac ? `<div class="group-side"><div class="group-dot"></div><div class="group-badge">${ac > 99 ? '99+' : ac}</div></div>` : ''}`;
@@ -59,16 +67,38 @@
         }
     }
 
+    function updateComposerBlocked() {
+        if (state.activeJid === '__qr__') return;
+        const blocked = state.chatBlocked;
+        if (D.refs.messageInput) {
+            D.refs.messageInput.disabled = blocked;
+            D.refs.messageInput.placeholder = blocked ? 'Chat bloqueado pelo admin' : 'Mensagem';
+        }
+        if (D.refs.sendBtn) D.refs.sendBtn.disabled = blocked;
+        const ab = document.getElementById('attachBtn');
+        if (ab) ab.disabled = blocked;
+        if (blocked && D.refs.chat) {
+            const notice = document.getElementById('blockedNotice');
+            if (!notice && D.refs.chat) {
+                const n = document.createElement('div');
+                n.id = 'blockedNotice';
+                n.style.cssText = 'background:#f8514933;border:1px solid #f85149;border-radius:6px;padding:12px;margin:10px;text-align:center;font-size:13px;color:#f85149';
+                n.textContent = '🔒 Chat bloqueado pelo admin — apenas visualização';
+                D.refs.chat.parentNode.insertBefore(n, D.refs.chat);
+            }
+        } else {
+            const notice = document.getElementById('blockedNotice');
+            if (notice) notice.remove();
+        }
+    }
+
     function selAll() {
         state.activeJid = D.ALL;
         if (D.refs.chatName) D.refs.chatName.textContent = 'Todos os grupos';
         if (D.refs.chatSub) D.refs.chatSub.textContent = 'Visão geral de todas as conversas';
         if (D.refs.chatAvatar) D.refs.chatAvatar.innerHTML = '<div class="group-avatar" style="background:var(--g);color:#00210e;">T</div>';
         D.reply.clearReply();
-        if (D.refs.messageInput) D.refs.messageInput.disabled = false;
-        if (D.refs.sendBtn) D.refs.sendBtn.disabled = false;
-        const ab = document.getElementById('attachBtn');
-        if (ab) ab.disabled = false;
+        updateComposerBlocked();
         setScreen('chat');
         D.render.rerenderBatch();
         renderGroups();
@@ -77,6 +107,31 @@
     function selG(jid) {
         if (!jid) return;
         state.activeJid = jid;
+
+        if (jid === '__qr__') {
+            if (D.refs.chatName) D.refs.chatName.textContent = 'QR Code';
+            if (D.refs.chatSub) D.refs.chatSub.textContent = 'Bot desconectado';
+            if (D.refs.chatAvatar) {
+                D.refs.chatAvatar.innerHTML = '<div class="group-avatar" style="background:#d29922;color:#fff;font-size:20px">📱</div>';
+            }
+            D.reply.clearReply();
+            if (D.refs.messageInput) D.refs.messageInput.disabled = true;
+            if (D.refs.sendBtn) D.refs.sendBtn.disabled = true;
+            const ab = document.getElementById('attachBtn');
+            if (ab) ab.disabled = true;
+            setScreen('chat');
+            const chat = D.refs.chat;
+            if (chat) {
+                chat.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:20px;text-align:center;color:#9aa6b2;font-size:14px">'
+                    + '<div style="font-size:16px;font-weight:600;color:#d29922;margin-bottom:16px">📱 Escaneie o QR Code para reconectar</div>'
+                    + '<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(state.qrCode || '') + '" style="width:250px;height:250px;border-radius:12px;background:#fff;padding:10px;image-rendering:pixelated;margin-bottom:16px">'
+                    + '<div style="font-size:12px;max-width:300px">Abra o WhatsApp no seu celular, vá em <strong>Menu › Aparelhos conectados › Conectar um dispositivo</strong> e escaneie o QR Code acima.</div>'
+                    + '</div>';
+            }
+            renderGroups();
+            return;
+        }
+
         const g = state.groups.find(x => x.jid === jid);
         const s = (g && g.subject) || jid.split('@')[0];
         if (D.refs.chatName) D.refs.chatName.textContent = s;
@@ -87,10 +142,7 @@
                 : `<div class="group-avatar">${esc(initials(s))}</div>`;
         }
         D.reply.clearReply();
-        if (D.refs.messageInput) D.refs.messageInput.disabled = false;
-        if (D.refs.sendBtn) D.refs.sendBtn.disabled = false;
-        const ab = document.getElementById('attachBtn');
-        if (ab) ab.disabled = false;
+        updateComposerBlocked();
         setScreen('chat');
         D.render.rerenderBatch();
         renderGroups();
@@ -169,6 +221,7 @@
         setScreen,
         toggleTheme,
         applyTheme,
-        bind: bindSidebar
+        bind: bindSidebar,
+        updateComposerBlocked
     };
 })(window.Dashboard = window.Dashboard || {});
