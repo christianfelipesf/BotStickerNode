@@ -207,6 +207,30 @@ button{font:inherit}
 }
 @media (min-width:769px) and (max-width:1100px){.app{grid-template-columns:minmax(240px,280px) 1fr minmax(240px,280px)}}
 
+/* Tema claro WhatsApp */
+[data-theme="light"]{
+    --bg:#efeae2;--sb:#ffffff;--pn:#ffffff;--pn2:#f0f2f5;
+    --b:rgba(0,0,0,.08);--tx:#111b21;--dm:#667781;
+    --g:#00a884;--t:#00a884;--bl:#00a884;--w:#ffb84d;--er:#ff8182;
+}
+[data-theme="light"] .from-me .msg-bubble{background:#d9fdd3;color:#111b21}
+[data-theme="light"] .from-me .msg-author{color:#1f2e25}
+[data-theme="light"] .cb-body{background:#efeae2;box-shadow:none}
+[data-theme="light"] .msg-bubble{background:#ffffff}
+[data-theme="light"] body{background:var(--bg)}
+[data-theme="light"] .group-badge{color:#fff}
+[data-theme="light"] .group-item.active{background:#f0f2f5}
+[data-theme="light"] #groupSearch{background:#ffffff;border:1px solid #e0e0e0}
+[data-theme="light"] #groupSearch:focus{border-color:var(--g)}
+[data-theme="light"] .sb-btn{background:#ffffff;border:1px solid #e0e0e0;color:#111b21}
+[data-theme="light"] .sb-btn:hover{background:#f0f2f5}
+[data-theme="light"] .sb-btn.active{background:var(--g);color:#fff;border-color:var(--g)}
+[data-theme="light"] .send-btn{background:var(--g);color:#fff}
+[data-theme="light"] .icon-btn{background:#ffffff;color:#54656f}
+[data-theme="light"] .cb-input-wrap{background:#ffffff}
+[data-theme="light"] ::-webkit-scrollbar-thumb{background:#cccccc}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#aaaaaa}
+
 /* Scrollbars */
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:#1f1f1f;border-radius:999px}

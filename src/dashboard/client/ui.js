@@ -33,8 +33,10 @@
                 const c = arr.length;
                 const r = arr.slice(-1)[0];
                 const recent = r && (Date.now() - (r.timestamp || 0) < 5 * 60 * 1000);
+                const senderPrefix = r && r.name ? `${r.name}: ` : '';
+                const maxText = Math.max(1, 40 - senderPrefix.length);
                 const sub = r
-                    ? (r.text ? r.text.slice(0, 40) : (r.media ? '📎 Mídia' : `${c} mensagem${c !== 1 ? 's' : ''}`))
+                    ? (senderPrefix + (r.text ? r.text.slice(0, maxText) : (r.media ? '📎 Mídia' : `${c} mensagem${c !== 1 ? 's' : ''}`)))
                     : `${c} mensagem${c !== 1 ? 's' : ''}`;
                 const li = document.createElement('li');
                 li.className = 'group-item' + (g.jid === state.activeJid ? ' active' : '');
@@ -94,48 +96,20 @@
         renderGroups();
     }
 
-    function toggleSound() {
-        state.soundEnabled = !state.soundEnabled;
-        if (D.refs.notifBtn) {
-            D.refs.notifBtn.innerText = state.soundEnabled ? 'SOM ON' : 'SOM';
-            D.refs.notifBtn.classList.toggle('active', state.soundEnabled);
-        }
-        if (state.soundEnabled) D.utils.play(D.refs.soundChat);
-        localStorage.setItem('wa_sound', state.soundEnabled ? '1' : '0');
-    }
-
-    function togglePush() {
-        if (!state.pushEnabled) {
-            if (!('Notification' in window)) return alert('Sem suporte a notificações.');
-            Notification.requestPermission().then(p => {
-                if (p === 'granted') {
-                    state.pushEnabled = true;
-                    if (D.refs.pushBtn) {
-                        D.refs.pushBtn.innerText = 'PUSH ON';
-                        D.refs.pushBtn.classList.add('active');
-                    }
-                }
-            });
-        } else {
-            state.pushEnabled = false;
-            if (D.refs.pushBtn) {
-                D.refs.pushBtn.innerText = 'PUSH';
-                D.refs.pushBtn.classList.remove('active');
-            }
-        }
-        localStorage.setItem('wa_push', state.pushEnabled ? '1' : '0');
+    function setTheme(t) {
+        const theme = t || localStorage.getItem('wa_theme') || 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('wa_theme', theme);
+        document.querySelectorAll('.theme-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.theme === theme);
+        });
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = theme === 'light' ? '#ffffff' : '#0b141a';
     }
 
     function applyTheme() {
-        document.documentElement.setAttribute('data-theme', 'oled');
-        if (state.soundEnabled && D.refs.notifBtn) {
-            D.refs.notifBtn.innerText = 'SOM ON';
-            D.refs.notifBtn.classList.add('active');
-        }
-        if (state.pushEnabled && D.refs.pushBtn) {
-            D.refs.pushBtn.innerText = 'PUSH ON';
-            D.refs.pushBtn.classList.add('active');
-        }
+        const saved = localStorage.getItem('wa_theme') || 'light';
+        setTheme(saved);
     }
 
     function bindSidebar() {
@@ -189,8 +163,7 @@
         selAll,
         selG,
         setScreen,
-        toggleSound,
-        togglePush,
+        setTheme,
         applyTheme,
         bind: bindSidebar
     };

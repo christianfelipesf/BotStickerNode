@@ -8,8 +8,6 @@ module.exports = {
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, isDashboardEnabled, setDashboardEnabled, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
 
-        if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
-
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
@@ -23,7 +21,7 @@ module.exports = {
         }
 
         if (!allowed) {
-            const msg = canAdminControl()
+            const msg = canAdminControl() && isGroup
                 ? '❌ Apenas o dono do bot ou admins do grupo podem ativar/desativar o log no painel.'
                 : '❌ Apenas o dono do bot pode ativar/desativar o log no painel.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });

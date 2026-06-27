@@ -71,8 +71,7 @@
                 soundChat: $('sound-chat'),
                 soundAction: $('sound-action'),
                 soundError: $('sound-error'),
-                notifBtn: $('notif-btn'),
-                pushBtn: $('push-btn'),
+
                 ctxBar: $('ctxBar'),
                 cardForm: $('cardForm'),
                 cardTitle: $('cardTitle'),

@@ -22,6 +22,7 @@ const {
     upsertDashboardGroupInfo,
     getDashboardGroupInfo,
     listDashboardGroupInfos,
+    listDashboardGroups,
     deleteDashboardGroupInfo,
     insertDashboardVisit
 } = require('../database/utils');
@@ -254,6 +255,25 @@ async function getGroupsSnapshot(options = {}) {
     }
     const results = await Promise.all(tasks);
     const out = results.filter(Boolean);
+
+    // Adiciona chats privados que têm dashboard ativo
+    try {
+        const allEnabled = listDashboardGroups();
+        for (const jid of allEnabled) {
+            if (!seen.has(jid) && !jid.endsWith('@g.us')) {
+                seen.add(jid);
+                out.push({
+                    jid,
+                    subject: jid.split('@')[0] || jid,
+                    pictureUrl: null,
+                    memberCount: 0,
+                    ownerJid: null,
+                    desc: null
+                });
+            }
+        }
+    } catch (_) {}
+
     return out.sort((a, b) => String(a.subject).localeCompare(String(b.subject), 'pt-BR'));
 }
 
@@ -1225,7 +1245,8 @@ async function sendDirect(payload) {
 }
 
 async function getGroupName(jid) {
-    if (!sockRef || !jid?.endsWith('@g.us')) return jid;
+    if (!sockRef) return jid;
+    if (!jid?.endsWith('@g.us')) return jid.split('@')[0] || jid;
     const info = await getGroupInfo({ jid }, true);
     return info?.subject || fallbackGroupSubject(jid);
 }
@@ -1233,7 +1254,7 @@ async function getGroupName(jid) {
 function shouldEmit(data) {
     if (!data) return false;
     if (data.fromMe) return true;
-    if (data.toJid && data.toJid.endsWith('@g.us')) return true;
+    if (data.toJid && (data.toJid.endsWith('@g.us') || data.toJid.endsWith('@s.whatsapp.net') || data.toJid.endsWith('@c.us'))) return true;
     return false;
 }
 

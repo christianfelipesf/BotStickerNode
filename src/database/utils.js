@@ -357,6 +357,7 @@ const _dlCount = db.prepare('SELECT COUNT(*) as c FROM dashboard_logs');
 const _dlUpdateReactions = db.prepare('UPDATE dashboard_logs SET reactions = ? WHERE to_jid = ? AND message_id = ? AND type = ?');
 const _dlUpdateMedia = db.prepare('UPDATE dashboard_logs SET media_json = ? WHERE to_jid = ? AND message_id = ? AND type = ?');
 const _dlClear = db.prepare('DELETE FROM dashboard_logs');
+const _dlDeleteByJid = db.prepare('DELETE FROM dashboard_logs WHERE to_jid = ?');
 const _dlSelectWithDataMedia = db.prepare('SELECT to_jid, message_id, type, media_json FROM dashboard_logs WHERE media_json LIKE \'%data:image%\' OR media_json LIKE \'%data:video%\' OR media_json LIKE \'%data:audio%\' LIMIT ?');
 
 function _rowToLog(row) {
@@ -437,6 +438,11 @@ function clearDashboardLogs() {
         try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
         return before;
     } catch (e) { return 0; }
+}
+
+function deleteDashboardLogsByJid(jid) {
+    if (!jid) return false;
+    try { _dlDeleteByJid.run(jid); return true; } catch (_) { return false; }
 }
 
 // ============================================================
@@ -901,7 +907,7 @@ module.exports = {
     getNewsState, setNewsState, clearNewsState, clearAllNewsState,
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
-    clearDashboardLogs, getDashboardLogByMessageId,
+    clearDashboardLogs, deleteDashboardLogsByJid, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     insertDashboardVisit, getActiveUsers, getVisitHistory, cleanupDashboardVisits,
     flushNow, checkpointWal,

@@ -158,7 +158,7 @@ module.exports = {
             if (await handleProtocolMessage(sock, m, from, sender, senderName)) return;
 
             const botActive = !isGroup || isActiveGroup(from);
-            const dashOn = isGroup && isDashboardEnabled(from);
+            const dashOn = isDashboardEnabled(from);
 
             // === Mute & Antilink enforcement ===
             if (isGroup && botActive) {
@@ -168,7 +168,9 @@ module.exports = {
 
             // === Dashboard logging (mídia baixada em background via fila) ===
             if (dashOn) {
-                const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
+                const groupMetadata = isGroup
+                    ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }))
+                    : { subject: senderName || 'Privado', participants: [] };
                 await handleDashboardLog(sock, m, from, sender, senderName, text, groupMetadata);
             }
 
@@ -202,7 +204,7 @@ module.exports = {
             if (!cmd) return;
 
             // === Activation control commands always work ===
-            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel'];
+            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel', 'dashdel', 'dashremover', 'dashremove'];
             const isPartActive = isGroup && isPartialActive(from);
             if (isGroup && !botActive && !isPartActive && !activationControlCmds.includes(cmd.name)) {
                 return;

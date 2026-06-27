@@ -39,8 +39,7 @@
         },
 
         // Preferências do usuário (persistidas em localStorage)
-        soundEnabled: localStorage.getItem('wa_sound') === '1',
-        pushEnabled: localStorage.getItem('wa_push') === '1',
+        soundEnabled: true,
 
         // Lista achatada de todas as mensagens (calculada)
         allMsgs: function () {

@@ -96,12 +96,17 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
 async function handleProtocolMessage(sock, m, from, sender, senderName) {
     const protocolMsg = m.message?.protocolMessage || m.message?.ephemeralMessage?.message?.protocolMessage;
     if (!protocolMsg || protocolMsg.type !== 3) return false;
-    const groupMetadata = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
-    safeDashboardRememberGroup(from, {
-        subject: groupMetadata.subject,
-        memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
-        ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
-    });
+    const isGroup = from.endsWith('@g.us');
+    const groupMetadata = isGroup
+        ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }))
+        : { subject: senderName || 'Privado' };
+    if (isGroup) {
+        safeDashboardRememberGroup(from, {
+            subject: groupMetadata.subject,
+            memberCount: Array.isArray(groupMetadata.participants) ? groupMetadata.participants.length : undefined,
+            ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
+        });
+    }
     safeDashboardLog('chat', groupMetadata.subject, '📑 [Apagou uma mensagem]', senderName, sender.split('@')[0], null,
         { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe, ephemeral: !!m.message?.ephemeralMessage }
     );
@@ -111,7 +116,7 @@ async function handleProtocolMessage(sock, m, from, sender, senderName) {
 async function handleReaction(sock, m, from, sender, senderName) {
     const reactionMsg = m.message?.reactionMessage || m.message?.ephemeralMessage?.message?.reactionMessage;
     if (!reactionMsg) return false;
-    if (from.endsWith('@g.us') && isDashboardEnabled(from)) {
+    if (isDashboardEnabled(from)) {
         const targetId = reactionMsg.key.id;
         const emoji = reactionMsg.text || '';
         const { handleReaction: handleDashReaction } = require('../dashboard/dashboard');
