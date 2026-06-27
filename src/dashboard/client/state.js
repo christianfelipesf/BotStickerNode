@@ -3,10 +3,8 @@
     'use strict';
 
     D.state = {
-        // QR Code do bot quando desconectado (para exibir no chat)
         showQr: false,
         qrCode: null,
-        qrMsgId: null,
 
         // Chat bloqueado pelo admin (dashboardChatBlocked)
         chatBlocked: false,

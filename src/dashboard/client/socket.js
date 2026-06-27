@@ -143,35 +143,16 @@
                 renderGroups();
             }
             if (state.showQr && d.qr) {
-                state.qrMsgId = 'qr-' + (d.qr.length > 10 ? d.qr.slice(0, 10) : d.qr);
-                const msg = {
-                    type: 'chat',
-                    group: 'QR Code',
-                    text: 'Escaneie o QR Code abaixo para conectar o WhatsApp',
-                    name: 'Sistema',
-                    phone: 'qr',
-                    media: {
-                        type: 'image',
-                        url: 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(d.qr)
-                    },
-                    timestamp: Date.now(),
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    toJid: '__qr__',
-                    messageId: state.qrMsgId,
-                    fromMe: false
-                };
-                if (!state.msgsByJid['__qr__']) state.msgsByJid['__qr__'] = [];
-                const exists = state.msgsByJid['__qr__'].some(m => m.messageId === state.qrMsgId);
-                if (!exists) state.msgsByJid['__qr__'].push(msg);
+                if (state.activeJid === '__qr__') {
+                    D.ui.updateQRImage();
+                }
             } else if (!state.showQr && wasQr) {
-                delete state.msgsByJid['__qr__'];
                 if (state.activeJid === '__qr__') {
                     state.activeJid = D.ALL;
                     D.ui.selAll();
                 }
             }
             renderGroups();
-            if (state.activeJid === '__qr__') rerender();
         });
 
         sock.on('reset', () => {

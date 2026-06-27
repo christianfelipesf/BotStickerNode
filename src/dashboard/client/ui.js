@@ -241,6 +241,15 @@
         }
     }
 
+    function updateQRImage() {
+        if (state.activeJid !== '__qr__' || !state.qrCode) return;
+        var img = document.querySelector('#chat img[alt="QR Code"]');
+        if (img) {
+            img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(state.qrCode);
+        }
+        if (window.__loadQRInfo) window.__loadQRInfo();
+    }
+
     D.ui = {
         renderGroups,
         selAll,
@@ -249,6 +258,7 @@
         toggleTheme,
         applyTheme,
         bind: bindSidebar,
-        updateComposerBlocked
+        updateComposerBlocked,
+        updateQRImage
     };
 })(window.Dashboard = window.Dashboard || {});

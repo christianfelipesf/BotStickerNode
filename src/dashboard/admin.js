@@ -735,10 +735,6 @@ async function loadConnectionStatus() {
     }
 }
 
-// Verificar atualizações ao carregar a página
-load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); updateQRCodeToggle(); });
-let connTimer = setInterval(loadConnectionStatus, 4000);
-
 // === QR Control ===
 async function loadQRStatus() {
     const infoEl = $('qrAttemptInfo');
@@ -747,13 +743,13 @@ async function loadQRStatus() {
     try { r = await api('/api/admin/qr-status'); } catch {}
     if (!r || !r.ok) return;
     const d = r.data || {};
-    const attempts = d.attempts || 0;
+    const att = d.attempts || 0;
     const maxAtt = d.maxAttempts || 3;
     const stopped = d.stopped === true;
     if (stopped) {
-        infoEl.innerHTML = `<span style="color:#f85149">⛔ Parado (${attempts}/${maxAtt})</span>`;
-    } else if (attempts > 0) {
-        infoEl.innerHTML = `<span style="color:#d29922">🟡 Tentativa ${attempts}/${maxAtt}</span>`;
+        infoEl.innerHTML = `<span style="color:#f85149">⛔ Parado (${att}/${maxAtt})</span>`;
+    } else if (att > 0) {
+        infoEl.innerHTML = `<span style="color:#d29922">🟡 Tentativa ${att}/${maxAtt}</span>`;
     } else {
         infoEl.innerHTML = '';
     }
@@ -777,3 +773,7 @@ loadConnectionStatus = async () => {
     await _origLoadConn();
     loadQRStatus();
 };
+
+// Verificar atualizações ao carregar a página
+load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); updateQRCodeToggle(); });
+let connTimer = setInterval(loadConnectionStatus, 4000);
