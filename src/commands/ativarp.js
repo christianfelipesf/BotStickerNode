@@ -1,3 +1,5 @@
+const safeDashboardLog = (...args) => { try { require('../dashboard/dashboard').log(...args); } catch (_) {} };
+
 module.exports = {
     name: 'ativarp',
     category: 'grupos',
@@ -28,6 +30,10 @@ module.exports = {
         const success = activatePartial(from);
         const waitSec = Math.round(getPartialWaitMs() / 1000);
         console.log(`🟡 [BOT-PARCIAL] ativado em ${from} por @${senderNorm.split('@')[0]} (wait=${waitSec}s)`);
+        try {
+            const gm = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+            safeDashboardLog('action', gm.subject, `🟡 Ativamento Parcial ativado (wait=${waitSec}s)`, senderNorm.split('@')[0], senderNorm.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+        } catch (_) {}
         if (!success) {
             return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
         }

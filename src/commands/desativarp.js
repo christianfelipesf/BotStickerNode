@@ -1,3 +1,5 @@
+const safeDashboardLog = (...args) => { try { require('../dashboard/dashboard').log(...args); } catch (_) {} };
+
 module.exports = {
     name: 'desativarp',
     category: 'grupos',
@@ -27,6 +29,10 @@ module.exports = {
 
         const success = deactivatePartial(from);
         console.log(`🟡 [BOT-PARCIAL] desativado em ${from} por @${senderNorm.split('@')[0]}`);
+        try {
+            const gm = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));
+            safeDashboardLog('action', gm.subject, `🔴 Ativamento Parcial desativado`, senderNorm.split('@')[0], senderNorm.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+        } catch (_) {}
         if (!success) {
             return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
         }
