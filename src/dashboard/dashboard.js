@@ -694,6 +694,54 @@ function init(config) {
             res.status(500).json({ ok: false, error: e.message });
         }
     });
+    app.post('/api/download', async (req, res) => {
+        try {
+            const { url, hd } = req.body || {};
+            if (!url) return json(res, false, { error: 'URL é obrigatória' }, 400);
+            const result = await webDownloader.downloadMedia(url, !!hd);
+            if (result.cached) {
+                return json(res, true, {
+                    cached: true,
+                    filename: result.filename,
+                    mime: result.mime,
+                    size: result.size
+                });
+            }
+            return json(res, true, {
+                cached: false,
+                files: result.files
+            });
+        } catch (e) {
+            return json(res, false, { error: e.message }, 400);
+        }
+    });
+
+    function serveCachedFile(filename, asDownload, req, res) {
+        if (!/^[a-zA-Z0-9_\-\.]+$/.test(filename)) return res.status(400).end();
+        const filePath = path.join(webDownloader.CACHE_DIR, filename);
+        const resolved = path.resolve(filePath);
+        const cacheRoot = path.resolve(webDownloader.CACHE_DIR);
+        if (!resolved.startsWith(cacheRoot)) return res.status(403).end();
+        if (!require('fs').existsSync(resolved)) return res.status(404).end();
+        const mime = webDownloader.getFileMime ? webDownloader.getFileMime(filePath) : 'application/octet-stream';
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        if (asDownload) {
+            res.setHeader('Content-Disposition', 'attachment; filename="' + filename.replace(/"/g, '') + '"');
+        }
+        require('fs').createReadStream(resolved).pipe(res);
+    }
+
+    app.get('/api/download-cache/:filename', (req, res) => {
+        try { serveCachedFile(req.params.filename, false, req, res); }
+        catch (e) { res.status(500).end(); }
+    });
+
+    app.get('/api/download-cache/:filename/download', (req, res) => {
+        try { serveCachedFile(req.params.filename, true, req, res); }
+        catch (e) { res.status(500).end(); }
+    });
+
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Endpoint nao encontrado' }));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/admin.js', (req, res) => {
@@ -780,53 +828,7 @@ function init(config) {
         res.redirect('/baixar');
     });
 
-    app.post('/api/download', async (req, res) => {
-        try {
-            const { url, hd } = req.body || {};
-            if (!url) return json(res, false, { error: 'URL é obrigatória' }, 400);
-            const result = await webDownloader.downloadMedia(url, !!hd);
-            if (result.cached) {
-                return json(res, true, {
-                    cached: true,
-                    filename: result.filename,
-                    mime: result.mime,
-                    size: result.size
-                });
-            }
-            return json(res, true, {
-                cached: false,
-                files: result.files
-            });
-        } catch (e) {
-            return json(res, false, { error: e.message }, 400);
-        }
-    });
 
-    function serveCachedFile(filename, asDownload, req, res) {
-        if (!/^[a-zA-Z0-9_\-\.]+$/.test(filename)) return res.status(400).end();
-        const filePath = path.join(webDownloader.CACHE_DIR, filename);
-        const resolved = path.resolve(filePath);
-        const cacheRoot = path.resolve(webDownloader.CACHE_DIR);
-        if (!resolved.startsWith(cacheRoot)) return res.status(403).end();
-        if (!require('fs').existsSync(resolved)) return res.status(404).end();
-        const mime = webDownloader.getFileMime ? webDownloader.getFileMime(filePath) : 'application/octet-stream';
-        res.setHeader('Content-Type', mime);
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-        if (asDownload) {
-            res.setHeader('Content-Disposition', 'attachment; filename="' + filename.replace(/"/g, '') + '"');
-        }
-        require('fs').createReadStream(resolved).pipe(res);
-    }
-
-    app.get('/api/download-cache/:filename', (req, res) => {
-        try { serveCachedFile(req.params.filename, false, req, res); }
-        catch (e) { res.status(500).end(); }
-    });
-
-    app.get('/api/download-cache/:filename/download', (req, res) => {
-        try { serveCachedFile(req.params.filename, true, req, res); }
-        catch (e) { res.status(500).end(); }
-    });
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
         const error = status === 413 ? 'Arquivo muito grande para enviar pelo dashboard' : 'JSON invalido';
