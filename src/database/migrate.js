@@ -39,7 +39,7 @@ function migrateLegacyUnifiedDB() {
             const existing = db.prepare('SELECT activity FROM group_state WHERE jid = ?').get(jid);
             const cur = existing ? JSON.parse(existing.activity) : {};
             for (const [sender, info] of Object.entries(members || {})) cur[sender] = info;
-            db.prepare('INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)').run(jid, '[]', '{}', 0, JSON.stringify(cur));
+            db.prepare('UPDATE group_state SET activity = ? WHERE jid = ?').run(JSON.stringify(cur), jid);
         }
         try { db.prepare('DELETE FROM kv WHERE key = ?').run('bot_state_v1'); } catch (_) {}
         console.log('✅ Migração do banco unificado concluída');
@@ -99,7 +99,11 @@ function migrateLegacyActiveGroups() {
             if (s.menuImage) fixed.menuImage = s.menuImage;
             if (Object.keys(fixed).length > 0) newGroups[jid] = fixed;
         }
-        json.groups = newGroups;
+        for (const [jid, g] of Object.entries(newGroups)) {
+            if (!json.groups[jid]) json.groups[jid] = {};
+            if (g.botName) json.groups[jid].botName = g.botName;
+            if (g.menuImage) json.groups[jid].menuImage = g.menuImage;
+        }
         json.stats._settingsMigrated = Date.now();
         json.stats._activeGroupsMigrated = Date.now();
         const tmp = legacyDbPath + '.tmp';

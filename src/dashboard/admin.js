@@ -387,7 +387,7 @@ document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
 const LOG_COLORS = { error: '#FF5555', warn: '#FFAA00', info: '#55CCCC', log: '#55FF55' };
 const LOG_ICONS = { error: '✖', warn: '⚠', info: 'ℹ', log: '✓' };
 
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+const escHtml = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 async function loadLogs() {
     let r;
@@ -423,8 +423,6 @@ $('logsContainer').addEventListener('mouseenter', () => { clearInterval(logsTime
 $('logsContainer').addEventListener('mouseleave', () => { logsTimer = setInterval(loadLogs, 3000); $('logAutoStatus').textContent = '⏵ auto'; });
 
 // === AI Usage ===
-function escHtml(s) { return s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
 function fmtNumber(n) {
     if (n == null) return '0';
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';

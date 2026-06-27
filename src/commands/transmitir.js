@@ -21,7 +21,7 @@ module.exports = {
         let text = fullArgsText.trim();
         const quotedInfo = m.message?.extendedTextMessage?.contextInfo;
         const quotedMsg = quotedInfo?.quotedMessage;
-        let mediaBuf = null, mediaType = null, mimeType = null;
+        let mediaBuf = null, mediaType = null, mimeType = null, mediaFailed = false;
 
         // Tenta obter mídia: primeiro de mensagem respondida, depois da própria mensagem
         let media = quotedMsg ? getMediaMessage(quotedMsg) : null;
@@ -31,7 +31,9 @@ module.exports = {
             media = getMediaMessage(m.message);
             if (media) downloadKey = m.key;
         } else if (quotedInfo) {
-            downloadKey = { remoteJid: from, id: quotedInfo.stanzaId, participant: quotedInfo.participant || from };
+            const quotedSender = quotedInfo.participant || from;
+            const isFromMe = utils.normalizeJid(quotedSender) === utils.normalizeJid(sock.user.id);
+            downloadKey = { remoteJid: from, id: quotedInfo.stanzaId, participant: quotedSender, fromMe: isFromMe };
         }
 
         if (media) {
@@ -47,6 +49,7 @@ module.exports = {
                     );
                 } catch (e) {
                     console.error('[transmitir] download media error:', e.message);
+                    mediaFailed = true;
                 }
             }
             if (!text) text = media[mediaKey]?.caption || '';
@@ -73,7 +76,9 @@ module.exports = {
             await sleep(1200);
         }
 
-        await sock.sendMessage(from, { text: `✅ Transmissão concluída: ${success} sucesso(s), ${fail} falha(s)` }, { quoted: m });
+        let resultMsg = `✅ Transmissão concluída: ${success} sucesso(s), ${fail} falha(s)`;
+        if (mediaFailed) resultMsg += `\n⚠️ Mídia não pôde ser baixada, apenas o texto foi transmitido`;
+        await sock.sendMessage(from, { text: resultMsg }, { quoted: m });
         return currentBotResponse;
     }
 };

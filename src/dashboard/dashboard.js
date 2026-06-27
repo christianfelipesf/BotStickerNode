@@ -103,7 +103,7 @@ function readCpuUsage() {
 function isValidGroupJid(jid) {
     return typeof jid === 'string'
         && jid.endsWith('@g.us')
-        && /^(\d{10,}|\d{5,}-\d{5,})@g\.us$/.test(jid);
+        && /^\d[\d\-]+\d@g\.us$/.test(jid);
 }
 
 function fallbackGroupSubject(jid) {
@@ -293,7 +293,7 @@ function init(config) {
 
     app.post('/api/admin/login', (req, res) => {
         const { username, password } = req.body || {};
-        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ip = getClientIp(req, true) || req.ip || 'unknown';
         const ua = req.headers['user-agent'] || '';
         if (!username || !password || !adminAuth.verify(username, password)) {
             insertDashboardVisit(username || 'unknown', ip, ua);
@@ -631,19 +631,19 @@ function init(config) {
     const adminHtml = path.join(__dirname, 'admin.html');
     app.get('/admin', (req, res) => {
         if (!(req.session && req.session.adminUser)) return res.redirect('/admin/login');
-        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ip = getClientIp(req, true) || req.ip || 'unknown';
         const ua = req.headers['user-agent'] || '';
         insertDashboardVisit(req.session.adminUser, ip, ua);
         res.type('html').sendFile(adminHtml);
     });
     app.get('/admin/login', (req, res) => {
-        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ip = getClientIp(req, true) || req.ip || 'unknown';
         const ua = req.headers['user-agent'] || '';
         insertDashboardVisit('visitante', ip, ua);
         res.type('html').sendFile(adminHtml);
     });
     app.get('/', (req, res) => {
-        const ip = getClientIp(req) || req.ip || 'unknown';
+        const ip = getClientIp(req, true) || req.ip || 'unknown';
         const ua = req.headers['user-agent'] || '';
         const user = (req.session && req.session.adminUser) || 'visitante';
         insertDashboardVisit(user, ip, ua);
@@ -760,17 +760,7 @@ function init(config) {
     return ioServer;
 }
 
-function getClientIp(req) {
-    try {
-        const xf = req.headers['x-forwarded-for'];
-        if (typeof xf === 'string' && xf.length > 0) {
-            return xf.split(',')[0].trim();
-        }
-        return req.socket?.remoteAddress || req.ip || null;
-    } catch (_) { return null; }
-}
-
-function isJidAllowed(jid) {
+async function isJidAllowed(jid) {
     if (!jid || typeof jid !== 'string') return false;
     try {
         if (groupsSnapshotCache && Array.isArray(groupsSnapshotCache.list)) {
@@ -779,7 +769,7 @@ function isJidAllowed(jid) {
     } catch (_) {}
     try {
         if (groupsApi) {
-            const items = groupsApi();
+            const items = await groupsApi();
             if (Array.isArray(items) && items.some(it => {
                 const id = typeof it === 'string' ? it : it?.jid;
                 return id === jid;
@@ -1163,7 +1153,7 @@ async function sendReply(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
     const { toJid, text, quotedId, quotedParticipant, quotedFromMe, quotedText, media, contextInfo } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
-    if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
+    if (!await isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
     const hasText = !!(text && String(text).trim().length > 0);
     const hasMedia = !!(media && media.dataBase64 && (media.type || media.sendType));
@@ -1210,7 +1200,7 @@ async function sendDirect(payload) {
     if (!sockRef) return { ok: false, error: 'Bot não conectado' };
     const { toJid, text, media, contextInfo } = payload || {};
     if (!toJid) return { ok: false, error: 'Dados incompletos' };
-    if (!isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
+    if (!await isJidAllowed(toJid)) return { ok: false, error: 'Grupo não autorizado' };
 
     const hasText = !!(text && String(text).trim().length > 0);
     const hasMedia = !!(media && media.dataBase64 && (media.type || media.sendType));
@@ -1429,11 +1419,11 @@ function stop() {
             pending++;
             try { httpServer.close(() => { pending--; if (pending === 0) resolve(); }); } catch (_) { pending--; }
         }
-if (groupsRefreshTimer) { try { clearInterval(groupsRefreshTimer); groupsRefreshTimer = null; } catch (_) {} }
-    if (logsTrimTimer) { try { clearInterval(logsTrimTimer); logsTrimTimer = null; } catch (_) {} }
-    if (accessLogStream) { try { accessLogStream.end(); } catch (_) {} accessLogStream = null; }
-    ioServer = null;
-    httpServer = null;
+        if (groupsRefreshTimer) { try { clearInterval(groupsRefreshTimer); groupsRefreshTimer = null; } catch (_) {} }
+        if (logsTrimTimer) { try { clearInterval(logsTrimTimer); logsTrimTimer = null; } catch (_) {} }
+        if (accessLogStream) { try { accessLogStream.end(); } catch (_) {} accessLogStream = null; }
+        ioServer = null;
+        httpServer = null;
         if (pending === 0) resolve();
         else setTimeout(resolve, 2000);
     });
