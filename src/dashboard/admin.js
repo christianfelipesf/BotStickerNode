@@ -183,7 +183,7 @@ $('btnSaveAll').addEventListener('click', saveAll);
 $('btnDiscard').addEventListener('click', () => { cfg = clone(orig); dirty.clear(); rerender(); toast('Descartado'); });
 $('searchInput').addEventListener('input', rerender);
 
-const goDashboard = () => { window.location.href = '/dashboard'; };
+const goDashboard = () => { window.location.href = '/'; };
 $('backToDash').addEventListener('click', goDashboard);
 $('userPill').addEventListener('click', goDashboard);
 

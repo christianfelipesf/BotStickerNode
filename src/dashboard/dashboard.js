@@ -830,6 +830,15 @@ function init(config) {
     });
 
 
+    app.get('/logo.png', (req, res) => {
+        const logoPath = path.join(__dirname, '..', 'media', 'logo.png');
+        if (require('fs').existsSync(logoPath)) {
+            res.type('image/png').sendFile(logoPath);
+        } else {
+            res.status(404).end();
+        }
+    });
+
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
         const error = status === 413 ? 'Arquivo muito grande para enviar pelo dashboard' : 'JSON invalido';
