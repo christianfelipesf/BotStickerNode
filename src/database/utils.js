@@ -76,7 +76,7 @@ const DEFAULT_CONFIG = {
     dashboardPort: 3000,
     dashboardMaxLogs: 200,
     dashboardHistoryHours: 12,
-    adminCanControl: false,
+    adminCanControl: true,
     clearDefaultLimit: 10,
     partialWaitMs: 2000,
     newsSubreddits: ['ShitpostBR', 'pics'],
