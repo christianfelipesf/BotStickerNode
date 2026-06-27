@@ -57,7 +57,7 @@ const muteApi = createMuteHelpers({
 const DEFAULT_CONFIG = {
     botName: "Antigravity Bot",
     prefix: "!",
-    newsEnabled: true,
+    newsEnabled: false,
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
