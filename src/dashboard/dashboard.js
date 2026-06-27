@@ -49,6 +49,13 @@ let connectionState = { status: 'disconnected', qr: null, phone: null };
 
 function setConnectionState(state) {
     connectionState = { ...connectionState, ...state };
+    if (state.status === 'connected') {
+        refreshBotGroupCache().catch(() => {}).then(() => pushGroupsSnapshot({ force: true }).catch(() => {}));
+    }
+    if (state.status !== 'connected') {
+        clearBotGroupCache();
+        groupsSnapshotCache = null;
+    }
     if (ioServer) {
         try {
             const cfg = safe(() => require('../database/utils').readConfig(), {});
@@ -249,7 +256,29 @@ async function getGroupInfo(item, force = false) {
     return info;
 }
 
+let _botGroupJids = null;
+let _botGroupJidsAt = 0;
+const BOT_GROUPS_TTL = 120 * 1000;
+
+function clearBotGroupCache() { _botGroupJids = null; _botGroupJidsAt = 0; }
+
+async function refreshBotGroupCache() {
+    if (!sockRef || !sockRef.groupFetchAllParticipating) { _botGroupJids = null; return; }
+    try {
+        const all = await sockRef.groupFetchAllParticipating();
+        if (all && typeof all === 'object') {
+            _botGroupJids = new Set(Object.keys(all));
+            _botGroupJidsAt = Date.now();
+        }
+    } catch (_) { _botGroupJids = null; }
+}
+
 async function getGroupsSnapshot(options = {}) {
+    if (!sockRef) return [];
+    if (!_botGroupJids || Date.now() - _botGroupJidsAt > BOT_GROUPS_TTL) {
+        await refreshBotGroupCache();
+    }
+    if (!_botGroupJids) return [];
     const raw = groupsApi ? await groupsApi() : [];
     const items = Array.isArray(raw) ? raw : [];
     const knownJids = new Set(items.map(i => i?.jid).filter(Boolean));
@@ -269,28 +298,14 @@ async function getGroupsSnapshot(options = {}) {
         const base = normalizeGroupItem(item);
         if (!base || seen.has(base.jid)) continue;
         seen.add(base.jid);
+        if (base.jid.endsWith('@g.us') && _botGroupJids && !_botGroupJids.has(base.jid)) continue;
         tasks.push(getGroupInfo(base, !!options.force));
     }
     const results = await Promise.all(tasks);
-    const out = results.filter(Boolean);
+    let out = results.filter(Boolean);
 
-    // Adiciona chats privados que têm dashboard ativo
-    try {
-        const allEnabled = listDashboardGroups();
-        for (const jid of allEnabled) {
-            if (!seen.has(jid) && !jid.endsWith('@g.us')) {
-                seen.add(jid);
-                out.push({
-                    jid,
-                    subject: jid.split('@')[0] || jid,
-                    pictureUrl: null,
-                    memberCount: 0,
-                    ownerJid: null,
-                    desc: null
-                });
-            }
-        }
-    } catch (_) {}
+    // Filtra apenas grupos (remove contatos privados)
+    out = out.filter(g => g.jid && g.jid.endsWith('@g.us'));
 
     return out.sort((a, b) => String(a.subject).localeCompare(String(b.subject), 'pt-BR'));
 }
@@ -497,6 +512,7 @@ function init(config) {
     }, apiHandler(sendDirect));
     app.get('/api/groups', async (req, res) => {
         try {
+            if (!sockRef) return res.json({ ok: true, groups: [] });
             const list = await getGroupsSnapshot();
             res.json({ ok: true, groups: list });
         } catch (e) {
@@ -1377,6 +1393,8 @@ async function pushGroupsSnapshot(options = {}) {
         console.error('[dashboard] pushGroupsSnapshot:', e?.message || e);
     }
 }
+
+function isBotConnected() { return !!sockRef; }
 
 function emitMediaUpdate(toJid, messageId, type, mediaInfo) {
     if (!ioServer) return;

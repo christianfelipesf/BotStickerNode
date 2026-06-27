@@ -149,6 +149,9 @@ console.log(`  🔐 sessão       ${_sockDir} ${_sockDir === '✓' ? 'salva' : '
 console.log(`  ⚙️  plataforma   ${_os} • Node ${_nodeVer}`);
 console.log('═'.repeat(60));
 
+let _qrAttempts = 0;
+const MAX_QR_ATTEMPTS = 3;
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
     const { getCachedBaileysVersion } = require('./src/services/version');
@@ -176,20 +179,29 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (u) => {
-        if (u.qr) { 
-            console.log('\n⚡ --- ESCANEIE O QR CODE --- ⚡'); 
+        if (u.qr) {
+            _qrAttempts++;
+            console.log(`\n⚡ --- QR CODE #${_qrAttempts} --- ⚡`);
             qrcode.generate(u.qr, { small: true });
             try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
+            if (_qrAttempts >= MAX_QR_ATTEMPTS) {
+                console.log(`⛔ Limite de ${MAX_QR_ATTEMPTS} QR codes atingido. Pare o bot e apague a pasta session/ manualmente ou use o painel admin.`);
+            }
         }
         if (u.connection === 'close') {
             const code = (u.lastDisconnect.error instanceof Boom) 
                 ? u.lastDisconnect.error.output?.statusCode 
                 : u.lastDisconnect.error?.statusCode;
             try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
+            if (_qrAttempts >= MAX_QR_ATTEMPTS) {
+                console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped. Delete session folder to retry.`);
+                return;
+            }
             if (code !== DisconnectReason.loggedOut) {
                 setTimeout(startBot, 5000);
             } else { 
                 fs.rmSync('session', { recursive: true, force: true }); 
+                _qrAttempts = 0;
                 setTimeout(startBot, 5000); 
             }
         } else if (u.connection === 'open') {

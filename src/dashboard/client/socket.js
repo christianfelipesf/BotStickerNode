@@ -138,6 +138,10 @@
             state.qrCode = d.qr || null;
             state.chatBlocked = d.dashboardChatBlocked === true;
             D.ui.updateComposerBlocked();
+            if (d.status !== 'connected' && d.status !== 'qr') {
+                state.groups = [];
+                renderGroups();
+            }
             if (state.showQr && d.qr) {
                 state.qrMsgId = 'qr-' + (d.qr.length > 10 ? d.qr.slice(0, 10) : d.qr);
                 const msg = {

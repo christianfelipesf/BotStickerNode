@@ -225,7 +225,9 @@ $('editSave').addEventListener('click', () => {
 const MGMT = {
     update:  { label: 'Atualizar (git pull)', cmd: 'git pull',       desc: 'Baixa as últimas alterações do repositório. NÃO reinicia o bot.' },
     install: { label: 'Instalar dependências', cmd: 'npm install',    desc: 'Instala/atualiza pacotes do package.json. Pode levar alguns minutos.' },
-    restart: { label: 'Reiniciar bot',        cmd: 'pm2 restart all', desc: 'Reinicia o bot via pm2. A sessão do dashboard será reconectada.' }
+    restart: { label: 'Reiniciar bot',        cmd: 'pm2 restart all', desc: 'Reinicia o bot via pm2. A sessão do dashboard será reconectada.' },
+    stop:    { label: 'Parar bot',            cmd: 'pm2 stop all',    desc: 'Para o bot via pm2. O dashboard será desligado.' },
+    'delete-session': { label: 'Apagar sessão', cmd: 'rm -rf session', desc: 'Apaga a pasta session/ para forçar um novo QR Code na próxima conexão.' }
 };
 const cooldown = new Map();
 const COOLDOWN_MS = 8 * 1000;
@@ -350,6 +352,35 @@ async function doInstall(btn) {
     }
 }
 
+async function doStop(btn) {
+    setBtn(btn, 'busy'); setStatus('Executando pm2 stop…');
+    const r = await api('/api/admin/stop', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    setBtn(btn, d.ok ? 'ok' : 'err');
+    setStatus(d.ok ? '✓ pm2 stop enviado' : '✗ pm2 stop falhou', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Parando…' : 'Falhou', d.ok ? 'ok' : 'err');
+}
+
+async function doDeleteSession(btn) {
+    if (!confirm('⚠️ TEM CERTEZA? Isso vai apagar a sessão atual do WhatsApp.\n\nO bot precisará de um novo QR Code para conectar.\n\nContinuar?')) return;
+    setBtn(btn, 'busy'); setStatus('Apagando sessão…');
+    const r = await api('/api/admin/delete-session', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    setBtn(btn, d.ok ? 'ok' : 'err');
+    setStatus(d.ok ? '✓ Sessão apagada' : '✗ Falhou', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Sessão apagada' : 'Falhou', d.ok ? 'ok' : 'err');
+}
+
 async function doRestart(btn) {
     setBtn(btn, 'busy'); setStatus('Executando pm2 restart…');
     const r = await api('/api/admin/restart', { method: 'POST' });
@@ -378,6 +409,8 @@ $('mgmtConfirm').addEventListener('click', async () => {
         if (action === 'update') await doUpdate(btn);
         else if (action === 'install') await doInstall(btn);
         else if (action === 'restart') await doRestart(btn);
+        else if (action === 'stop') await doStop(btn);
+        else if (action === 'delete-session') await doDeleteSession(btn); // não usado via modal, mas mantido
     } catch (e) {
         setBtn(btn, 'err'); setStatus('✗ ' + (e?.message || 'erro'), 'err'); toast('Erro: ' + (e?.message || 'falha'), 'err');
     } finally {
@@ -391,6 +424,16 @@ $('mgmtConfirm').addEventListener('click', async () => {
 
 document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
     btn.addEventListener('click', () => ask(btn.dataset.mgmt));
+});
+
+$('btnMgmtDeleteSession').addEventListener('click', async () => {
+    if (busy) return toast('Outra ação em andamento', 'err');
+    busy = true;
+    cooldown.set('delete-session', Date.now());
+    const btn = $('btnMgmtDeleteSession');
+    await doDeleteSession(btn);
+    busy = false;
+    setTimeout(() => setBtn(btn, null), 4000);
 });
 
 $('btnDashToggle').addEventListener('click', async () => {
