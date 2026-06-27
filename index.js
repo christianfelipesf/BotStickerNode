@@ -158,6 +158,8 @@ global.__qrControl = {
     resetAttempts: () => { _qrAttempts = 0; console.log('🔄 [ADMIN] QR retry count reset'); }
 };
 
+global.__baileysEnabled = true;
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
     const { getCachedBaileysVersion } = require('./src/services/version');
@@ -170,6 +172,8 @@ async function startBot() {
         auth: state, 
         browser: [config.botName, 'Chrome', '120.0.0.0'] 
     });
+
+    global.__baileysSock = sock;
 
     try { dashboard.attachSock(sock); } catch (_) {}
     try { dashboard.pushGroupsSnapshot(); } catch (_) {}
@@ -195,12 +199,14 @@ async function startBot() {
             }
         }
         if (u.connection === 'close') {
+            global.__baileysSock = null;
             const code = (u.lastDisconnect.error instanceof Boom) 
                 ? u.lastDisconnect.error.output?.statusCode 
                 : u.lastDisconnect.error?.statusCode;
             try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
-            if (_qrAttempts >= MAX_QR_ATTEMPTS) {
-                console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped. Delete session folder to retry.`);
+            if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
+                if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
+                else console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped.`);
                 return;
             }
             if (code !== DisconnectReason.loggedOut) {
@@ -254,4 +260,5 @@ async function startBot() {
     });
 }
 
+global.__startBot = startBot;
 startBot();

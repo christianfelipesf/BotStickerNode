@@ -100,11 +100,36 @@ const handlers = {
         return { command: 'rm -rf session', ok: true, out: 'Sessão apagada. O bot gerará um novo QR na próxima conexão.', err: null };
     },
     stop: async () => {
-        console.warn('⛔ [ADMIN] Parando bot (pm2 stop all)…');
-        const r = await run('pm2 stop all', 30 * 1000);
-        if (r.ok) console.log('✅ [ADMIN] Bot parado (pm2 stop all)');
-        else console.error('❌ [ADMIN] Falha ao parar: ' + (r.err || 'erro'));
-        return { command: 'pm2 stop all', ok: r.ok, out: r.out, err: r.err };
+        console.warn('⛔ [ADMIN] Desconectando Baileys…');
+        global.__baileysEnabled = false;
+        const sock = global.__baileysSock;
+        if (sock) {
+            try { sock.end(); } catch (_) {}
+            global.__baileysSock = null;
+        }
+        try {
+            const dashboard = require('./dashboard');
+            dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null });
+        } catch (_) {}
+        console.log('✅ [ADMIN] Baileys desconectado manualmente');
+        return { command: 'Desconectar Baileys', ok: true, out: 'Baileys desconectado. Clique em "Ligar" para reconectar.', err: null };
+    },
+    'start-bot': async () => {
+        if (global.__baileysEnabled && global.__baileysSock) {
+            return { command: 'Ligar Baileys', ok: true, out: 'Baileys já está conectado.', err: null };
+        }
+        console.warn('🔄 [ADMIN] Reconectando Baileys…');
+        global.__baileysEnabled = true;
+        global.__qrControl.resetAttempts();
+        if (global.__startBot) {
+            global.__startBot().catch(e => {
+                console.error('❌ [ADMIN] Falha ao reconectar Baileys:', e.message);
+            });
+        } else {
+            return { command: 'Ligar Baileys', ok: false, out: '', err: '__startBot não disponível' };
+        }
+        console.log('✅ [ADMIN] Reconectando Baileys…');
+        return { command: 'Ligar Baileys', ok: true, out: 'Reconectando Baileys…', err: null };
     }
 };
 

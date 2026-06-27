@@ -221,12 +221,13 @@ $('editSave').addEventListener('click', () => {
     } catch (e) { $('editErr').textContent = 'JSON inválido: ' + e.message; }
 });
 
-// === Gestão: git pull / npm install / pm2 restart ===
+// === Gestão: git pull / npm install / bot control ===
 const MGMT = {
     update:  { label: 'Atualizar (git pull)', cmd: 'git pull',       desc: 'Baixa as últimas alterações do repositório. NÃO reinicia o bot.' },
     install: { label: 'Instalar dependências', cmd: 'npm install',    desc: 'Instala/atualiza pacotes do package.json. Pode levar alguns minutos.' },
     restart: { label: 'Reiniciar bot',        cmd: 'pm2 restart all', desc: 'Reinicia o bot via pm2. A sessão do dashboard será reconectada.' },
-    stop:    { label: 'Parar bot',            cmd: 'pm2 stop all',    desc: 'Para o bot via pm2. O dashboard será desligado.' },
+    stop:    { label: 'Desligar Baileys',     cmd: 'Desconectar Baileys', desc: 'Desconecta o WhatsApp (Baileys) sem derrubar o site. Use "Ligar Baileys" para reconectar.' },
+    'start-bot': { label: 'Ligar Baileys',    cmd: 'Reconectar Baileys', desc: 'Reconecta o WhatsApp (Baileys) após uma desconexão manual.' },
     'delete-session': { label: 'Apagar sessão', cmd: 'rm -rf session', desc: 'Apaga a pasta session/ para forçar um novo QR Code na próxima conexão.' }
 };
 const cooldown = new Map();
@@ -353,7 +354,7 @@ async function doInstall(btn) {
 }
 
 async function doStop(btn) {
-    setBtn(btn, 'busy'); setStatus('Executando pm2 stop…');
+    setBtn(btn, 'busy'); setStatus('Desconectando Baileys…');
     const r = await api('/api/admin/stop', { method: 'POST' });
     const d = r.data || {};
     if (!r.ok) {
@@ -362,8 +363,22 @@ async function doStop(btn) {
         return;
     }
     setBtn(btn, d.ok ? 'ok' : 'err');
-    setStatus(d.ok ? '✓ pm2 stop enviado' : '✗ pm2 stop falhou', d.ok ? 'ok' : 'err');
-    toast(d.ok ? 'Parando…' : 'Falhou', d.ok ? 'ok' : 'err');
+    setStatus(d.ok ? '✓ Baileys desconectado' : '✗ Falhou', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Baileys desconectado' : 'Falhou', d.ok ? 'ok' : 'err');
+}
+
+async function doStartBot(btn) {
+    setBtn(btn, 'busy'); setStatus('Reconectando Baileys…');
+    const r = await api('/api/admin/start-bot', { method: 'POST' });
+    const d = r.data || {};
+    if (!r.ok) {
+        const msg = d.error || ('HTTP ' + r.status);
+        setBtn(btn, 'err'); setStatus('✗ ' + msg, 'err'); toast('Falha: ' + msg, 'err');
+        return;
+    }
+    setBtn(btn, d.ok ? 'ok' : 'err');
+    setStatus(d.ok ? '✓ Reconectando…' : '✗ Falhou', d.ok ? 'ok' : 'err');
+    toast(d.ok ? 'Reconectando Baileys…' : 'Falhou', d.ok ? 'ok' : 'err');
 }
 
 async function doDeleteSession(btn) {
@@ -410,7 +425,8 @@ $('mgmtConfirm').addEventListener('click', async () => {
         else if (action === 'install') await doInstall(btn);
         else if (action === 'restart') await doRestart(btn);
         else if (action === 'stop') await doStop(btn);
-        else if (action === 'delete-session') await doDeleteSession(btn); // não usado via modal, mas mantido
+        else if (action === 'start-bot') await doStartBot(btn);
+        else if (action === 'delete-session') await doDeleteSession(btn);
     } catch (e) {
         setBtn(btn, 'err'); setStatus('✗ ' + (e?.message || 'erro'), 'err'); toast('Erro: ' + (e?.message || 'falha'), 'err');
     } finally {
