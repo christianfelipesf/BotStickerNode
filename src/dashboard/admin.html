@@ -153,6 +153,11 @@
         <div id="qrContainer" style="display:none;text-align:center;padding:10px 0;border-top:1px solid #30363d;margin-top:6px">
             <div style="font-size:12px;color:#d29922;margin-bottom:8px">📱 Escaneie o QR Code abaixo para reconectar</div>
             <img id="qrImage" style="width:200px;height:200px;border-radius:8px;background:#fff;padding:8px;image-rendering:pixelated">
+            <div style="margin-top:8px;display:flex;gap:6px;justify-content:center">
+                <button class="mgmt-btn" id="btnStopQR" style="color:#f85149;border-color:#f85149;font-size:11px">⏹️ Parar QR</button>
+                <button class="mgmt-btn" id="btnResetQR" style="color:#3fb950;border-color:#3fb950;font-size:11px">🔄 Resetar QR</button>
+                <span id="qrAttemptInfo" style="font-size:10px;color:#9aa6b2;display:flex;align-items:center"></span>
+            </div>
         </div>
         <div class="info-line" id="infoLine">—</div>
 

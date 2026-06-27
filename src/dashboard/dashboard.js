@@ -484,6 +484,34 @@ function init(config) {
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
+    app.get('/api/admin/qr-status', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            const ctrl = global.__qrControl;
+            return json(res, true, {
+                attempts: ctrl ? ctrl.getAttempts() : 0,
+                maxAttempts: ctrl ? ctrl.getMaxAttempts() : 3,
+                stopped: ctrl ? ctrl.getAttempts() >= ctrl.getMaxAttempts() : false
+            });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.post('/api/admin/stop-qr', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            if (global.__qrControl) global.__qrControl.stopRetrying();
+            return json(res, true, { ok: true });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.post('/api/admin/reset-qr', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            if (global.__qrControl) global.__qrControl.resetAttempts();
+            return json(res, true, { ok: true });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
     app.get('/api/admin/visit-history', (req, res) => {
         if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {

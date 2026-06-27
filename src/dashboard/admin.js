@@ -738,3 +738,42 @@ async function loadConnectionStatus() {
 // Verificar atualizações ao carregar a página
 load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); updateQRCodeToggle(); });
 let connTimer = setInterval(loadConnectionStatus, 4000);
+
+// === QR Control ===
+async function loadQRStatus() {
+    const infoEl = $('qrAttemptInfo');
+    if (!infoEl) return;
+    let r;
+    try { r = await api('/api/admin/qr-status'); } catch {}
+    if (!r || !r.ok) return;
+    const d = r.data || {};
+    const attempts = d.attempts || 0;
+    const maxAtt = d.maxAttempts || 3;
+    const stopped = d.stopped === true;
+    if (stopped) {
+        infoEl.innerHTML = `<span style="color:#f85149">⛔ Parado (${attempts}/${maxAtt})</span>`;
+    } else if (attempts > 0) {
+        infoEl.innerHTML = `<span style="color:#d29922">🟡 Tentativa ${attempts}/${maxAtt}</span>`;
+    } else {
+        infoEl.innerHTML = '';
+    }
+}
+
+$('btnStopQR').addEventListener('click', async () => {
+    const r = await api('/api/admin/stop-qr', { method: 'POST' });
+    if (r.ok) { toast('QR parado', 'ok'); loadQRStatus(); }
+    else toast('Erro', 'err');
+});
+
+$('btnResetQR').addEventListener('click', async () => {
+    const r = await api('/api/admin/reset-qr', { method: 'POST' });
+    if (r.ok) { toast('QR resetado — reinicie o bot', 'ok'); loadQRStatus(); }
+    else toast('Erro', 'err');
+});
+
+// Update QR status when connection status changes
+const _origLoadConn = loadConnectionStatus;
+loadConnectionStatus = async () => {
+    await _origLoadConn();
+    loadQRStatus();
+};

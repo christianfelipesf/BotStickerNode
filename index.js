@@ -151,6 +151,12 @@ console.log('═'.repeat(60));
 
 let _qrAttempts = 0;
 const MAX_QR_ATTEMPTS = 3;
+global.__qrControl = {
+    getAttempts: () => _qrAttempts,
+    getMaxAttempts: () => MAX_QR_ATTEMPTS,
+    stopRetrying: () => { _qrAttempts = MAX_QR_ATTEMPTS; console.log('⛔ [ADMIN] QR retry stopped manually'); },
+    resetAttempts: () => { _qrAttempts = 0; console.log('🔄 [ADMIN] QR retry count reset'); }
+};
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
