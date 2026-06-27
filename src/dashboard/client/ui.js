@@ -125,8 +125,35 @@
                 chat.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:20px;text-align:center;color:#9aa6b2;font-size:14px">'
                     + '<div style="font-size:16px;font-weight:600;color:#d29922;margin-bottom:16px">📱 Escaneie o QR Code para reconectar</div>'
                     + '<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(state.qrCode || '') + '" style="width:250px;height:250px;border-radius:12px;background:#fff;padding:10px;image-rendering:pixelated;margin-bottom:16px">'
-                    + '<div style="font-size:12px;max-width:300px">Abra o WhatsApp no seu celular, vá em <strong>Menu › Aparelhos conectados › Conectar um dispositivo</strong> e escaneie o QR Code acima.</div>'
+                    + '<div style="font-size:12px;max-width:300px;margin-bottom:16px">Abra o WhatsApp no seu celular, vá em <strong>Menu › Aparelhos conectados › Conectar um dispositivo</strong> e escaneie o QR Code acima.</div>'
+                    + '<div id="qrChatControls" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">'
+                    + '<button class="mgmt-btn" onclick="window.__stopQR()" style="background:#1f2530;color:#f85149;border:1px solid #f85149;border-radius:6px;padding:7px 14px;font-size:12px;cursor:pointer">⏹️ Parar QR</button>'
+                    + '<button class="mgmt-btn" onclick="window.__resetQR()" style="background:#1f2530;color:#3fb950;border:1px solid #3fb950;border-radius:6px;padding:7px 14px;font-size:12px;cursor:pointer">🔄 Resetar QR</button>'
+                    + '<span id="qrChatInfo" style="font-size:11px;color:#9aa6b2;display:flex;align-items:center"></span>'
+                    + '</div>'
                     + '</div>';
+                window.__stopQR = function() {
+                    fetch('/api/admin/stop-qr', { method: 'POST', credentials: 'same-origin' }).then(function(r) { return r.json(); }).then(function(d) {
+                        if (d.ok) { toast('QR parado'); if (window.__loadQRInfo) window.__loadQRInfo(); }
+                        else toast('Erro: ' + (d.error || '?')); }).catch(function() {});
+                };
+                window.__resetQR = function() {
+                    fetch('/api/admin/reset-qr', { method: 'POST', credentials: 'same-origin' }).then(function(r) { return r.json(); }).then(function(d) {
+                        if (d.ok) { toast('QR resetado'); if (window.__loadQRInfo) window.__loadQRInfo(); }
+                        else toast('Erro: ' + (d.error || '?')); }).catch(function() {});
+                };
+                window.__loadQRInfo = function() {
+                    fetch('/api/admin/qr-status', { credentials: 'same-origin' }).then(function(r) { return r.json(); }).then(function(d) {
+                        if (!d.ok) return;
+                        var el = document.getElementById('qrChatInfo');
+                        if (!el) return;
+                        var att = d.attempts || 0, maxAtt = d.maxAttempts || 3;
+                        if (d.stopped) el.innerHTML = '<span style="color:#f85149">⛔ Parado (' + att + '/' + maxAtt + ')</span>';
+                        else if (att > 0) el.innerHTML = '<span style="color:#d29922">🟡 Tentativa ' + att + '/' + maxAtt + '</span>';
+                        else el.innerHTML = '';
+                    }).catch(function() {});
+                };
+                window.__loadQRInfo();
             }
             renderGroups();
             return;

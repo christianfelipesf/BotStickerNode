@@ -485,7 +485,7 @@ function init(config) {
     });
 
     app.get('/api/admin/qr-status', (req, res) => {
-        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        if (!qrControlAllowed(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             const ctrl = global.__qrControl;
             return json(res, true, {
@@ -496,8 +496,16 @@ function init(config) {
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
+    function qrControlAllowed(req) {
+        if (isAdmin(req)) return true;
+        try {
+            const cfg = safe(() => require('../database/utils').readConfig(), {});
+            return cfg && cfg.dashboardShowQR === true;
+        } catch (_) { return false; }
+    }
+
     app.post('/api/admin/stop-qr', (req, res) => {
-        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        if (!qrControlAllowed(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             if (global.__qrControl) global.__qrControl.stopRetrying();
             return json(res, true, { ok: true });
@@ -505,7 +513,7 @@ function init(config) {
     });
 
     app.post('/api/admin/reset-qr', (req, res) => {
-        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        if (!qrControlAllowed(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
             if (global.__qrControl) global.__qrControl.resetAttempts();
             return json(res, true, { ok: true });
