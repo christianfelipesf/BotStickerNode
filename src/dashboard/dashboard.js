@@ -743,6 +743,7 @@ function init(config) {
     });
 
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Endpoint nao encontrado' }));
+    app.get('/theme.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'theme.css')));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
     app.get('/admin.js', (req, res) => {
         res.set('Content-Type', 'application/javascript; charset=utf-8');

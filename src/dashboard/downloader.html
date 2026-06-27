@@ -4,38 +4,38 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Baixar Mídia - WhatsApp Bot</title>
+<link rel="stylesheet" href="/theme.css">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100vh;color:#fff}
+body{min-height:100vh}
 .container{max-width:680px;margin:0 auto;padding:2rem 1rem}
 .header{display:flex;align-items:center;gap:1rem;margin-bottom:2rem}
-.back{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;text-decoration:none;color:#fff;font-size:1.2rem;transition:all .2s}
-.back:hover{background:rgba(255,255,255,.15)}
+.back{width:40px;height:40px;border-radius:10px;background:var(--pn);border:1px solid var(--b);display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all .2s}
+.back:hover{background:var(--pn2)}
 .header h1{font-size:1.4rem;font-weight:600}
-.subtitle{color:#a0a0c0;font-size:.9rem;margin-bottom:1.5rem}
-.card{background:rgba(255,255,255,.06);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:1.5rem;margin-bottom:1.5rem}
+.subtitle{color:var(--dm);font-size:.9rem;margin-bottom:1.5rem}
+.card{background:var(--pn);border:1px solid var(--b);border-radius:16px;padding:1.5rem;margin-bottom:1.5rem}
 .input-group{display:flex;gap:.75rem;flex-wrap:wrap}
-.input-group input{flex:1;min-width:200px;padding:.85rem 1rem;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;font-size:.95rem;outline:none;transition:border .2s}
-.input-group input:focus{border-color:#667eea}
-.input-group input::placeholder{color:#666}
+.input-group input{flex:1;min-width:200px;padding:.85rem 1rem;border-radius:12px;border:1px solid var(--b);background:var(--pn2);color:var(--tx);font-size:.95rem;outline:none;transition:border .2s}
+.input-group input:focus{border-color:var(--g)}
+.input-group input::placeholder{color:var(--dm)}
 .input-group button{padding:.85rem 1.6rem;border-radius:12px;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:.95rem;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
 .input-group button:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(102,126,234,.4)}
 .input-group button:disabled{opacity:.5;cursor:not-allowed;transform:none}
-.hd-toggle{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.85rem;color:#a0a0c0}
-.hd-toggle input[type=checkbox]{accent-color:#667eea;width:16px;height:16px;cursor:pointer}
-.platforms{margin-top:.75rem;font-size:.8rem;color:#666;line-height:1.6}
-.platforms strong{color:#a0a0c0}
+.hd-toggle{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.85rem;color:var(--dm)}
+.hd-toggle input[type=checkbox]{accent-color:var(--g);width:16px;height:16px;cursor:pointer}
+.platforms{margin-top:.75rem;font-size:.8rem;color:var(--dm);opacity:.6;line-height:1.6}
+.platforms strong{color:var(--dm);opacity:1}
 .status{display:none;padding:.85rem 1rem;border-radius:12px;margin-bottom:1rem;font-size:.9rem;align-items:center;gap:.6rem}
 .status.show{display:flex}
 .status.loading{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24}
-.status.error{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:#f87171}
+.status.error{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--er)}
 .status.success{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:#4ade80}
 .spinner{width:18px;height:18px;border:2px solid rgba(251,191,36,.3);border-top-color:#fbbf24;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .results{display:none;gap:.75rem;flex-direction:column}
 .results.show{display:flex}
-.result-item{display:flex;align-items:center;gap:1rem;padding:1rem;background:rgba(255,255,255,.06);border-radius:12px;border:1px solid rgba(255,255,255,.08);text-decoration:none;color:#fff;transition:all .2s}
-.result-item:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15)}
+.result-item{display:flex;align-items:center;gap:1rem;padding:1rem;background:var(--pn);border-radius:12px;border:1px solid var(--b);transition:all .2s}
+.result-item:hover{background:var(--pn2);border-color:rgba(255,255,255,.15)}
 .result-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0}
 .result-icon.video{background:linear-gradient(135deg,#f093fb,#f5576c)}
 .result-icon.image{background:linear-gradient(135deg,#4facfe,#00f2fe)}
@@ -43,10 +43,29 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:l
 .result-icon.file{background:linear-gradient(135deg,#fa709a,#fee140)}
 .result-info{flex:1;min-width:0}
 .result-info h3{font-size:.9rem;margin-bottom:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.result-info p{font-size:.78rem;color:#a0a0c0}
-.result-dl{width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;text-decoration:none;flex-shrink:0}
-.result-dl:hover{background:#667eea}
-.cache-info{text-align:center;font-size:.75rem;color:#555;margin-top:.5rem}
+.result-info p{font-size:.78rem;color:var(--dm)}
+.result-dl{width:36px;height:36px;border-radius:8px;background:var(--pn2);border:none;color:var(--tx);font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.result-dl:hover{background:var(--g)}
+.cache-info{text-align:center;font-size:.75rem;color:var(--dm);opacity:.5;margin-top:.5rem}
+.history-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.history-head h2{font-size:1rem;font-weight:600}
+.history-clear{background:transparent;border:1px solid var(--b);color:var(--dm);padding:4px 10px;border-radius:8px;font-size:.78rem;cursor:pointer;transition:all .2s}
+.history-clear:hover{background:var(--er);color:#fff;border-color:var(--er)}
+.history-list{display:flex;flex-direction:column;gap:.5rem}
+.history-empty{text-align:center;padding:2rem;color:var(--dm);font-size:.85rem}
+.history-item{display:flex;align-items:center;gap:.75rem;padding:.75rem;background:var(--pn);border-radius:10px;border:1px solid var(--b)}
+.history-item:hover{background:var(--pn2)}
+.hi-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+.hi-icon.video{background:linear-gradient(135deg,#f093fb,#f5576c)}
+.hi-icon.image{background:linear-gradient(135deg,#4facfe,#00f2fe)}
+.hi-icon.audio{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+.hi-icon.file{background:linear-gradient(135deg,#fa709a,#fee140)}
+.hi-info{flex:1;min-width:0}
+.hi-info h3{font-size:.82rem;margin-bottom:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hi-info p{font-size:.73rem;color:var(--dm)}
+.hi-dl{width:32px;height:32px;border-radius:6px;background:var(--pn2);border:none;color:var(--tx);font-size:.85rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none}
+.hi-dl:hover{background:var(--g)}
+.history-count{font-size:.78rem;color:var(--dm);opacity:.7}
 </style>
 </head>
 <body>
@@ -74,6 +93,19 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:l
     <div class="status" id="status"></div>
 
     <div class="results" id="results"></div>
+
+    <div id="historySection" style="display:none">
+        <div class="history-head">
+            <h2>📋 Histórico</h2>
+            <div style="display:flex;align-items:center;gap:.5rem">
+                <span class="history-count" id="historyCount"></span>
+                <button class="history-clear" id="clearHistoryBtn">Limpar</button>
+            </div>
+        </div>
+        <div class="history-list" id="historyList">
+            <div class="history-empty">Nenhum download ainda</div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -190,12 +222,15 @@ async function doDownload() {
             resultsEl.appendChild(item);
         });
 
-        if (data.cached) {
-            const info = document.createElement('div');
-            info.className = 'cache-info';
-            info.textContent = '📦 Servido do cache (expira em 1h)';
-            resultsEl.appendChild(info);
-        }
+        const files = data.files || (data.filename ? [data] : []);
+        const firstFile = files[0] || {};
+        saveToHistory({
+            url: urlInput.value.trim(),
+            platform: firstFile.platform || '',
+            files,
+            cached: !!data.cached
+        });
+        urlInput.value = '';
 
     } catch (e) {
         setStatus('error', 'Erro de conexão: ' + e.message);
@@ -208,6 +243,92 @@ downloadBtn.addEventListener('click', doDownload);
 urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doDownload();
 });
+
+const HISTORY_KEY = 'mediaDownloadHistory';
+const MAX_HISTORY = 50;
+
+function getHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; }
+}
+
+function saveToHistory(entry) {
+    const history = getHistory();
+    entry.id = Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    entry.timestamp = Date.now();
+    history.unshift(entry);
+    if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+    renderHistory();
+}
+
+function clearHistory() {
+    try { localStorage.removeItem(HISTORY_KEY); } catch {}
+    renderHistory();
+}
+
+function formatTime(ts) {
+    const d = new Date(ts);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'agora';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'min';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h';
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+function renderHistory() {
+    const section = document.getElementById('historySection');
+    const list = document.getElementById('historyList');
+    const count = document.getElementById('historyCount');
+    const history = getHistory();
+
+    if (history.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    count.textContent = history.length + ' item(ns)';
+    list.innerHTML = '';
+
+    history.forEach((entry, idx) => {
+        const files = entry.files || (entry.filename ? [entry] : []);
+        const firstFile = files[0] || {};
+        const fi = getFileIcon(firstFile.mime || '');
+        const size = firstFile.size ? formatSize(firstFile.size) : '';
+        const dlUrl = firstFile.filename ? '/api/download-cache/' + encodeURIComponent(firstFile.filename) + '/download' : null;
+
+        const item = document.createElement('div');
+        item.className = 'history-item';
+
+        item.innerHTML = `
+            <div class="hi-icon ${fi.cls}">${fi.icon}</div>
+            <div class="hi-info">
+                <h3 title="${entry.url}">${entry.platform ? entry.platform.charAt(0).toUpperCase() + entry.platform.slice(1) : 'Mídia'}</h3>
+                <p>${size ? size + ' · ' : ''}${formatTime(entry.timestamp)}${files.length > 1 ? ' · ' + files.length + ' arquivos' : ''}</p>
+            </div>
+            ${dlUrl ? '<a href="' + dlUrl + '" class="hi-dl" download="' + getFileName(firstFile.mime || '') + '">⬇</a>' : ''}
+        `;
+
+        item.querySelector('.hi-dl')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            const a = document.createElement('a');
+            a.href = dlUrl;
+            a.download = getFileName(firstFile.mime || '');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+
+        list.appendChild(item);
+    });
+}
+
+document.getElementById('clearHistoryBtn').addEventListener('click', () => {
+    if (confirm('Limpar todo o histórico de downloads?')) clearHistory();
+});
+
+renderHistory();
 </script>
 </body>
 </html>
