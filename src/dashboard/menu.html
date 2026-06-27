@@ -29,16 +29,9 @@ h1{font-size:1.8rem;margin-bottom:.5rem;font-weight:700}
 <body>
 <div class="container">
     <div class="logo">🤖</div>
-    <h1>WhatsApp Bot</h1>
+    <h1>Antigravity Bot</h1>
     <p class="subtitle">Escolha uma opção</p>
     <div class="cards">
-        <a href="/dashboard" class="card">
-            <div class="card-icon dashboard">📊</div>
-            <div class="card-content">
-                <h2>Dashboard</h2>
-                <p>Painel de controle do bot, logs e envio de mensagens</p>
-            </div>
-        </a>
         <a href="/baixar" class="card">
             <div class="card-icon download">⬇️</div>
             <div class="card-content">
@@ -46,12 +39,19 @@ h1{font-size:1.8rem;margin-bottom:.5rem;font-weight:700}
                 <p>Baixe mídias de redes sociais colando o link</p>
             </div>
         </a>
+        <a href="/dashboard" class="card">
+            <div class="card-icon dashboard">📊</div>
+            <div class="card-content">
+                <h2>Dashboard</h2>
+                <p>Painel de controle do bot, logs e envio de mensagens</p>
+            </div>
+        </a>
     </div>
     <div class="connection" id="status">
         <span class="dot red" id="dot"></span>
         <span id="statusText">Verificando conexão...</span>
     </div>
-    <div class="footer">WhatsApp Bot &mdash; Revelar</div>
+    <div class="footer">Antigravity Bot</div>
 </div>
 <script>
 fetch('/api/connection-status').then(r=>r.json()).then(d=>{

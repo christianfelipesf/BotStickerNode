@@ -810,7 +810,7 @@ function init(config) {
         res.type('html').sendFile(adminHtml);
     });
     app.get('/', (req, res) => {
-        res.type('html').sendFile(path.join(__dirname, 'menu.html'));
+        res.type('html').sendFile(path.join(__dirname, 'downloader.html'));
     });
 
     app.get('/dashboard', (req, res) => {
@@ -826,7 +826,7 @@ function init(config) {
     });
 
     app.get('/download', (req, res) => {
-        res.redirect('/baixar');
+        res.redirect('/');
     });
 
 
