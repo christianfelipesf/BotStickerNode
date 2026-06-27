@@ -166,6 +166,10 @@ try {
 }
 
 async function startBot() {
+    if (!global.__baileysEnabled) {
+        console.log('⏸️ [Baileys] desligado manualmente — não iniciando');
+        return;
+    }
     const { state, saveCreds } = await useMultiFileAuthState('session');
     const { getCachedBaileysVersion } = require('./src/services/version');
     const version = await getCachedBaileysVersion();
@@ -271,5 +275,19 @@ async function startBot() {
     });
 }
 
-global.__startBot = startBot;
-startBot();
+global.__startBot = () => {
+    if (!global.__baileysEnabled) {
+        console.log('⏸️ [Baileys] desligado manualmente — não iniciando');
+        return Promise.resolve();
+    }
+    return startBot();
+};
+if (global.__baileysEnabled) {
+    startBot();
+} else {
+    console.log('⏸️ [Baileys] desligado na inicialização — não iniciando');
+    try {
+        const dashboard = require('./src/dashboard/dashboard');
+        dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null });
+    } catch (_) {}
+}
