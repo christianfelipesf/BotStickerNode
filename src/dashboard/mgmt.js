@@ -108,6 +108,10 @@ const handlers = {
             global.__baileysSock = null;
         }
         try {
+            const { readConfig, writeConfig } = require('../database/utils');
+            writeConfig({ ...readConfig(), baileysEnabled: false });
+        } catch (_) {}
+        try {
             const dashboard = require('./dashboard');
             dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null });
         } catch (_) {}
@@ -120,6 +124,10 @@ const handlers = {
         }
         console.warn('🔄 [ADMIN] Reconectando Baileys…');
         global.__baileysEnabled = true;
+        try {
+            const { readConfig, writeConfig } = require('../database/utils');
+            writeConfig({ ...readConfig(), baileysEnabled: true });
+        } catch (_) {}
         global.__qrControl.resetAttempts();
         if (global.__startBot) {
             global.__startBot().catch(e => {

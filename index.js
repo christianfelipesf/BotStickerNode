@@ -158,7 +158,12 @@ global.__qrControl = {
     resetAttempts: () => { _qrAttempts = 0; console.log('🔄 [ADMIN] QR retry count reset'); }
 };
 
-global.__baileysEnabled = true;
+try {
+    const { baileysEnabled } = readConfig();
+    global.__baileysEnabled = baileysEnabled !== false;
+} catch (_) {
+    global.__baileysEnabled = true;
+}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -217,6 +222,12 @@ async function startBot() {
                 setTimeout(startBot, 5000); 
             }
         } else if (u.connection === 'open') {
+            global.__baileysEnabled = true;
+            try {
+                const { readConfig, writeConfig } = require('./src/database/utils');
+                const cfg = readConfig();
+                if (cfg.baileysEnabled === false) writeConfig({ ...cfg, baileysEnabled: true });
+            } catch (_) {}
             const utils = require('./src/database/utils');
             const version = utils.getVersion();
             const stats = utils.readStats();
