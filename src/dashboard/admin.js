@@ -620,5 +620,60 @@ async function loadVisitHistory() {
 $('btnRefreshVisits').addEventListener('click', loadVisitHistory);
 $('visitsLimit').addEventListener('change', loadVisitHistory);
 
+// === Connection Status ===
+async function loadConnectionStatus() {
+    const stateEl = $('connState');
+    const phoneEl = $('connPhone');
+    const qrContainer = $('qrContainer');
+    const qrImage = $('qrImage');
+    if (!stateEl) return;
+    let r;
+    try { r = await api('/api/admin/connection-status'); } catch {}
+    if (!r || !r.ok) {
+        stateEl.textContent = '⛔ Offline';
+        stateEl.style.background = '#f8514933';
+        stateEl.style.color = '#f85149';
+        phoneEl.textContent = '—';
+        qrContainer.style.display = 'none';
+        return;
+    }
+    const d = r.data || {};
+    switch (d.status) {
+        case 'connected':
+            stateEl.textContent = '🟢 Conectado';
+            stateEl.style.background = '#3fb95033';
+            stateEl.style.color = '#3fb950';
+            phoneEl.textContent = d.phone || '—';
+            qrContainer.style.display = 'none';
+            break;
+        case 'qr':
+            stateEl.textContent = '🟡 QR Code';
+            stateEl.style.background = '#d2992233';
+            stateEl.style.color = '#d29922';
+            phoneEl.textContent = 'escaneie abaixo';
+            qrContainer.style.display = 'block';
+            if (d.qr) {
+                qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(d.qr);
+                qrImage.alt = 'QR Code';
+            }
+            break;
+        case 'connecting':
+            stateEl.textContent = '🟡 Conectando…';
+            stateEl.style.background = '#d2992233';
+            stateEl.style.color = '#d29922';
+            phoneEl.textContent = '—';
+            qrContainer.style.display = 'none';
+            break;
+        default:
+            stateEl.textContent = '🔴 Desconectado';
+            stateEl.style.background = '#f8514933';
+            stateEl.style.color = '#f85149';
+            phoneEl.textContent = '—';
+            qrContainer.style.display = 'none';
+            break;
+    }
+}
+
 // Verificar atualizações ao carregar a página
-load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); });
+load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); });
+let connTimer = setInterval(loadConnectionStatus, 4000);

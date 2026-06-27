@@ -45,6 +45,12 @@ const MAX_CACHE = 30;
 let groupsSnapshotCache = null;
 const GROUPS_CACHE_TTL = 30 * 1000;
 
+let connectionState = { status: 'disconnected', qr: null, phone: null };
+
+function setConnectionState(state) { connectionState = { ...connectionState, ...state }; }
+
+function getConnectionState() { return { ...connectionState }; }
+
 function safe(fn, fallback) {
     try { return fn(); } catch (e) { console.error('[dashboard]', e?.message || e); return fallback; }
 }
@@ -430,6 +436,13 @@ function init(config) {
             const minutes = Math.max(5, Math.min(1440, Number(req.query.minutes) || 60));
             const users = require('../database/utils').getActiveUsers(minutes);
             return json(res, true, { users, minutes });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
+    app.get('/api/admin/connection-status', (req, res) => {
+        if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
+        try {
+            return json(res, true, getConnectionState());
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
@@ -1457,5 +1470,6 @@ module.exports = {
     handleReaction,
     resetDashboard, setMaxLogs, stop,
     mediaForLogReceived, mediaForLogSent,
-    emitMediaUpdate
+    emitMediaUpdate,
+    setConnectionState, getConnectionState
 };

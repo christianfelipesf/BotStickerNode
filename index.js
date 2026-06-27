@@ -178,12 +178,14 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         if (u.qr) { 
             console.log('\n⚡ --- ESCANEIE O QR CODE --- ⚡'); 
-            qrcode.generate(u.qr, { small: true }); 
+            qrcode.generate(u.qr, { small: true });
+            try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
         }
         if (u.connection === 'close') {
             const code = (u.lastDisconnect.error instanceof Boom) 
                 ? u.lastDisconnect.error.output?.statusCode 
                 : u.lastDisconnect.error?.statusCode;
+            try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
             if (code !== DisconnectReason.loggedOut) {
                 setTimeout(startBot, 5000);
             } else { 
@@ -195,11 +197,12 @@ async function startBot() {
             const version = utils.getVersion();
             const stats = utils.readStats();
             const ts = new Date().toLocaleString('pt-BR');
+            const phone = sock.user?.id?.split?.(':')?.[0] || null;
             console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
+            try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
             try {
                 const principalState = require('./src/services/principalState');
-                const sockId = sock.user?.id?.split?.(':')?.[0] || null;
-                principalState.setConnected({ version, phone: sockId });
+                principalState.setConnected({ version, phone });
             } catch (_) {}
             try {
                 dashboard.log('action', 'SISTEMA',

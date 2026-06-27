@@ -138,6 +138,15 @@
             <button class="mgmt-btn" id="btnDashToggle" title="Liga/desliga o painel web">🔌 Ativo</button>
             <span class="mgmt-status" id="dashStatus">—</span>
         </div>
+        <div class="mgmt-bar" style="margin-top:6px" id="connStatusBar">
+            <span class="lbl">WhatsApp:</span>
+            <span class="mgmt-btn" id="connState" style="cursor:default;min-width:100px">🟢 Conectado</span>
+            <span class="mgmt-status" id="connPhone" style="font-family:monospace">—</span>
+        </div>
+        <div id="qrContainer" style="display:none;text-align:center;padding:10px 0;border-top:1px solid #30363d;margin-top:6px">
+            <div style="font-size:12px;color:#d29922;margin-bottom:8px">📱 Escaneie o QR Code abaixo para reconectar</div>
+            <img id="qrImage" style="width:200px;height:200px;border-radius:8px;background:#fff;padding:8px;image-rendering:pixelated">
+        </div>
         <div class="info-line" id="infoLine">—</div>
 
     <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
