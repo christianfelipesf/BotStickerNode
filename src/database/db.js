@@ -84,7 +84,19 @@ db.exec(`
         muted     TEXT NOT NULL DEFAULT '[]',
         warnings  TEXT NOT NULL DEFAULT '{}',
         antilink  INTEGER NOT NULL DEFAULT 0,
-        activity  TEXT NOT NULL DEFAULT '{}'
+        activity  TEXT NOT NULL DEFAULT '{}',
+        bot_name  TEXT,
+        menu_image TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS config (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS stats (
+        key   TEXT PRIMARY KEY,
+        value INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS dashboard_groups (
@@ -152,6 +164,12 @@ db.exec(`
     );
     CREATE INDEX IF NOT EXISTS idx_dashboard_visits_ts ON dashboard_visits(timestamp);
 `);
+
+// ============================================================
+// Migrate esquemas legados — adiciona colunas se não existirem
+// ============================================================
+try { db.exec("ALTER TABLE group_state ADD COLUMN bot_name TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN menu_image TEXT"); } catch (_) {}
 
 function checkpointWal() {
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}

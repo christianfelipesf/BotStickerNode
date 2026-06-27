@@ -5,26 +5,39 @@ const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const { Jimp } = require('jimp');
 
-const { db, legacyDbPath, tempDir, checkpointWal } = require('./db');
-const { migrateLegacyUnifiedDB, migrateLegacyMessagesJson, migrateLegacyActiveGroups } = require('./migrate');
+const { db, tempDir, checkpointWal } = require('./db');
+const { migrateLegacyUnifiedDB, migrateLegacyMessagesJson, migrateLegacyActiveGroups, migrateJsonToSqlite } = require('./migrate');
 const { addMetadata, mediaToSticker, stickerToMedia, changeSpeed } = require('./sticker');
 const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require('./media');
 
 // ============================================================
 // Prepared statements (group_state)
 // ============================================================
-const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity FROM group_state WHERE jid = ?');
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image FROM group_state WHERE jid = ?');
 const _gsUpsert = db.prepare(`
-    INSERT INTO group_state (jid, muted, warnings, antilink, activity)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET
         muted = excluded.muted,
         warnings = excluded.warnings,
         antilink = excluded.antilink,
-        activity = excluded.activity
+        activity = excluded.activity,
+        bot_name = excluded.bot_name,
+        menu_image = excluded.menu_image
 `);
 const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
-const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity FROM group_state');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image FROM group_state');
+
+// ============================================================
+// Prepared statements (config + stats)
+// ============================================================
+const _cfgGet = db.prepare('SELECT value FROM config WHERE key = ?');
+const _cfgSet = db.prepare('INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+const _cfgGetAll = db.prepare('SELECT key, value FROM config');
+const _statsGet = db.prepare('SELECT value FROM stats WHERE key = ?');
+const _statsSet = db.prepare('INSERT INTO stats (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+const _statsIncrement = db.prepare('INSERT INTO stats (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1');
+const _statsGetAll = db.prepare('SELECT key, value FROM stats');
 
 // ============================================================
 // Mute helpers (via factory)
@@ -33,13 +46,13 @@ const { createMuteHelpers } = require('./mute');
 const muteApi = createMuteHelpers({
     getGroupState: (jid) => _gsGet.get(jid),
     upsertGroupState: (jid, muted, warnings, antilink, activity) => {
-        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}' };
-        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity);
+        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null };
+        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image);
     }
 });
 
 // ============================================================
-// JSON config management
+// Config management (SQLite)
 // ============================================================
 const DEFAULT_CONFIG = {
     botName: "Antigravity Bot",
@@ -83,151 +96,50 @@ const DEFAULT_CONFIG = {
     dashboardMuted: false
 };
 
-const DEFAULT_JSON = () => ({
-    config: { ...DEFAULT_CONFIG },
-    stats: { restarts: 0, totalCommands: 0 },
-    groups: {}
-});
-
-let _jsonCache = null;
-let _jsonDirty = false;
-let _jsonFlushTimer = null;
-const JSON_FLUSH_DEBOUNCE = 300;
-
-function writeJsonAtomic(filePath, obj) {
-    const tmp = filePath + '.tmp';
-    const bak = filePath + '.bak';
-    const content = JSON.stringify(obj, null, 2);
-    try {
-        if (fs.existsSync(filePath)) {
-            try { fs.copyFileSync(filePath, bak); } catch (_) {}
-        }
-        fs.writeFileSync(tmp, content);
-        fs.renameSync(tmp, filePath);
-    } catch (e) {
-        console.error(`❌ Falha ao escrever ${path.basename(filePath)}:`, e.message);
-        try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
-        throw e;
-    }
-}
-
-function readJsonSafe(filePath) {
-    if (!fs.existsSync(filePath)) return null;
-    try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch (e) {
-        const bak = filePath + '.bak';
-        if (fs.existsSync(bak)) {
-            try {
-                console.error(`⚠️ ${path.basename(filePath)} corrompido, restaurando de .bak`);
-                return JSON.parse(fs.readFileSync(bak, 'utf8'));
-            } catch (e2) {
-                console.error(`❌ ${path.basename(filePath)} e .bak ilegíveis:`, e2.message);
-                return null;
-            }
-        }
-        console.error(`❌ ${path.basename(filePath)} corrompido e sem .bak:`, e.message);
-        return null;
-    }
-}
-
-function loadJsonDB() {
-    const fromFile = readJsonSafe(legacyDbPath);
-    if (fromFile) {
-        _jsonCache = mergeWithDefaults(fromFile);
-        try {
-            const raw = fs.readFileSync(legacyDbPath, 'utf8');
-            if (raw.length > 0 && !raw.includes('\n  ')) {
-                console.log('🔧 database.json está inline, reformatando para indent 2...');
-                writeJsonAtomic(legacyDbPath, _jsonCache);
-            }
-        } catch (_) {}
-    } else {
-        _jsonCache = DEFAULT_JSON();
-        writeJsonAtomic(legacyDbPath, _jsonCache);
-        console.log('📝 database.json criado com defaults');
-    }
-}
-
-function mergeWithDefaults(obj) {
-    const d = DEFAULT_JSON();
-    const cfg = { ...d.config, ...(obj.config || {}) };
-    if (Array.isArray(d.config.newsSubreddits)) {
-        const cur = Array.isArray(cfg.newsSubreddits) ? cfg.newsSubreddits : [];
-        const seen = new Set();
-        const merged = [];
-        for (const s of [...cur, ...d.config.newsSubreddits]) {
-            const k = String(s || '').trim().toLowerCase();
-            if (!k || seen.has(k)) continue;
-            seen.add(k);
-            merged.push(s);
-        }
-        cfg.newsSubreddits = merged;
-    }
-    return { config: cfg, stats: { ...d.stats, ...(obj.stats || {}) }, groups: { ...(obj.groups || {}) } };
-}
-
-function scheduleJsonFlush() {
-    _jsonDirty = true;
-    _cachedSummaryLimit = null;
-    if (_jsonFlushTimer) return;
-    _jsonFlushTimer = setTimeout(() => {
-        _jsonFlushTimer = null;
-        if (!_jsonDirty) return;
-        try { writeJsonAtomic(legacyDbPath, _jsonCache); _jsonDirty = false; } catch (e) { console.error('❌ Falha ao persistir database.json:', e.message); }
-    }, JSON_FLUSH_DEBOUNCE);
-}
-
-function flushJsonNow() {
-    if (_jsonFlushTimer) { clearTimeout(_jsonFlushTimer); _jsonFlushTimer = null; }
-    if (_jsonDirty) {
-        try { writeJsonAtomic(legacyDbPath, _jsonCache); _jsonDirty = false; } catch (e) { console.error('❌ Flush final database.json falhou:', e.message); }
-    }
-}
-
-function readDB() {
-    if (!_jsonCache) loadJsonDB();
-    return _jsonCache;
-}
-
 function readConfig() {
-    const cfg = readDB().config;
-    return { ...cfg, openrouterApiKey: process.env.OPENROUTER_API_KEY || '' };
+    const rows = _cfgGetAll.all();
+    const dbConfig = {};
+    for (const r of rows) {
+        try { dbConfig[r.key] = JSON.parse(r.value); } catch { dbConfig[r.key] = r.value; }
+    }
+    return { ...DEFAULT_CONFIG, ...dbConfig, openrouterApiKey: process.env.OPENROUTER_API_KEY || '' };
 }
 
 function writeConfig(newConfig) {
-    const j = readDB();
-    j.config = newConfig;
-    scheduleJsonFlush();
+    const tx = db.transaction((cfg) => {
+        for (const [k, v] of Object.entries(cfg)) {
+            _cfgSet.run(k, JSON.stringify(v));
+        }
+    });
+    tx(newConfig);
+    _cachedSummaryLimit = null;
 }
 
-function readStats() { return readDB().stats; }
+function readStats() {
+    const rows = _statsGetAll.all();
+    const stats = { restarts: 0, totalCommands: 0 };
+    for (const r of rows) stats[r.key] = r.value;
+    return stats;
+}
 
 function incrementRestart() {
-    const j = readDB();
-    j.stats.restarts = (j.stats.restarts || 0) + 1;
-    scheduleJsonFlush();
-    return j.stats.restarts;
+    _statsIncrement.run('restarts');
+    const row = _statsGet.get('restarts');
+    return row ? row.value : 1;
 }
 
 function incrementCommand() {
-    const j = readDB();
-    j.stats.totalCommands = (j.stats.totalCommands || 0) + 1;
-    scheduleJsonFlush();
-    return j.stats.totalCommands;
+    _statsIncrement.run('totalCommands');
+    const row = _statsGet.get('totalCommands');
+    return row ? row.value : 1;
 }
 
-function writeDB(data) {
-    _jsonCache = data;
-    scheduleJsonFlush();
+function getGroupLink() {
+    try { const r = _cfgGet.get('linkgrupo'); return r ? JSON.parse(r.value) : null; } catch { return null; }
 }
-
-function getGroupLink() { return readDB().config?.linkgrupo || null; }
 
 function setGroupLink(link) {
-    const j = readDB();
-    j.config.linkgrupo = link;
-    scheduleJsonFlush();
+    _cfgSet.run('linkgrupo', JSON.stringify(link));
 }
 
 // ============================================================
@@ -240,7 +152,7 @@ function safeJson(s, fallback) {
 function ensureGroupState(jid) {
     let row = _gsGet.get(jid);
     if (!row) {
-        _gsUpsert.run(jid, '[]', '{}', 0, '{}');
+        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null);
         row = _gsGet.get(jid);
     }
     return row;
@@ -277,16 +189,13 @@ function activateGroup(jid) {
 function deactivateGroup(jid) {
     const r = _agDelete.run(jid);
     if (r.changes === 0) return false;
-    const j = readDB();
-    if (j.groups[jid]) {
-        const menuImage = j.groups[jid].menuImage;
-        if (menuImage) {
-            const fullPath = path.join(process.cwd(), menuImage);
+    try {
+        const row = _gsGet.get(jid);
+        if (row && row.menu_image) {
+            const fullPath = path.join(process.cwd(), row.menu_image);
             if (fs.existsSync(fullPath)) { try { fs.unlinkSync(fullPath); } catch (_) {} }
         }
-        delete j.groups[jid];
-        scheduleJsonFlush();
-    }
+    } catch (_) {}
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
     try { _agpDelete.run(jid); } catch (_) {}
     clearChatHistory(jid);
@@ -338,9 +247,9 @@ function getPartialWaitMs() {
 
 function setPartialWaitMs(ms) {
     const v = Math.max(0, Math.min(600000, Math.floor(Number(ms) || 0)));
-    const j = readDB();
-    j.config.partialWaitMs = v;
-    scheduleJsonFlush();
+    const cfg = readConfig();
+    cfg.partialWaitMs = v;
+    writeConfig(cfg);
     return v;
 }
 
@@ -597,47 +506,35 @@ function cleanupDashboardVisits(maxAgeDays = 30) {
 }
 
 // ============================================================
-// Group Data (mesclado JSON + SQLite)
+// Group Data (SQLite)
 // ============================================================
 function getGroupData(jid) {
-    const j = readDB();
-    const fixed = j.groups[jid] || {};
     try {
         const row = _gsGet.get(jid);
-        if (row) return { ...fixed, ...parseGroupState(row) };
+        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, ...parseGroupState(row) };
     } catch (_) {}
-    return { ...fixed };
+    return {};
 }
 
 function setGroupData(jid, data) {
-    const j = readDB();
-    const fixedKeys = ['botName', 'menuImage'];
-    const dynKeys = ['muted', 'warnings', 'antilink', 'activity'];
-    const fixedUpdate = {};
-    const dynUpdate = {};
-    let hasFixed = false, hasDyn = false;
+    const cur = ensureGroupState(jid);
+    const curParsed = parseGroupState(cur);
+    const merged = { ...curParsed };
+    let botName = cur.bot_name;
+    let menuImage = cur.menu_image;
     for (const [k, v] of Object.entries(data)) {
-        if (fixedKeys.includes(k)) { fixedUpdate[k] = v; hasFixed = true; }
-        else if (dynKeys.includes(k)) { dynUpdate[k] = v; hasDyn = true; }
-        else { fixedUpdate[k] = v; hasFixed = true; }
+        if (k === 'botName') botName = v;
+        else if (k === 'menuImage') menuImage = v;
+        else merged[k] = v;
     }
-    if (hasFixed) {
-        j.groups[jid] = { ...(j.groups[jid] || {}), ...fixedUpdate };
-        scheduleJsonFlush();
-    }
-    if (hasDyn) {
-        const cur = ensureGroupState(jid);
-        const curParsed = parseGroupState(cur);
-        const merged = { ...curParsed, ...dynUpdate };
-        let mutedObj = merged.muted;
-        if (Array.isArray(mutedObj)) {
-            const converted = {};
-            const ts = Date.now();
-            for (const p of mutedObj) if (p) converted[p] = ts;
-            mutedObj = converted;
-        } else if (!mutedObj || typeof mutedObj !== 'object') { mutedObj = {}; }
-        _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}));
-    }
+    let mutedObj = merged.muted;
+    if (Array.isArray(mutedObj)) {
+        const converted = {};
+        const ts = Date.now();
+        for (const p of mutedObj) if (p) converted[p] = ts;
+        mutedObj = converted;
+    } else if (!mutedObj || typeof mutedObj !== 'object') { mutedObj = {}; }
+    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null);
 }
 
 async function saveGroupMenuImage(jid, buffer) {
@@ -672,7 +569,7 @@ function _flushActivity() {
                 if (!act[jid][sender]) act[jid][sender] = { name: info.name, count: 0 };
                 act[jid][sender].count += info.count;
             }
-            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act));
+            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image);
         } catch (_) {}
     }
 }
@@ -754,11 +651,6 @@ function _getSummaryLimit() {
     try { _cachedSummaryLimit = Number(readConfig().summaryLimit) || 20; } catch (_) { _cachedSummaryLimit = 20; }
     return _cachedSummaryLimit;
 }
-// Re-read limit on explicit config write
-const _origWriteConfig = module.exports.writeConfig || (() => {});
-// Patch via scheduleJsonFlush — simpler: just clear cache when dirty
-const _origScheduleFlush = scheduleJsonFlush;
-
 function saveMessage(jid, pushName, text) {
     if (!text) return;
     const limit = _getSummaryLimit();
@@ -836,7 +728,7 @@ function getVersion() {
     return _cachedVersion;
 }
 
-function flushNow() { flushJsonNow(); flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); }
+function flushNow() { flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); }
 
 // ============================================================
 // Group metadata cache & admin helpers
@@ -931,10 +823,11 @@ async function sendMessageSafe(sock, jid, payload, options = {}) {
 // ============================================================
 // Initialization
 // ============================================================
+// === Migração: database.json → SQLite ===
 migrateLegacyUnifiedDB();
 migrateLegacyMessagesJson();
 migrateLegacyActiveGroups();
-loadJsonDB();
+migrateJsonToSqlite();
 
 // Background init — não bloqueia startup
 setTimeout(() => {
@@ -942,13 +835,12 @@ setTimeout(() => {
         const today = new Date().toLocaleDateString();
         const rows = _gsAll.all();
         const tx = db.transaction((rs) => {
-            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}');
+            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image);
         });
-        const j = _jsonCache;
-        if (j.stats._activityDate !== today) {
+        const lastReset = (() => { try { const r = _statsGet.get('_activityDate'); return r ? r.value : 0; } catch { return 0; } })();
+        if (lastReset !== today) {
             tx(rows);
-            j.stats._activityDate = today;
-            scheduleJsonFlush();
+            _statsSet.run('_activityDate', today);
             console.log(`📅 Activity diária resetada para ${today}`);
         }
     } catch (e) { console.error('❌ Falha ao resetar activity:', e.message); }
@@ -963,7 +855,7 @@ setTimeout(() => {
             if (Array.isArray(raw)) {
                 const obj = {};
                 for (const p of raw) if (p) obj[p] = now;
-                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity);
+                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image);
                 converted++;
             } else if (raw && typeof raw === 'object') {
                 let changed = false;
@@ -971,7 +863,7 @@ setTimeout(() => {
                     const ts = Number(raw[k]);
                     if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
                 }
-                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity);
+                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image);
             }
         }
         if (converted > 0 || expired > 0) {
@@ -988,7 +880,7 @@ process.on('SIGTERM', () => { flushNow(); process.exit(0); });
 // Exports (barrel — compatível com toda a base de código)
 // ============================================================
 module.exports = {
-    readDB, writeDB, readConfig, writeConfig, readStats, incrementRestart, incrementCommand,
+    readConfig, writeConfig, readStats, incrementRestart, incrementCommand,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
     getPartialWaitMs, setPartialWaitMs,

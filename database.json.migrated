@@ -1,0 +1,46 @@
+{
+  "config": {
+    "botName": "Antigravity Bot",
+    "prefix": "!",
+    "newsEnabled": true,
+    "dashboardUrl": "https://botantigravity.duckdns.org",
+    "showLogoInMenu": true,
+    "voiceEffects": true,
+    "aiModel": "mistralai/mistral-7b-instruct:free",
+    "summaryLimit": 20,
+    "aiPrompt": "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
+    "summaryPrompt": "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
+    "stickerPack": "Antigravity Bot",
+    "stickerAuthor": "Bot",
+    "dashboardEnabled": true,
+    "dashboardPort": 3000,
+    "dashboardMaxLogs": 200,
+    "dashboardHistoryHours": 12,
+    "adminCanControl": false,
+    "clearDefaultLimit": 10,
+    "partialWaitMs": 2000,
+    "newsSubreddits": [
+      "ShitpostBR",
+      "pics"
+    ],
+    "newsPollIntervalMinutes": 15,
+    "newsUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "newsSendDelayMs": 8000,
+    "newsFetchStaggerMs": 30000,
+    "newsMaxPerCycle": 1,
+    "newsShowMeta": false,
+    "newsRandomSub": false,
+    "newsOnePerCycle": true,
+    "newsMaxRetries": 3,
+    "newsRetryBaseDelayMs": 15000,
+    "dashboardTrimIntervalMs": 60000,
+    "maxMediaDurationSeconds": 900,
+    "subSessionsGroups": true,
+    "dashboardMuted": false
+  },
+  "stats": {
+    "restarts": 0,
+    "totalCommands": 0
+  },
+  "groups": {}
+}

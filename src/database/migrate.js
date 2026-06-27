@@ -117,8 +117,68 @@ function migrateLegacyActiveGroups() {
     }
 }
 
+function migrateJsonToSqlite() {
+    if (!fs.existsSync(legacyDbPath)) return false;
+    let json;
+    try {
+        json = JSON.parse(fs.readFileSync(legacyDbPath, 'utf8'));
+    } catch (e) {
+        console.error('❌ database.json corrompido, ignorando migração:', e.message);
+        return false;
+    }
+    // Verifica se já existe algo em config — se sim, assume que já migrou
+    const hasConfig = db.prepare('SELECT COUNT(*) as c FROM config').get().c > 0;
+    if (hasConfig) {
+        // Já migrou, move o antigo para não ler de novo
+        try { fs.renameSync(legacyDbPath, legacyDbPath + '.migrated'); } catch (_) {}
+        return false;
+    }
+
+    const cfgInsert = db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)');
+    const statsInsert = db.prepare('INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)');
+    const gsUpsert = db.prepare(`INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(jid) DO UPDATE SET
+            muted=excluded.muted, warnings=excluded.warnings,
+            antilink=excluded.antilink, activity=excluded.activity,
+            bot_name=excluded.bot_name, menu_image=excluded.menu_image`);
+
+    const tx = db.transaction(() => {
+        // Config
+        const cfg = json.config || {};
+        for (const [k, v] of Object.entries(cfg)) {
+            cfgInsert.run(k, JSON.stringify(v));
+        }
+        // Stats
+        const st = json.stats || {};
+        if (st.restarts) statsInsert.run('restarts', st.restarts);
+        if (st.totalCommands) statsInsert.run('totalCommands', st.totalCommands);
+        if (st._activityDate) statsInsert.run('_activityDate', st._activityDate);
+
+        // Groups (botName, menuImage)
+        const groups = json.groups || {};
+        for (const [jid, g] of Object.entries(groups)) {
+            if (!jid) continue;
+            const existing = db.prepare('SELECT muted, warnings, antilink, activity FROM group_state WHERE jid = ?').get(jid);
+            gsUpsert.run(jid,
+                existing?.muted || '[]',
+                existing?.warnings || '{}',
+                existing?.antilink || 0,
+                existing?.activity || '{}',
+                g.botName || null,
+                g.menuImage || null);
+        }
+    });
+    tx();
+
+    try { fs.renameSync(legacyDbPath, legacyDbPath + '.migrated'); } catch (_) {}
+    console.log('✅ database.json migrado para SQLite (config + stats + groups)');
+    return true;
+}
+
 module.exports = {
     migrateLegacyUnifiedDB,
     migrateLegacyMessagesJson,
-    migrateLegacyActiveGroups
+    migrateLegacyActiveGroups,
+    migrateJsonToSqlite
 };

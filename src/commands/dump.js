@@ -30,7 +30,6 @@ module.exports = {
 
         try {
             const filesToInclude = [
-                'database.json',
                 'bot.db',
                 'bot.db-shm',
                 'bot.db-wal',

@@ -2,9 +2,9 @@ module.exports = {
     name: 'grupos',
     aliases: ['groups', 'listagrupos'],
     category: 'admin',
-    description: 'Lista todos os grupos ativos e seus membros mais ativos do dia',
+    description: 'Lista todos os grupos ativos e parcialmente ativos com seus membros mais ativos do dia',
     async execute(sock, m, { from, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, readConfig, getTopMember, getGroupData, listActiveGroups } = utils;
+        const { react, readConfig, getTopMember, getGroupData, listActiveGroups, listPartialGroups } = utils;
 
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
@@ -16,40 +16,41 @@ module.exports = {
         let currentBotResponse = await react(sock, m, '📊', lastBotResponse, GLOBAL_COOLDOWN);
 
         const activeGroups = listActiveGroups();
+        const partialGroups = listPartialGroups();
 
-        if (activeGroups.length === 0) {
-            await sock.sendMessage(from, { text: '❌ Não há grupos ativos no momento.' }, { quoted: m });
+        if (activeGroups.length === 0 && partialGroups.length === 0) {
+            await sock.sendMessage(from, { text: '❌ Não há grupos ativos ou parcialmente ativos no momento.' }, { quoted: m });
             return currentBotResponse;
         }
 
-        let report = `🏰 *GRUPOS ATIVOS*\n\n`;
-        let foundAny = false;
+        let report = `🏰 *GRUPOS DO BOT*\n\n`;
 
-        for (const jid of activeGroups) {
-            // Filtrar apenas JIDs de grupos válidos
-            if (!jid.endsWith('@g.us')) continue;
-            
-            try {
-                const groupMetadata = await sock.groupMetadata(jid);
-                if (!groupMetadata) continue;
-
-                const customData = getGroupData(jid);
-                const groupName = customData.botName || groupMetadata.subject;
-                const topMember = getTopMember(jid);
-
-                report += `👥 *Grupo:* ${groupName}\n`;
-                report += `🆔 *ID:* ${jid.split('@')[0]}\n`;
-                report += `🌟 *Membro Ativo:* ${topMember}\n`;
-                report += `────────────────\n`;
-                foundAny = true;
-            } catch (err) {
-                // Se o bot não estiver mais no grupo ou der erro de permissão, ignoramos na lista
-                console.log(`⚠️ Ignorando grupo inacessível no !grupos: ${jid}`);
+        async function buildSection(label, jids, icon) {
+            let section = '';
+            for (const jid of jids) {
+                if (!jid.endsWith('@g.us')) continue;
+                try {
+                    const groupMetadata = await sock.groupMetadata(jid);
+                    if (!groupMetadata) continue;
+                    const customData = getGroupData(jid);
+                    const groupName = customData.botName || groupMetadata.subject;
+                    const topMember = getTopMember(jid);
+                    section += `${icon} *${groupName}*\n🆔 ${jid.split('@')[0]}\n🌟 ${topMember}\n────────────────\n`;
+                } catch (err) {
+                    console.log(`⚠️ Ignorando grupo inacessível no !grupos: ${jid}`);
+                }
             }
+            if (section) {
+                report += `📌 *${label}* (${jids.length})\n${section}`;
+            }
+            return section;
         }
 
-        if (!foundAny) {
-            return sock.sendMessage(from, { text: '❌ Nenhum grupo ativo encontrado na base de dados.' }, { quoted: m });
+        const sectionActive = await buildSection('ATIVOS', activeGroups, '✅');
+        const sectionPartial = await buildSection('PARCIALMENTE ATIVOS', partialGroups, '⏸️');
+
+        if (!sectionActive && !sectionPartial) {
+            return sock.sendMessage(from, { text: '❌ Nenhum grupo encontrado na base de dados.' }, { quoted: m });
         }
 
         await sock.sendMessage(from, { text: report }, { quoted: m });
