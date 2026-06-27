@@ -131,6 +131,10 @@
             }
         });
 
+        sock.on('connection:update', d => {
+            if (window.__onConnUpdate) window.__onConnUpdate(d);
+        });
+
         sock.on('reset', () => {
             state.reset();
             if (D.refs.chat) D.refs.chat.innerHTML = '';

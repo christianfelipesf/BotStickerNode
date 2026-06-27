@@ -403,6 +403,25 @@ $('btnDashToggle').addEventListener('click', async () => {
     toast(on ? 'Dashboard desligado' : 'Dashboard ligado', 'ok');
 });
 
+function updateQRCodeToggle() {
+    const on = cfg.dashboardShowQR === true;
+    const btn = $('btnQRCodeToggle');
+    btn.textContent = on ? '📱 Mostrando' : '📱 Oculto';
+    btn.className = 'mgmt-btn' + (on ? ' ok' : '');
+    btn.title = on ? 'Clique para esconder o QR Code do dashboard' : 'Clique para mostrar o QR Code no dashboard';
+    $('qrCodeStatus').textContent = on ? 'visível' : 'oculto';
+    $('qrCodeStatus').className = 'mgmt-status' + (on ? ' ok' : '');
+}
+
+$('btnQRCodeToggle').addEventListener('click', async () => {
+    const on = cfg.dashboardShowQR === true;
+    const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { dashboardShowQR: !on } } });
+    if (!r.ok) { toast('Erro ao alterar', 'err'); return; }
+    cfg.dashboardShowQR = !on;
+    updateQRCodeToggle();
+    toast(on ? 'QR Code ocultado do dashboard' : 'QR Code visível no dashboard', 'ok');
+});
+
 // === Terminal style logs ===
 const LOG_COLORS = { error: '#FF5555', warn: '#FFAA00', info: '#55CCCC', log: '#55FF55' };
 const LOG_ICONS = { error: '✖', warn: '⚠', info: 'ℹ', log: '✓' };
@@ -675,5 +694,5 @@ async function loadConnectionStatus() {
 }
 
 // Verificar atualizações ao carregar a página
-load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); });
+load().then(() => { checkUpdates(); loadLogs(); loadAIUsage(); loadActiveUsers(); loadVisitHistory(); loadConnectionStatus(); updateQRCodeToggle(); });
 let connTimer = setInterval(loadConnectionStatus, 4000);

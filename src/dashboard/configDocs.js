@@ -46,6 +46,7 @@
         maxMediaDurationSeconds: 'Duração máxima (s) aceita para mídia enviada.',
         subSessionsGroups: 'Mantém sub-sessões separadas por grupo (anti-colisão).',
         dashboardMuted: 'Silencia notificações sonoras do painel por padrão.',
+        dashboardShowQR: 'Mostra o QR Code de conexão no dashboard principal para visitantes.',
         linkgrupo: 'Link de divulgação exibido no comando !divulgar.'
     };
 

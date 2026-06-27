@@ -47,7 +47,18 @@ const GROUPS_CACHE_TTL = 30 * 1000;
 
 let connectionState = { status: 'disconnected', qr: null, phone: null };
 
-function setConnectionState(state) { connectionState = { ...connectionState, ...state }; }
+function setConnectionState(state) {
+    connectionState = { ...connectionState, ...state };
+    if (ioServer) {
+        try {
+            const cfg = safe(() => require('../database/utils').readConfig(), {});
+            ioServer.emit('connection:update', {
+                ...getConnectionState(),
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+            });
+        } catch (_) {}
+    }
+}
 
 function getConnectionState() { return { ...connectionState }; }
 
@@ -446,6 +457,16 @@ function init(config) {
         } catch (e) { return json(res, false, { error: e.message }, 500); }
     });
 
+    app.get('/api/connection-status', (req, res) => {
+        try {
+            const cfg = safe(() => require('../database/utils').readConfig(), {});
+            return json(res, true, {
+                ...getConnectionState(),
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+            });
+        } catch (e) { return json(res, false, { error: e.message }, 500); }
+    });
+
     app.get('/api/admin/visit-history', (req, res) => {
         if (!isAdmin(req)) return json(res, false, { error: 'Não autenticado' }, 401);
         try {
@@ -703,6 +724,13 @@ function init(config) {
         next();
     });
     ioServer.on('connection', async (socket) => {
+        try {
+            const cfg = safe(() => require('../database/utils').readConfig(), {});
+            socket.emit('connection:update', {
+                ...getConnectionState(),
+                dashboardShowQR: cfg && cfg.dashboardShowQR === true
+            });
+        } catch (_) {}
         try {
             const history = loadDashboardHistory({ limit: HISTORY_SEND_LIMIT });
             const CHUNK = 15;

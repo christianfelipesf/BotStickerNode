@@ -93,7 +93,8 @@ const DEFAULT_CONFIG = {
     dashboardTrimIntervalMs: 60 * 1000,
     maxMediaDurationSeconds: 900,
     subSessionsGroups: true,
-    dashboardMuted: false
+    dashboardMuted: false,
+    dashboardShowQR: false
 };
 
 function readConfig() {
