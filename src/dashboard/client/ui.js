@@ -96,20 +96,24 @@
         renderGroups();
     }
 
-    function setTheme(t) {
-        const theme = t || localStorage.getItem('wa_theme') || 'light';
+    function applyTheme() {
+        const theme = localStorage.getItem('wa_theme') || 'light';
         document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('wa_theme', theme);
-        document.querySelectorAll('.theme-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.theme === theme);
-        });
+        const btn = D.refs.themeBtn;
+        if (btn) btn.textContent = theme === 'light' ? '☀️' : '🌙';
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = theme === 'light' ? '#ffffff' : '#0b141a';
     }
 
-    function applyTheme() {
-        const saved = localStorage.getItem('wa_theme') || 'light';
-        setTheme(saved);
+    function toggleTheme() {
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
+        const next = cur === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('wa_theme', next);
+        const btn = D.refs.themeBtn;
+        if (btn) btn.textContent = next === 'light' ? '☀️' : '🌙';
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = next === 'light' ? '#ffffff' : '#0b141a';
     }
 
     function bindSidebar() {
@@ -163,7 +167,7 @@
         selAll,
         selG,
         setScreen,
-        setTheme,
+        toggleTheme,
         applyTheme,
         bind: bindSidebar
     };

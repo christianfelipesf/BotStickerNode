@@ -209,25 +209,34 @@ button{font:inherit}
 
 /* Tema claro WhatsApp */
 [data-theme="light"]{
-    --bg:#efeae2;--sb:#ffffff;--pn:#ffffff;--pn2:#f0f2f5;
-    --b:rgba(0,0,0,.08);--tx:#111b21;--dm:#667781;
+    --bg:#e5ddd5;--sb:#ffffff;--pn:#ffffff;--pn2:#f0f2f5;
+    --b:rgba(0,0,0,.07);--tx:#111b21;--dm:#667781;
     --g:#00a884;--t:#00a884;--bl:#00a884;--w:#ffb84d;--er:#ff8182;
 }
+[data-theme="light"] .ch-head{background:#f0f2f5;border-bottom:1px solid rgba(0,0,0,.08)}
+[data-theme="light"] .cb-head{background:#f0f2f5}
+[data-theme="light"] .cb-composer{background:#f0f2f5;border-top:1px solid rgba(0,0,0,.08)}
+[data-theme="light"] .st-head{background:#f0f2f5}
+[data-theme="light"] .col-stats{background:#f5f5f5}
 [data-theme="light"] .from-me .msg-bubble{background:#d9fdd3;color:#111b21}
 [data-theme="light"] .from-me .msg-author{color:#1f2e25}
-[data-theme="light"] .cb-body{background:#efeae2;box-shadow:none}
-[data-theme="light"] .msg-bubble{background:#ffffff}
+[data-theme="light"] .cb-body{background:var(--bg);box-shadow:none}
+[data-theme="light"] .msg-bubble{background:#ffffff;box-shadow:0 1px .5px rgba(0,0,0,.08)}
+[data-theme="light"] .msg-avatar{box-shadow:0 1px 2px rgba(0,0,0,.1)}
 [data-theme="light"] body{background:var(--bg)}
 [data-theme="light"] .group-badge{color:#fff}
-[data-theme="light"] .group-item.active{background:#f0f2f5}
-[data-theme="light"] #groupSearch{background:#ffffff;border:1px solid #e0e0e0}
+[data-theme="light"] .group-item.active{background:rgba(0,0,0,.04)}
+[data-theme="light"] #groupSearch{background:#ffffff;border:1px solid rgba(0,0,0,.12)}
 [data-theme="light"] #groupSearch:focus{border-color:var(--g)}
-[data-theme="light"] .sb-btn{background:#ffffff;border:1px solid #e0e0e0;color:#111b21}
+[data-theme="light"] .sb-btn{background:#ffffff;border:1px solid rgba(0,0,0,.12);color:#111b21}
 [data-theme="light"] .sb-btn:hover{background:#f0f2f5}
 [data-theme="light"] .sb-btn.active{background:var(--g);color:#fff;border-color:var(--g)}
 [data-theme="light"] .send-btn{background:var(--g);color:#fff}
 [data-theme="light"] .icon-btn{background:#ffffff;color:#54656f}
+[data-theme="light"] .icon-btn:hover{background:#f0f2f5}
 [data-theme="light"] .cb-input-wrap{background:#ffffff}
+[data-theme="light"] .st-card{background:#ffffff}
+[data-theme="light"] .st-kv{background:#f5f5f5}
 [data-theme="light"] ::-webkit-scrollbar-thumb{background:#cccccc}
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#aaaaaa}
 

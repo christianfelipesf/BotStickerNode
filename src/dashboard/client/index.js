@@ -14,7 +14,7 @@
         D.socket.bind();
 
         // Expõe handlers usados via inline onclick no HTML
-        window.setTheme = D.ui.setTheme;
+        window.toggleTheme = D.ui.toggleTheme;
         window.selAll = D.ui.selAll;
         window.selG = D.ui.selG;
         window.clearReply = D.reply.clearReply;

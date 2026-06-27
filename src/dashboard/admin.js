@@ -132,13 +132,23 @@ function rerender() {
     updateDirty();
 }
 
+function updateDashToggle() {
+    const on = cfg.dashboardEnabled !== false;
+    const btn = $('btnDashToggle');
+    btn.textContent = on ? '🔌 Ativo' : '🔌 Desligado';
+    btn.className = 'mgmt-btn' + (on ? '' : ' err');
+    btn.title = on ? 'Clique para desligar o painel' : 'Clique para ligar o painel';
+    $('dashStatus').textContent = on ? 'online' : 'offline';
+    $('dashStatus').className = 'mgmt-status' + (on ? ' ok' : ' err');
+}
+
 async function load() {
     const r = await api('/api/admin/config');
     if (!r.ok) { if (r.status === 401) showLogin(); return; }
     cfg = clone(r.data.config); orig = clone(r.data.config); dirty.clear();
     $('userPill').textContent = '👤 ' + user;
     $('infoLine').textContent = `${r.data.botName || 'Bot'} • v${r.data.version || '?'} • ${r.data.platform || '?'} • restart #${r.data.restarts ?? '?'}`;
-    showMain(); rerender();
+    showMain(); rerender(); updateDashToggle();
 }
 async function saveOne(k) {
     const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { [k]: cfg[k] } } });
@@ -381,6 +391,16 @@ $('mgmtConfirm').addEventListener('click', async () => {
 
 document.querySelectorAll('.mgmt-btn[data-mgmt]').forEach(btn => {
     btn.addEventListener('click', () => ask(btn.dataset.mgmt));
+});
+
+$('btnDashToggle').addEventListener('click', async () => {
+    const on = cfg.dashboardEnabled !== false;
+    if (!confirm(on ? 'Desligar o dashboard? O painel web será desativado.' : 'Ligar o dashboard?')) return;
+    const r = await api('/api/admin/config', { method: 'PUT', body: { updates: { dashboardEnabled: !on } } });
+    if (!r.ok) { toast('Erro ao alterar', 'err'); return; }
+    cfg.dashboardEnabled = !on;
+    updateDashToggle();
+    toast(on ? 'Dashboard desligado' : 'Dashboard ligado', 'ok');
 });
 
 // === Terminal style logs ===

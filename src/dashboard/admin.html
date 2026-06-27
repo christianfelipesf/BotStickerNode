@@ -125,15 +125,20 @@
     <button class="danger" id="btnLogout">Sair</button>
   </header>
 
-  <div class="wrap">
-    <div class="mgmt-bar">
-      <span class="lbl">Gerenciar:</span>
-      <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar</button><span id="updateBadge" class="badge hidden"></span>
-      <button class="mgmt-btn" data-mgmt="install" id="btnMgmtInstall" title="Roda 'npm install'">📦 Instalar deps</button>
-      <button class="mgmt-btn" data-mgmt="restart" id="btnMgmtRestart" title="Roda 'pm2 restart all'">🔁 Reiniciar bot</button>
-      <span class="mgmt-status" id="mgmtStatus">pronto</span>
-    </div>
-    <div class="info-line" id="infoLine">—</div>
+    <div class="wrap">
+        <div class="mgmt-bar">
+            <span class="lbl">Gerenciar:</span>
+            <button class="mgmt-btn" data-mgmt="update" id="btnMgmtUpdate" title="Roda apenas 'git pull'">⬇️ Atualizar</button><span id="updateBadge" class="badge hidden"></span>
+            <button class="mgmt-btn" data-mgmt="install" id="btnMgmtInstall" title="Roda 'npm install'">📦 Instalar deps</button>
+            <button class="mgmt-btn" data-mgmt="restart" id="btnMgmtRestart" title="Roda 'pm2 restart all'">🔁 Reiniciar bot</button>
+            <span class="mgmt-status" id="mgmtStatus">pronto</span>
+        </div>
+        <div class="mgmt-bar" style="margin-top:6px">
+            <span class="lbl">Dashboard:</span>
+            <button class="mgmt-btn" id="btnDashToggle" title="Liga/desliga o painel web">🔌 Ativo</button>
+            <span class="mgmt-status" id="dashStatus">—</span>
+        </div>
+        <div class="info-line" id="infoLine">—</div>
 
     <div style="margin-bottom:16px;border-top:1px solid #30363d;padding-top:14px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">

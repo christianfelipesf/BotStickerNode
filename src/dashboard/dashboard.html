@@ -22,8 +22,7 @@
             </div>
             <input id="groupSearch" type="search" placeholder="🔎 Buscar grupo" autocomplete="off">
             <div class="ch-toolbar-btns">
-                <button class="sb-btn theme-btn" data-theme="light" onclick="setTheme('light')">☀️ Claro</button>
-                <button class="sb-btn theme-btn" data-theme="dark" onclick="setTheme('dark')">🌙 Escuro</button>
+                <button class="sb-btn" id="themeBtn" onclick="toggleTheme()" title="Alternar tema claro/escuro">☀️</button>
             </div>
         </header>
         <ul id="groupList" class="group-list"><li class="empty">Carregando…</li></ul>
