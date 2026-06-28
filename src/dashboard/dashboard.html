@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#0b141a">
+<meta name="theme-color" content="#0d0a1a">
 <title>{{BOT_NAME}}</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
+<link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/dashboard.css">
 </head>
 <body data-screen="chats">
@@ -49,7 +50,11 @@
                 </div>
                 <button class="rb-close" onclick="clearReply()" aria-label="Cancelar resposta">✕</button>
             </div>
-            <div class="ctx-bar" id="ctxBar">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <button class="icon-btn" id="ctxToggle" title="Opções de contexto (encaminhada, card, etc)" style="font-size:14px;">🎛️</button>
+                <span style="font-size:11px;color:var(--dm)" id="ctxLabel">Nenhuma opção ativa</span>
+            </div>
+            <div class="ctx-bar" id="ctxBar" style="display:none">
                 <button class="ctx-btn" data-ctx="forwarded" onclick="toggleCtx('forwarded')" title="Encaminhada com frequência">🔁 Enc.</button>
                 <button class="ctx-btn" data-ctx="mentionAll" onclick="toggleCtx('mentionAll')" title="Marcar todos os membros">📢 @Todos</button>
                 <button class="ctx-btn" data-ctx="ephemeral" onclick="toggleCtx('ephemeral')" title="Mensagem temporária (24h)">⏳ Temp.</button>

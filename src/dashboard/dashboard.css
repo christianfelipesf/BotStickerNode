@@ -1,15 +1,8 @@
-/* Dashboard — fundo OLED/preto + accents azul/cyan (Windows Terminal) + layout/balões WhatsApp */
-:root{
-    /* fundo WhatsApp Web OLED (preto profundo) */
-    --bg:#0b141a;--sb:#0b141a;--pn:#202c33;--pn2:#182229;
-    --b:rgba(255,255,255,.08);--tx:#e9edef;--dm:#8696a0;
-    /* accents trocados: azul/cyan do Windows Terminal em vez do verde WA */
-    --g:#0078d4;--t:#00b7c3;--bl:#4ec9b0;--w:#ffb84d;--er:#ff8182;
-    --r:12px;
-}
-/* cor base do bubble "enviado" — azul escuro translúcido (igual WhatsApp, mas com accent azul) */
-.from-me .msg-bubble{background:#1a3a5c;color:#e9edef}
-.from-me .msg-author{color:#9ecbff}
+/* Dashboard — tema roxo (herda de theme.css) + layout WhatsApp */
+:root{--bg:#0d0a1a}
+/* cor base do bubble "enviado" — roxo escuro translúcido */
+.from-me .msg-bubble{background:rgba(102,126,234,.2);color:var(--tx)}
+.from-me .msg-author{color:var(--bl)}
 .msg-quote{border-left-color:var(--g)}
 .msg-system{background:var(--w);color:#2a1700}
 .msg-error{background:var(--er);color:#2a0000}
@@ -207,19 +200,19 @@ button{font:inherit}
 }
 @media (min-width:769px) and (max-width:1100px){.app{grid-template-columns:minmax(240px,280px) 1fr minmax(240px,280px)}}
 
-/* Tema claro WhatsApp */
+/* Tema claro (roxo claro) */
 [data-theme="light"]{
-    --bg:#e5ddd5;--sb:#ffffff;--pn:#ffffff;--pn2:#f0f2f5;
-    --b:rgba(0,0,0,.07);--tx:#111b21;--dm:#667781;
-    --g:#00a884;--t:#00a884;--bl:#00a884;--w:#ffb84d;--er:#ff8182;
+    --bg:#f0edf6;--sb:#ffffff;--pn:#ffffff;--pn2:#f0edf6;
+    --b:rgba(0,0,0,.07);--tx:#1a1040;--dm:#7a72a0;
+    --g:#667eea;--t:#764ba2;--bl:#8b5cf6;--w:#ffb84d;--er:#ff8182;
 }
 [data-theme="light"] .ch-head{background:#f0f2f5;border-bottom:1px solid rgba(0,0,0,.08)}
 [data-theme="light"] .cb-head{background:#f0f2f5}
 [data-theme="light"] .cb-composer{background:#f0f2f5;border-top:1px solid rgba(0,0,0,.08)}
 [data-theme="light"] .st-head{background:#f0f2f5}
 [data-theme="light"] .col-stats{background:#f5f5f5}
-[data-theme="light"] .from-me .msg-bubble{background:#d9fdd3;color:#111b21}
-[data-theme="light"] .from-me .msg-author{color:#1f2e25}
+[data-theme="light"] .from-me .msg-bubble{background:rgba(102,126,234,.12);color:#1a1040}
+[data-theme="light"] .from-me .msg-author{color:#667eea}
 [data-theme="light"] .cb-body{background:var(--bg);box-shadow:none}
 [data-theme="light"] .msg-bubble{background:#ffffff;box-shadow:0 1px .5px rgba(0,0,0,.08)}
 [data-theme="light"] .msg-avatar{box-shadow:0 1px 2px rgba(0,0,0,.1)}

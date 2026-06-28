@@ -74,6 +74,8 @@
                 themeBtn: $('themeBtn'),
 
                 ctxBar: $('ctxBar'),
+                ctxToggle: $('ctxToggle'),
+                ctxLabel: $('ctxLabel'),
                 cardForm: $('cardForm'),
                 cardTitle: $('cardTitle'),
                 cardBody: $('cardBody'),

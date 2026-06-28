@@ -96,9 +96,12 @@
         const bar = D.refs.ctxBar;
         if (!bar) return;
         const btns = bar.querySelectorAll('.ctx-btn[data-ctx]');
+        const active = [];
         for (const btn of btns) {
             const key = btn.dataset.ctx;
-            btn.classList.toggle('active', !!state.contextInfo[key]);
+            const on = !!state.contextInfo[key];
+            btn.classList.toggle('active', on);
+            if (on) active.push(btn.textContent.trim());
         }
         const cf = D.refs.cardForm;
         if (cf) cf.style.display = state.contextInfo.hasCard ? 'flex' : 'none';
@@ -106,6 +109,17 @@
         if (af) af.style.display = state.contextInfo.hasActionLink ? 'flex' : 'none';
         const nf = D.refs.fwdNewsletterForm;
         if (nf) nf.style.display = state.contextInfo.hasFwdNewsletter ? 'flex' : 'none';
+        const lbl = D.refs.ctxLabel;
+        if (lbl) lbl.textContent = active.length ? active.join(', ') : 'Nenhuma opção ativa';
+    }
+
+    function toggleCtxBar() {
+        const bar = D.refs.ctxBar;
+        if (!bar) return;
+        const shown = bar.style.display !== 'none';
+        bar.style.display = shown ? 'none' : 'flex';
+        const btn = D.refs.ctxToggle;
+        if (btn) btn.style.opacity = shown ? '0.5' : '1';
     }
 
     function toggleCtx(key) {
@@ -210,6 +224,8 @@
                 }
             });
         }
+        const toggle = D.refs.ctxToggle;
+        if (toggle) toggle.addEventListener('click', toggleCtxBar);
         syncCtx();
     }
 
@@ -221,6 +237,7 @@
         sendCurrent,
         toggleCtx,
         resetCtx,
-        syncCtx
+        syncCtx,
+        toggleCtxBar
     };
 })(window.Dashboard = window.Dashboard || {});
