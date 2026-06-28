@@ -830,10 +830,10 @@ function init(config) {
     });
 
 
-    app.get('/logo.png', (req, res) => {
-        const logoPath = path.join(__dirname, '..', 'media', 'logo.png');
-        if (require('fs').existsSync(logoPath)) {
-            res.type('image/png').sendFile(logoPath);
+    app.get('/media/favcon.png', (req, res) => {
+        const p = path.join(__dirname, '..', 'media', 'favcon.png');
+        if (require('fs').existsSync(p)) {
+            res.type('image/png').sendFile(p);
         } else {
             res.status(404).end();
         }
