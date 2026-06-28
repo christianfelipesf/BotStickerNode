@@ -5,23 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Antigravity Media</title>
 <link rel="manifest" href="/pwa-manifest.json">
-<meta name="theme-color" id="metaTheme" content="#0f0f13">
+<meta name="theme-color" content="#0f0f13">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Media DL">
 <link rel="apple-touch-icon" href="/media/pwa-icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/media/pwa-icon-192.png">
 <link rel="stylesheet" href="/theme.css">
 <style>
-:root{--bg:#0f0f13;--sd:0 8px 32px rgba(0,0,0,.4)}
-[data-theme=light]{--bg:#f5f5f8;--sd:0 8px 32px rgba(0,0,0,.08)}
-body{min-height:100vh;background:var(--bg);transition:background .3s}
+body{min-height:100vh}
 .container{max-width:680px;margin:0 auto;padding:2rem 1rem}
 .header{display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem}
 .back{width:40px;height:40px;border-radius:10px;background:var(--pn);border:1px solid var(--b);display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all .2s;text-decoration:none;color:var(--tx)}
 .back:hover{background:var(--pn2)}
 .header h1{font-size:1.4rem;font-weight:600;flex:1}
-.theme-btn{margin-left:auto;width:40px;height:40px;border-radius:10px;background:var(--pn);border:1px solid var(--b);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;transition:all .2s;color:var(--tx)}
-.theme-btn:hover{background:var(--pn2)}
 .subtitle{color:var(--dm);font-size:.9rem;margin-bottom:1.5rem}
 .card{background:var(--pn);border:1px solid var(--b);border-radius:16px;padding:1.5rem;margin-bottom:1.5rem;box-shadow:var(--sd)}
 .drop-zone{border:2px dashed var(--b);border-radius:14px;padding:2rem 1.5rem;text-align:center;transition:all .3s;cursor:pointer;margin-bottom:1rem;position:relative}
@@ -108,7 +104,6 @@ body{min-height:100vh;background:var(--bg);transition:background .3s}
     <div class="header">
         <a href="/" class="back">←</a>
         <h1>Downloader de Mídia</h1>
-        <button class="theme-btn" id="themeBtn" title="Alternar tema">🌙</button>
     </div>
     <p class="subtitle">Cole o link de qualquer rede social e baixe a mídia diretamente pelo navegador</p>
 
@@ -164,8 +159,6 @@ const dropZone = document.getElementById('dropZone');
 const platformBadge = document.getElementById('platformBadge');
 const fmtSelect = document.getElementById('fmtSelect');
 const qualityRadios = document.querySelectorAll('input[name="quality"]');
-const themeBtn = document.getElementById('themeBtn');
-const metaTheme = document.getElementById('metaTheme');
 
 let abortController = null;
 
@@ -423,18 +416,6 @@ document.addEventListener('paste', () => {
         urlInput.dispatchEvent(new Event('input'));
     }, 10);
 });
-
-// Theme toggle
-const THEME_KEY = 'antigravityTheme';
-function getTheme() { return localStorage.getItem(THEME_KEY) || 'dark'; }
-function setTheme(t) {
-    document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : '');
-    metaTheme.content = t === 'light' ? '#f5f5f8' : '#0f0f13';
-    themeBtn.textContent = t === 'light' ? '☀️' : '🌙';
-    localStorage.setItem(THEME_KEY, t);
-}
-themeBtn.addEventListener('click', () => setTheme(getTheme() === 'light' ? 'dark' : 'light'));
-setTheme(getTheme());
 
 // History
 const HISTORY_KEY = 'mediaDownloadHistory';
