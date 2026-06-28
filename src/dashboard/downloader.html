@@ -117,7 +117,7 @@ body{min-height:100vh}
             <button id="downloadBtn">Baixar</button>
             <button id="cancelBtn" class="danger" style="display:none">Cancelar</button>
         </div>
-        <div id="platformBadge" class="platform-badge default"></div>
+        <div id="platformBadge" class="platform-badge"></div>
         <div class="fmt-row">
             <label><input type="radio" name="quality" value="best"> Melhor qualidade</label>
             <label><input type="radio" name="quality" value="normal" checked> Normal</label>
@@ -268,11 +268,11 @@ async function doDownload() {
 
     downloadBtn.disabled = true;
     downloadBtn.textContent = 'Baixando…';
-    cancelBtn.style.display = '';
     hideStatus();
     resultsEl.className = 'results';
     resultsEl.innerHTML = '';
     setStatus('loading', 'Analisando link e baixando mídia...');
+    cancelBtn.style.display = '';
 
     let progressInterval;
     if (fmt === 'mp3') {
@@ -285,7 +285,7 @@ async function doDownload() {
         const res = await fetch('/api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, hd }),
+            body: JSON.stringify({ url, hd, fmt }),
             signal: abortController.signal
         });
 
@@ -352,6 +352,7 @@ async function doDownload() {
             url: urlInput.value.trim(),
             platform: firstFile.platform || detectPlatform(url) || '',
             files,
+            fmt,
             cached: !!data.cached
         });
         urlInput.value = '';
@@ -481,14 +482,15 @@ function renderHistory() {
                 <h3 title="${entry.url}">${entry.platform ? entry.platform.charAt(0).toUpperCase() + entry.platform.slice(1) : 'Mídia'}</h3>
                 <p>${size ? size + ' · ' : ''}${formatTime(entry.timestamp)}${files.length > 1 ? ' · ' + files.length + ' arquivos' : ''}</p>
             </div>
-            ${dlUrl ? '<a href="' + dlUrl + '" class="hi-dl" download="' + getFileName(firstFile.mime || firstFile.mime, '') + '">⬇</a>' : ''}
+            ${dlUrl ? '<a href="' + dlUrl + '" class="hi-dl" download="' + getFileName(firstFile.mime || '', (entry.fmt || 'mp4')) + '">⬇</a>' : ''}
         `;
 
+        const hiFmt = entry.fmt || 'mp4';
         item.querySelector('.hi-dl')?.addEventListener('click', (e) => {
             e.preventDefault();
             const a = document.createElement('a');
             a.href = dlUrl;
-            a.download = getFileName(firstFile.mime || '', '');
+            a.download = getFileName(firstFile.mime || '', hiFmt);
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

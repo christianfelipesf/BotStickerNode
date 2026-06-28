@@ -55,12 +55,12 @@ function getPlatform(url) {
 }
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-const hasCookies = fs.existsSync(cookiesPath);
+function hasCookies() { return fs.existsSync(cookiesPath); }
 const BTCH_BASE_URL = 'https://backend1.tioo.eu.org';
 
 function getFormatSelector(platform, hd) {
     if (platform === 'instagram') {
-        return hd ? 'best[height<=1080]/best' : 'best[height<=720]/best';
+        return hd ? 'best[height<=720]/best' : 'worst[height<=480]/worst';
     }
     if (platform === 'tiktok') {
         return hd
@@ -106,7 +106,7 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         args.push('--no-playlist');
     }
 
-    if (hasCookies) args.push('--cookies', cookiesPath);
+    if (hasCookies()) args.push('--cookies', cookiesPath);
     args.push(url);
     return args;
 }
@@ -167,9 +167,18 @@ async function downloadBtch(platform, url, id, hd) {
         };
 
         if (platform === 'instagram') {
-            if (!Array.isArray(data)) throw new Error('resposta inválida');
-            for (let i = 0; i < data.length; i++) {
-                const item = dl(data[i].url, i);
+            let items = data;
+            if (!Array.isArray(items)) {
+                items = data?.result || data?.data || data?.medias || null;
+                if (!Array.isArray(items)) {
+                    if (data?.url) items = [data];
+                    else throw new Error('formato de resposta inválido: ' + JSON.stringify(data).slice(0, 200));
+                }
+            }
+            for (let i = 0; i < Math.min(items.length, 10); i++) {
+                const mediaUrl = items[i]?.url || (typeof items[i] === 'string' ? items[i] : null);
+                if (!mediaUrl) continue;
+                const item = dl(mediaUrl, i);
                 if (!item) continue;
                 await downloadFromUrl(item.url, item.dest);
                 results.push(item.dest);
@@ -353,7 +362,7 @@ function getCachedFile(url) {
     return null;
 }
 
-async function downloadMedia(url, hd = false) {
+async function downloadMedia(url, hd = false, fmt = 'mp4') {
     const cached = getCachedFile(url);
     if (cached) {
         return { cached: true, ...cached };
@@ -366,34 +375,51 @@ async function downloadMedia(url, hd = false) {
 
     const id = crypto.randomBytes(4).toString('hex');
     let allFiles = [];
+    const isAudio = fmt === 'mp3';
 
-    if (BTCH_PLATFORMS.has(platform)) {
+    if (!isAudio && BTCH_PLATFORMS.has(platform)) {
         allFiles = await downloadBtch(platform, url, id, hd);
     }
 
     if (allFiles.length === 0 && YTDLP_PLATFORMS.has(platform)) {
         console.log(`[WEB-DL] ${platform} via yt-dlp...`);
-        const template = path.join(CACHE_DIR, `webdl_${id}_%(playlist_index|)s%(playlist_index&_|)s%(id)s.%(ext)s`);
 
-        let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
-        allFiles = findDownloadedFiles(id);
-
-        if (allFiles.length === 0 && platform === 'instagram' && !hasCookies) {
-            for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
-                console.log(`[WEB-DL] Instagram retry --cookies-from-browser ${browser}...`);
-                const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-                retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--cookies-from-browser', browser);
-                result = await runYtDlp(retryArgs, 60000);
-                allFiles = findDownloadedFiles(id);
-                if (allFiles.length > 0) break;
-            }
-        }
-
-        if (allFiles.length === 0 && platform === 'instagram') {
-            const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-            retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
-            result = await runYtDlp(retryArgs);
+        if (isAudio) {
+            const tmpl = path.join(CACHE_DIR, `webdl_${id}_%(id)s.mp3`);
+            const audioArgs = [
+                '--no-warnings', '--no-check-certificates', '--ignore-errors', '--no-abort-on-error',
+                '--retries', '5', '--fragment-retries', '5', '--concurrent-fragments', '4',
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+                '-f', 'bestaudio/best',
+                '-o', tmpl
+            ];
+            if (hasCookies()) audioArgs.push('--cookies', cookiesPath);
+            audioArgs.push(url);
+            await runYtDlp(audioArgs);
             allFiles = findDownloadedFiles(id);
+        } else {
+            const template = path.join(CACHE_DIR, `webdl_${id}_%(playlist_index|)s%(playlist_index&_|)s%(id)s.%(ext)s`);
+            let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
+            allFiles = findDownloadedFiles(id);
+
+            if (allFiles.length === 0 && platform === 'instagram' && !hasCookies()) {
+                for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
+                    console.log(`[WEB-DL] Instagram retry --cookies-from-browser ${browser}...`);
+                    const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                    retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--cookies-from-browser', browser);
+                    result = await runYtDlp(retryArgs, 60000);
+                    allFiles = findDownloadedFiles(id);
+                    if (allFiles.length > 0) break;
+                }
+            }
+
+            if (allFiles.length === 0 && platform === 'instagram') {
+                const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
+                result = await runYtDlp(retryArgs);
+                allFiles = findDownloadedFiles(id);
+            }
         }
     }
 
@@ -433,13 +459,11 @@ function getCacheStats() {
         const files = fs.readdirSync(CACHE_DIR);
         for (const f of files) {
             const full = path.join(CACHE_DIR, f);
-            if (f.startsWith('webdl_') && fs.statSync(full).isFile()) {
-                entries.push({
-                    name: f,
-                    size: fs.statSync(full).size,
-                    mtime: fs.statSync(full).mtimeMs
-                });
-            }
+            if (!f.startsWith('webdl_')) continue;
+            let stat;
+            try { stat = fs.statSync(full); } catch { continue; }
+            if (!stat.isFile()) continue;
+            entries.push({ name: f, size: stat.size, mtime: stat.mtimeMs });
         }
     } catch (_) {}
     return entries;
@@ -451,9 +475,12 @@ function cleanupCache() {
         const now = Date.now();
         let removed = 0;
         for (const f of files) {
+            if (!f.startsWith('webdl_')) continue;
             const full = path.join(CACHE_DIR, f);
-            if (!f.startsWith('webdl_') || !fs.statSync(full).isFile()) continue;
-            if (now - fs.statSync(full).mtimeMs > CACHE_TTL_MS) {
+            let stat;
+            try { stat = fs.statSync(full); } catch { continue; }
+            if (!stat.isFile()) continue;
+            if (now - stat.mtimeMs > CACHE_TTL_MS) {
                 try { fs.unlinkSync(full); removed++; } catch (_) {}
             }
         }

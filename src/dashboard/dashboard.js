@@ -720,9 +720,9 @@ function init(config) {
         next();
     }, async (req, res) => {
         try {
-            const { url, hd } = req.body || {};
+            const { url, hd, fmt } = req.body || {};
             if (!url) return json(res, false, { error: 'URL é obrigatória' }, 400);
-            const result = await webDownloader.downloadMedia(url, !!hd);
+            const result = await webDownloader.downloadMedia(url, !!hd, fmt || 'mp4');
             if (result.cached) {
                 return json(res, true, {
                     cached: true,

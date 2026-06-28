@@ -43,7 +43,7 @@ function getPlatform(url) {
 
 function getFormatSelector(platform, hd) {
     if (platform === 'instagram') {
-        return hd ? 'best[height<=1080]/best' : 'best[height<=720]/best';
+        return hd ? 'best[height<=720]/best' : 'worst[height<=480]/worst';
     }
     if (platform === 'tiktok') {
         return hd
@@ -192,8 +192,8 @@ describe('getPlatform', () => {
 
 describe('getFormatSelector', () => {
     it('Instagram HD vs normal', () => {
-        assert.match(getFormatSelector('instagram', true), /1080/);
-        assert.match(getFormatSelector('instagram', false), /720/);
+        assert.match(getFormatSelector('instagram', true), /720/);
+        assert.match(getFormatSelector('instagram', false), /480/);
     });
 
     it('TikTok HD vs normal', () => {
