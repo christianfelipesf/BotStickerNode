@@ -244,11 +244,11 @@ function getFileName(mime, fmt) {
     return 'arquivo';
 }
 
-function getPreviewHtml(mime, dlUrl) {
-    if (mime.startsWith('video/')) {
-        return '<video class="result-preview" src="' + dlUrl + '" controls preload="metadata"></video>';
+function getPreviewHtml(file, dlUrl) {
+    if (file.mime.startsWith('video/') && file.thumbFilename) {
+        return '<img class="result-preview" src="/api/download-cache/' + encodeURIComponent(file.thumbFilename) + '" loading="lazy" alt="Thumbnail" style="cursor:pointer" onclick="window.open(\'' + dlUrl + '\',\'_blank\')">';
     }
-    if (mime.startsWith('image/')) {
+    if (file.mime.startsWith('image/')) {
         return '<img class="result-preview" src="' + dlUrl + '" loading="lazy" alt="Preview">';
     }
     return '';
@@ -317,7 +317,7 @@ async function doDownload() {
             const size = formatSize(file.size);
             const dlUrl = '/api/download-cache/' + encodeURIComponent(file.filename) + '/download';
             const fileName = getFileName(file.mime, fmt);
-            const preview = getPreviewHtml(file.mime, dlUrl);
+            const preview = getPreviewHtml(file, dlUrl);
 
             const item = document.createElement('div');
             item.className = 'result-item';

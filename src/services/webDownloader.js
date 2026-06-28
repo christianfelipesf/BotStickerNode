@@ -113,6 +113,8 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         '-o', outTemplate
     ];
 
+    args.push('--write-thumbnail', '--convert-thumbnail', 'png');
+
     if (platform === 'instagram') {
         args.push('--add-header', 'Referer:https://www.instagram.com/');
     } else if (platform === 'twitter') {
@@ -458,12 +460,16 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
     for (const filePath of allFiles) {
         const filename = path.basename(filePath);
         registerCacheEntry(filename, url);
+        const baseName = path.basename(filePath, path.extname(filePath));
+        const thumbPath = path.join(CACHE_DIR, baseName + '.png');
+        const thumbFilename = fs.existsSync(thumbPath) ? baseName + '.png' : null;
         results.push({
             filename,
             filePath,
             mime: getFileMime(filePath),
             size: fs.statSync(filePath).size,
-            platform
+            platform,
+            ...(thumbFilename ? { thumbFilename } : {})
         });
     }
 
