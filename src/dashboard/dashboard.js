@@ -769,6 +769,15 @@ function init(config) {
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.sendFile(file);
     });
+    app.get('/media/favcon.png', (req, res) => {
+        const p = path.join(__dirname, '..', 'media', 'favcon.png');
+        if (require('fs').existsSync(p)) {
+            res.type('image/png').sendFile(p);
+        } else {
+            res.status(404).end();
+        }
+    });
+
     app.get('/media/:id', (req, res) => {
         const id = req.params.id;
         const data = readPersistedMedia(id);
@@ -828,17 +837,6 @@ function init(config) {
     app.get('/download', (req, res) => {
         res.redirect('/');
     });
-
-
-    app.get('/media/favcon.png', (req, res) => {
-        const p = path.join(__dirname, '..', 'media', 'favcon.png');
-        if (require('fs').existsSync(p)) {
-            res.type('image/png').sendFile(p);
-        } else {
-            res.status(404).end();
-        }
-    });
-
     app.use((err, req, res, next) => {
         const status = err?.type === 'entity.too.large' ? 413 : 400;
         const error = status === 413 ? 'Arquivo muito grande para enviar pelo dashboard' : 'JSON invalido';
