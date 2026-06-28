@@ -176,7 +176,7 @@ $('loginForm').addEventListener('submit', async e => {
 });
 $('btnLogout').addEventListener('click', async () => {
     await api('/api/admin/logout', { method: 'POST' });
-    user = ''; $('userPill').textContent = '—'; showLogin(); $('loginUser').value = ''; $('loginPass').value = '';
+    window.location.href = '/';
 });
 $('btnReload').addEventListener('click', load);
 $('btnSaveAll').addEventListener('click', saveAll);
