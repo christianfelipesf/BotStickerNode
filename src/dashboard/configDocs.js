@@ -48,7 +48,8 @@
         dashboardMuted: 'Silencia notificações sonoras do painel por padrão.',
         dashboardShowQR: 'Mostra o QR Code de conexão no dashboard principal para visitantes.',
         dashboardChatBlocked: 'Bloqueia o envio/recebimento de mensagens no dashboard mantendo o painel admin ativo.',
-        linkgrupo: 'Link de divulgação exibido no comando !divulgar.'
+        linkgrupo: 'Link de divulgação exibido no comando !divulgar.',
+        instagramCookies: 'Cookies do Instagram (formato Netscape) para baixar mídias. Cole o conteúdo do cookies.txt aqui.'
     };
 
     D.configDocs = DOCS;

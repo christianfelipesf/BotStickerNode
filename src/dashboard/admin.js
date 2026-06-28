@@ -83,6 +83,26 @@ function renderCard(k, v) {
         return card;
     }
 
+    if (k === 'instagramCookies') {
+        const ta = document.createElement('textarea');
+        ta.placeholder = 'Cole os cookies do Instagram (formato Netscape)';
+        ta.value = v || '';
+        ta.style.cssText = 'width:100%;background:#0e1116;border:1px solid #30363d;border-radius:5px;padding:6px 9px;color:#e6edf3;font-size:12px;font-family:ui-monospace,monospace;resize:vertical;min-height:80px';
+        ta.addEventListener('input', () => edit(k, ta.value));
+        card.appendChild(ta);
+        const status = document.createElement('div');
+        status.style.cssText = 'font-size:11px;margin-top:4px;font-family:ui-monospace,monospace';
+        status.textContent = v ? '✅ cookies configurados' : '✗ não definido';
+        status.style.color = v ? '#3fb950' : '#f85149';
+        card.appendChild(status);
+        const r2 = document.createElement('div'); r2.className = 'row2';
+        r2.style.justifyContent = 'flex-end';
+        const sb = document.createElement('button'); sb.className = 'save'; sb.textContent = '💾';
+        sb.onclick = () => saveOne(k);
+        r2.appendChild(sb); card.appendChild(r2);
+        return card;
+    }
+
     if (t === 'boolean') {
         const tg = document.createElement('div');
         tg.className = 'toggle' + (v ? ' on' : '');

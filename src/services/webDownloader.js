@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const { readConfig } = require('../database/utils');
 
 const CACHE_DIR = path.join(process.cwd(), 'temp', 'web_cache');
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -54,8 +55,24 @@ function getPlatform(url) {
     }
 }
 
-const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-function hasCookies() { return fs.existsSync(cookiesPath); }
+const COOKIES_FILE = path.join(process.cwd(), 'cookies.txt');
+const CONFIG_COOKIES_FILE = path.join(process.cwd(), 'temp', 'instagram_cookies.txt');
+
+function getCookiesPath() {
+    if (fs.existsSync(COOKIES_FILE)) return COOKIES_FILE;
+    try {
+        const cfg = readConfig();
+        if (cfg.instagramCookies && cfg.instagramCookies.trim()) {
+            const dir = path.dirname(CONFIG_COOKIES_FILE);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(CONFIG_COOKIES_FILE, cfg.instagramCookies, 'utf8');
+            return CONFIG_COOKIES_FILE;
+        }
+    } catch (_) {}
+    return null;
+}
+
+function hasCookies() { return getCookiesPath() !== null; }
 const BTCH_BASE_URL = 'https://backend1.tioo.eu.org';
 
 function getFormatSelector(platform, hd) {
@@ -106,7 +123,7 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         args.push('--no-playlist');
     }
 
-    if (hasCookies()) args.push('--cookies', cookiesPath);
+    if (hasCookies()) args.push('--cookies', getCookiesPath());
     args.push(url);
     return args;
 }
@@ -394,7 +411,7 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
                 '-f', 'bestaudio/best',
                 '-o', tmpl
             ];
-            if (hasCookies()) audioArgs.push('--cookies', cookiesPath);
+            if (hasCookies()) audioArgs.push('--cookies', getCookiesPath());
             audioArgs.push(url);
             await runYtDlp(audioArgs);
             allFiles = findDownloadedFiles(id);
@@ -424,7 +441,7 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
     }
 
     if (allFiles.length === 0 && platform === 'instagram') {
-        throw new Error('Instagram bloqueou o acesso. Use cookies.txt na raiz do bot.');
+        throw new Error('Instagram bloqueou o acesso. Defina os cookies do Instagram no Admin > instagramCookies ou coloque cookies.txt na raiz do bot.');
     }
 
     if (allFiles.length === 0) {

@@ -95,7 +95,8 @@ const DEFAULT_CONFIG = {
     subSessionsGroups: true,
     dashboardMuted: false,
     dashboardShowQR: false,
-    dashboardChatBlocked: false
+    dashboardChatBlocked: false,
+    instagramCookies: ''
 };
 
 function readConfig() {
