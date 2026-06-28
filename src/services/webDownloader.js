@@ -13,7 +13,7 @@ const URL_REGEX = /https?:\/\/[^\s<>"']+/i;
 
 const PLATFORM_CONFIG = {
     instagram: { api: 'igdl', hosts: ['instagram.com'], ytdlp: true },
-    tiktok: { api: 'ttdl', hosts: ['tiktok.com', 'vm.tiktok.com'], ytdlp: true },
+    tiktok: { api: 'ttdl', hosts: ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'], ytdlp: true },
     facebook: { api: 'fbdown', hosts: ['facebook.com', 'fb.watch'], ytdlp: true },
     twitter: { api: 'twitter', hosts: ['twitter.com', 'x.com', 't.co'], ytdlp: true },
     youtube: { api: 'youtube', hosts: ['youtube.com', 'youtu.be'], ytdlp: true },

@@ -694,7 +694,31 @@ function init(config) {
             res.status(500).json({ ok: false, error: e.message });
         }
     });
-    app.post('/api/download', async (req, res) => {
+    const downloadRateLimitMap = new Map();
+    const DL_RATE_WINDOW = 60 * 1000;
+    const DL_RATE_MAX = 20;
+    function downloadRateLimit(req) {
+        const key = req.ip || req.connection?.remoteAddress || 'unknown';
+        const now = Date.now();
+        let entry = downloadRateLimitMap.get(key);
+        if (!entry || (now - entry.windowStart) > DL_RATE_WINDOW) {
+            entry = { windowStart: now, count: 0 };
+            downloadRateLimitMap.set(key, entry);
+        }
+        entry.count++;
+        return entry.count <= DL_RATE_MAX;
+    }
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, entry] of downloadRateLimitMap) {
+            if ((now - entry.windowStart) > DL_RATE_WINDOW * 2) downloadRateLimitMap.delete(key);
+        }
+    }, DL_RATE_WINDOW);
+
+    app.post('/api/download', (req, res, next) => {
+        if (!downloadRateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitos downloads. Aguarde alguns segundos.' });
+        next();
+    }, async (req, res) => {
         try {
             const { url, hd } = req.body || {};
             if (!url) return json(res, false, { error: 'URL é obrigatória' }, 400);
@@ -745,6 +769,25 @@ function init(config) {
     app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Endpoint nao encontrado' }));
     app.get('/theme.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'theme.css')));
     app.get('/dashboard.css', (req, res) => res.type('css').sendFile(path.join(__dirname, 'dashboard.css')));
+    app.get('/pwa-manifest.json', (req, res) => {
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.sendFile(path.join(__dirname, 'pwa-manifest.json'));
+    });
+    app.get('/sw.js', (req, res) => {
+        res.type('application/javascript');
+        res.set('Cache-Control', 'no-cache');
+        res.sendFile(path.join(__dirname, 'sw.js'));
+    });
+    app.get('/media/pwa-icon-192.png', (req, res) => {
+        const p = path.join(__dirname, '..', 'media', 'pwa-icon-192.png');
+        if (fs.existsSync(p)) return res.type('image/png').sendFile(p);
+        res.status(404).end();
+    });
+    app.get('/media/pwa-icon-512.png', (req, res) => {
+        const p = path.join(__dirname, '..', 'media', 'pwa-icon-512.png');
+        if (fs.existsSync(p)) return res.type('image/png').sendFile(p);
+        res.status(404).end();
+    });
     app.get('/admin.js', (req, res) => {
         res.set('Content-Type', 'application/javascript; charset=utf-8');
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
