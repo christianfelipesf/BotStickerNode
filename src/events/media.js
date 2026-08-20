@@ -16,7 +16,7 @@ function downloadWithTimeout(msg, opts) {
 const {
     getMediaMessage, react, reactStatus, isViewOnce,
     stickerToMedia, getBotName, mediaToSticker,
-    changeSpeed,
+    changeSpeed, mediaToGif,
     isDashboardEnabled
 } = require('../database/utils');
 
@@ -154,6 +154,15 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                     throw stickerErr;
                 }
             }
+        } else if (action === 'togif') {
+            const isSticker = !!mediaMessage.stickerMessage;
+            if (!isSticker && !mediaMessage.videoMessage) {
+                await sock.sendMessage(from, { text: '❌ Marque um vídeo ou sticker animado.' }, { quoted: m });
+                return lastBotResponse;
+            }
+            const mimeType = isSticker ? 'sticker/webp' : (mediaMessage.videoMessage?.mimetype || 'video/mp4');
+            const gif = await mediaToGif(buffer, mimeType);
+            await sock.sendMessage(from, { document: gif, mimetype: 'image/gif', fileName: 'bot.gif', caption: '✅ GIF gerado!' }, { quoted: m });
         } else if (action === 'speed') {
             if (!mediaMessage.videoMessage && !mediaMessage.audioMessage) {
                 await sock.sendMessage(from, { text: '❌ Marque um vídeo ou áudio.' }, { quoted: m });

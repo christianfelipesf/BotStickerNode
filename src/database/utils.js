@@ -7,7 +7,7 @@ const { Jimp } = require('jimp');
 
 const { db, tempDir, checkpointWal } = require('./db');
 const { migrateLegacyUnifiedDB, migrateLegacyMessagesJson, migrateLegacyActiveGroups, migrateJsonToSqlite } = require('./migrate');
-const { addMetadata, mediaToSticker, stickerToMedia, changeSpeed } = require('./sticker');
+const { addMetadata, mediaToSticker, stickerToMedia, changeSpeed, mediaToGif } = require('./sticker');
 const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require('./media');
 
 // ============================================================
@@ -913,7 +913,7 @@ module.exports = {
     getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, saveGroupMenuImage,
     isViewOnce, getMediaMessage, getContextInfo, getMessageText,
-    mediaToSticker, stickerToMedia, changeSpeed, addMetadata,
+    mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
     updateMemberActivity, getTopMember,

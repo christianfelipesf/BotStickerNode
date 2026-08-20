@@ -127,6 +127,54 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     }
 }
 
+async function convertAnimatedWebpDirect(inputPath, outputPath) {
+    await new Promise((resolve, reject) => {
+        let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
+        ffmpeg(inputPath)
+            .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
+            .toFormat('mp4')
+            .on('end', () => { clearTimeout(to); resolve(); })
+            .on('error', (e) => { clearTimeout(to); reject(e); })
+            .save(outputPath);
+    });
+}
+
+async function convertAnimatedWebpFrames(buffer, outputPath) {
+    const tempId = crypto.randomBytes(4).toString('hex');
+    const frameDir = path.join(tempDir, `stk_frames_${tempId}`);
+    const written = [];
+    try {
+        fs.mkdirSync(frameDir, { recursive: true });
+        const img = new Image();
+        await img.load(buffer);
+        if (!img.frames || !img.frames.length) throw new Error('WebP animado sem frames');
+        const bufs = await img.demux({ buffers: true });
+        if (!bufs.length) throw new Error('WebP animado sem frames');
+        const delays = img.frames.map(f => f.delay || 100);
+        const avgDelay = delays.reduce((a, b) => a + b, 0) / delays.length;
+        const fps = Math.min(30, Math.max(1, Math.round(1000 / avgDelay)));
+        for (let i = 0; i < bufs.length; i++) {
+            const p = path.join(frameDir, `f_${i}.webp`);
+            fs.writeFileSync(p, bufs[i]);
+            written.push(p);
+        }
+        await new Promise((resolve, reject) => {
+            let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
+            ffmpeg(path.join(frameDir, 'f_%d.webp'))
+                .inputOptions(['-framerate', String(fps)])
+                .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
+                .toFormat('mp4')
+                .on('end', () => { clearTimeout(to); resolve(); })
+                .on('error', (e) => { clearTimeout(to); reject(e); })
+                .save(outputPath);
+        });
+        if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) throw new Error('Vídeo gerado vazio');
+    } finally {
+        written.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+        try { fs.rmdirSync(frameDir); } catch (_) {}
+    }
+}
+
 async function stickerToMedia(buffer, isAnimated = false) {
     if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Sticker muito grande');
     const tempId = crypto.randomBytes(4).toString('hex');
@@ -134,13 +182,22 @@ async function stickerToMedia(buffer, isAnimated = false) {
     const outputPath = path.join(tempDir, `stk_out_${tempId}.${isAnimated ? 'mp4' : 'png'}`);
     try {
         fs.writeFileSync(inputPath, buffer);
-        await new Promise((resolve, reject) => {
-            let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
-            let ff = ffmpeg(inputPath);
-            if (isAnimated) ff.outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2']).toFormat('mp4');
-            else ff.outputOptions(['-vcodec png', '-compression_level 0', '-f image2']);
-            ff.on('end', () => { clearTimeout(to); resolve(); }).on('error', (e) => { clearTimeout(to); reject(e); }).save(outputPath);
-        });
+        if (isAnimated) {
+            try {
+                await convertAnimatedWebpDirect(inputPath, outputPath);
+            } catch (_) {
+                await convertAnimatedWebpFrames(buffer, outputPath);
+            }
+        } else {
+            await new Promise((resolve, reject) => {
+                let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
+                ffmpeg(inputPath)
+                    .outputOptions(['-vcodec png', '-compression_level 0', '-f image2'])
+                    .on('end', () => { clearTimeout(to); resolve(); })
+                    .on('error', (e) => { clearTimeout(to); reject(e); })
+                    .save(outputPath);
+            });
+        }
         let outBuf; try { outBuf = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão sticker'); }
         return { buffer: outBuf, mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
     } catch (err) {
@@ -199,9 +256,103 @@ async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
     }
 }
 
+async function convertAnimatedWebpToGifDirect(inputPath, outputPath) {
+    await new Promise((resolve, reject) => {
+        let to = setTimeout(() => reject(new Error('ffmpeg toGif timeout 30s')), 30000);
+        ffmpeg(inputPath)
+            .outputOptions([
+                '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
+                '-loop', '0'
+            ])
+            .toFormat('gif')
+            .on('end', () => { clearTimeout(to); resolve(); })
+            .on('error', (e) => { clearTimeout(to); reject(e); })
+            .save(outputPath);
+    });
+}
+
+async function convertAnimatedWebpFramesGif(buffer, outputPath) {
+    const tempId = crypto.randomBytes(4).toString('hex');
+    const frameDir = path.join(tempDir, `gif_frames_${tempId}`);
+    const written = [];
+    try {
+        fs.mkdirSync(frameDir, { recursive: true });
+        const img = new Image();
+        await img.load(buffer);
+        if (!img.frames || !img.frames.length) throw new Error('WebP animado sem frames');
+        const bufs = await img.demux({ buffers: true });
+        if (!bufs.length) throw new Error('WebP animado sem frames');
+        const delays = img.frames.map(f => f.delay || 100);
+        const avgDelay = delays.reduce((a, b) => a + b, 0) / delays.length;
+        const fps = Math.min(30, Math.max(1, Math.round(1000 / avgDelay)));
+        for (let i = 0; i < bufs.length; i++) {
+            const p = path.join(frameDir, `f_${i}.webp`);
+            fs.writeFileSync(p, bufs[i]);
+            written.push(p);
+        }
+        await new Promise((resolve, reject) => {
+            let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
+            ffmpeg(path.join(frameDir, 'f_%d.webp'))
+                .inputOptions(['-framerate', String(fps)])
+                .outputOptions([
+                    '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
+                    '-loop', '0'
+                ])
+                .toFormat('gif')
+                .on('end', () => { clearTimeout(to); resolve(); })
+                .on('error', (e) => { clearTimeout(to); reject(e); })
+                .save(outputPath);
+        });
+        if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) throw new Error('GIF gerado vazio');
+    } finally {
+        written.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+        try { fs.rmdirSync(frameDir); } catch (_) {}
+    }
+}
+
+async function mediaToGif(buffer, mimeType) {
+    if (!buffer || buffer.length > 20 * 1024 * 1024) throw new Error('Mídia muito grande');
+    const isSticker = (mimeType || '').toLowerCase().includes('sticker');
+    const tempId = crypto.randomBytes(4).toString('hex');
+    const inputPath = path.join(tempDir, `gif_in_${tempId}${isSticker ? '.webp' : '.mp4'}`);
+    const outputPath = path.join(tempDir, `gif_out_${tempId}.gif`);
+    try {
+        fs.writeFileSync(inputPath, buffer);
+        if (isSticker) {
+            try {
+                await convertAnimatedWebpToGifDirect(inputPath, outputPath);
+            } catch (_) {
+                await convertAnimatedWebpFramesGif(buffer, outputPath);
+            }
+        } else {
+            await new Promise((resolve, reject) => {
+                let to = setTimeout(() => reject(new Error('ffmpeg toGif timeout 30s')), 30000);
+                ffmpeg(inputPath)
+                    .outputOptions([
+                        '-vf', 'fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
+                        '-loop', '0'
+                    ])
+                    .toFormat('gif')
+                    .on('end', () => { clearTimeout(to); resolve(); })
+                    .on('error', (e) => { clearTimeout(to); reject(e); })
+                    .save(outputPath);
+            });
+        }
+        let out; try { out = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão GIF'); }
+        if (out.length < 32) throw new Error('GIF gerado vazio');
+        return out;
+    } catch (e) {
+        console.error('❌ [TOGIF] Falha:', e.message);
+        throw e;
+    } finally {
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+    }
+}
+
 module.exports = {
     addMetadata,
     mediaToSticker,
     stickerToMedia,
-    changeSpeed
+    changeSpeed,
+    mediaToGif
 };

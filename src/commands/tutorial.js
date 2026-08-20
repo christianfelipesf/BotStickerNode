@@ -19,6 +19,7 @@ module.exports = {
             `╭── *2. STICKERS* ──\n` +
             `│ Envie uma *imagem ou vídeo* com legenda ${p}s para criar sticker\n` +
             `│ Marque um sticker com ${p}toimg para voltar a imagem\n` +
+            `│ Marque um vídeo/sticker animado com ${p}togif para gerar GIF\n` +
             `│ ${p}revelar — recupera view-once (fotos/vídeos que somem)\n` +
             `╰─────────────────────────────\n\n` +
         `╭── *3. MÍDIA & DOWNLOAD* ──\n` +
