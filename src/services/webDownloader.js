@@ -63,9 +63,10 @@ function getCookiesPath() {
     try {
         const cfg = readConfig();
         if (cfg.instagramCookies && cfg.instagramCookies.trim()) {
+            if (cfg.instagramCookies.length > 2 * 1024 * 1024) return null;
             const dir = path.dirname(CONFIG_COOKIES_FILE);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(CONFIG_COOKIES_FILE, cfg.instagramCookies, 'utf8');
+            fs.writeFileSync(CONFIG_COOKIES_FILE, cfg.instagramCookies.slice(0, 1024*1024), 'utf8');
             return CONFIG_COOKIES_FILE;
         }
     } catch (_) {}
@@ -162,13 +163,23 @@ async function callBtchApi(endpoint, url) {
 }
 
 async function downloadFromUrl(fileUrl, destPath) {
+    if (!/^https?:\/\//i.test(fileUrl)) throw new Error('URL inválida');
     const writer = fs.createWriteStream(destPath);
-    const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000 });
-    res.data.pipe(writer);
-    await new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-    });
+    try {
+        const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
+        let total = 0;
+        res.data.on('data', c => { total += c.length; if (total > 100*1024*1024) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
+        res.data.pipe(writer);
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+            res.data.on('error', reject);
+        });
+        try { if (fs.statSync(destPath).size > 100*1024*1024) throw new Error('Arquivo >100MB'); } catch (e) { if (e.message.includes('100MB')) throw e; }
+    } catch (e) {
+        try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
+        throw e;
+    }
 }
 
 async function downloadBtch(platform, url, id, hd) {
@@ -180,9 +191,11 @@ async function downloadBtch(platform, url, id, hd) {
         const results = [];
         const dl = (mediaUrl, idx = 0) => {
             if (!mediaUrl) return null;
-            const ext = path.extname(new URL(mediaUrl).pathname) || '.mp4';
-            const dest = path.join(CACHE_DIR, `webdl_${id}_btch_${idx}${ext}`);
-            return { url: mediaUrl, dest };
+            try {
+                const ext = path.extname(new URL(mediaUrl).pathname) || '.mp4';
+                const dest = path.join(CACHE_DIR, `webdl_${id}_btch_${idx}${ext}`);
+                return { url: mediaUrl, dest };
+            } catch (_) { return null; }
         };
 
         if (platform === 'instagram') {
@@ -336,13 +349,15 @@ async function downloadBtch(platform, url, id, hd) {
 function findDownloadedFiles(id) {
     try {
         const files = fs.readdirSync(CACHE_DIR)
-            .filter(f => f.startsWith(`webdl_${id}_`) && /\.(mp4|webm|mkv|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(f) && !f.endsWith('.part'))
-            .map(f => ({
-                path: path.join(CACHE_DIR, f),
-                time: fs.statSync(path.join(CACHE_DIR, f)).mtimeMs,
-                size: fs.statSync(path.join(CACHE_DIR, f)).size,
-                name: f
-            }))
+            .filter(f => f.startsWith(`webdl_${id}_`) && /\.(mp4|webm|mkv|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(f) && !/\.part(\.|$)/i.test(f) && !f.endsWith('.ytdl') && !f.endsWith('.temp.mp4'))
+            .map(f => {
+                try {
+                    const full = path.join(CACHE_DIR, f);
+                    const stat = fs.statSync(full);
+                    return { path: full, time: stat.mtimeMs, size: stat.size, name: f };
+                } catch (_) { return null; }
+            })
+            .filter(Boolean)
             .filter(f => f.size >= 1024)
             .sort((a, b) => a.time - b.time);
 
@@ -450,7 +465,8 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
         throw new Error('Não foi possível baixar a mídia.');
     }
 
-    const totalSize = allFiles.reduce((acc, f) => acc + fs.statSync(f).size, 0);
+    let totalSize = 0;
+    try { totalSize = allFiles.reduce((acc, f) => { try { return acc + fs.statSync(f).size; } catch (_) { return acc; } }, 0); } catch (_) {}
     if (totalSize > 100 * 1024 * 1024) {
         for (const f of allFiles) { try { fs.unlinkSync(f); } catch (_) {} }
         throw new Error(`Limite de 100MB excedido (${(totalSize / 1048576).toFixed(2)}MB).`);
@@ -511,7 +527,7 @@ function cleanupCache() {
     } catch (_) {}
 }
 
-setInterval(cleanupCache, CLEANUP_INTERVAL_MS);
+setInterval(cleanupCache, CLEANUP_INTERVAL_MS).unref();
 
 module.exports = {
     downloadMedia,

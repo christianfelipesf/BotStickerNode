@@ -16,10 +16,11 @@ module.exports = {
         }
 
         const cfg = readConfig();
-        let limit = Number(cfg.clearDefaultLimit) || DEFAULT_LIMIT;
-        const parsed = parseInt((fullArgsText || '').trim().split(/\s+/)[0], 10);
-        if (!Number.isNaN(parsed) && parsed > 0) {
-            limit = Math.min(parsed, MAX_LIMIT);
+        let limit = Math.min(Math.max(1, Number(cfg.clearDefaultLimit) || DEFAULT_LIMIT), MAX_LIMIT);
+        const raw = (fullArgsText || '').trim().split(/\s+/)[0] || '';
+        if (/^\d+$/.test(raw)) {
+            const parsed = parseInt(raw, 10);
+            if (parsed > 0) limit = Math.min(parsed, MAX_LIMIT);
         }
 
         const meId = normalizeJid(sock.user.id);

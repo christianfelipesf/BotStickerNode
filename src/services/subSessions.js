@@ -573,15 +573,23 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
                     } else if (code === 515 || errMsg.toLowerCase().includes('restart required')) {
-                        dlog(`${hashJid(ownerJid)} 515/restart required → recriando sock automaticamente`);
-                        try { sock.end(undefined); } catch (_) {}
-                        sessions.delete(ownerJid);
-                        setTimeout(() => {
-                            try {
-                                startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed, _reconnect: true })
-                                    .catch(e => dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`));
-                            } catch (_) {}
-                        }, 5000);
+                        session._restartCount = (session._restartCount || 0) + 1;
+                        if (session._restartCount > 5) {
+                            dlog(`${hashJid(ownerJid)} 515 loop >5 — abortando`);
+                            try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                            sessions.delete(ownerJid);
+                            await safeCallback(session.onClosed, ownerJid, 'restart-loop');
+                        } else {
+                            dlog(`${hashJid(ownerJid)} 515/restart required → recriando sock automaticamente (${session._restartCount}/5)`);
+                            try { sock.end(undefined); } catch (_) {}
+                            sessions.delete(ownerJid);
+                            setTimeout(() => {
+                                try {
+                                    startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed, _reconnect: true })
+                                        .catch(e => dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`));
+                                } catch (_) {}
+                            }, 5000);
+                        }
                     } else if (code === 401) {
                         dlog(`${hashJid(ownerJid)} 401 → deletando credenciais e sessão`);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}

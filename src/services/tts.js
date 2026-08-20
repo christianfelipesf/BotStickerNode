@@ -1,6 +1,7 @@
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 
 const piperDir = path.join(process.cwd(), 'bin', 'piper');
@@ -23,7 +24,7 @@ async function synthesize(text, modelPath = defaultModel) {
     // Garantir permissão de execução no Linux
     if (!isWindows) {
         try {
-            execSync(`chmod +x "${piperExe}"`);
+            fs.chmodSync(piperExe, 0o755);
         } catch (e) {
             console.error('Erro ao dar permissão ao Piper:', e.message);
         }
@@ -36,8 +37,9 @@ async function synthesize(text, modelPath = defaultModel) {
     const tempDir = path.join(process.cwd(), 'temp');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
     
-    const wavPath = path.join(tempDir, `tts_${Date.now()}.wav`);
-    const opusPath = path.join(tempDir, `tts_${Date.now()}.opus`);
+    const id = crypto.randomBytes(4).toString('hex');
+    const wavPath = path.join(tempDir, `tts_${id}.wav`);
+    const opusPath = path.join(tempDir, `tts_${id}.opus`);
 
     const espeakData = path.join(piperDir, 'espeak-ng-data');
 
@@ -53,14 +55,21 @@ async function synthesize(text, modelPath = defaultModel) {
             '--espeak_data', espeakData
         ], { env });
 
+        if (text.length > 3000) text = text.slice(0, 3000);
         piper.stdin.write(text);
         piper.stdin.end();
 
+        let killed = false;
+        const timeout = setTimeout(() => { killed = true; try { piper.kill('SIGKILL'); } catch (_) {} }, 30000);
+
         piper.on('close', async (code) => {
+            clearTimeout(timeout);
+            if (killed) { try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath); } catch (_) {} return reject(new Error('Piper timeout 30s')); }
             if (code === 0 && fs.existsSync(wavPath)) {
                 try {
                     // Converter para OPUS (encapsulado em OGG) para WhatsApp
                     await new Promise((res, rej) => {
+                        let to = setTimeout(() => rej(new Error('ffmpeg opus timeout 30s')), 30000);
                         ffmpeg(wavPath)
                             .audioCodec('libopus')
                             .outputOptions([
@@ -69,22 +78,27 @@ async function synthesize(text, modelPath = defaultModel) {
                                 '-compression_level 10'
                             ])
                             .toFormat('ogg')
-                            .on('end', res)
-                            .on('error', rej)
+                            .on('end', () => { clearTimeout(to); res(); })
+                            .on('error', (e) => { clearTimeout(to); rej(e); })
                             .save(opusPath);
                     });
                     
-                    fs.unlinkSync(wavPath); // Deletar o WAV original
+                    try { fs.unlinkSync(wavPath); } catch (_) {}
                     resolve(opusPath);
                 } catch (err) {
+                    try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath); } catch (_) {}
+                    try { if (fs.existsSync(opusPath)) fs.unlinkSync(opusPath); } catch (_) {}
                     reject(new Error(`Erro na conversão para Opus: ${err.message}`));
                 }
             } else {
+                try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath); } catch (_) {}
                 reject(new Error(`Piper finalizou com código ${code}`));
             }
         });
 
         piper.on('error', (err) => {
+            clearTimeout(timeout);
+            try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath); } catch (_) {}
             reject(err);
         });
     });

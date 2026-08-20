@@ -11,10 +11,11 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
+db.pragma('synchronous = FULL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 db.pragma('wal_autocheckpoint = 1000');
+setInterval(() => { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {} }, 10 * 60 * 1000).unref();
 
 try {
     const av = Number(db.pragma('auto_vacuum', { simple: true }));

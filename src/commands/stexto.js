@@ -13,7 +13,8 @@ const FONT_URL = 'https://github.com/prawnpdf/prawn/raw/master/data/fonts/DejaVu
 async function ensureFont() {
     if (fs.existsSync(FONT_PATH)) return;
     fs.mkdirSync(FONT_DIR, { recursive: true });
-    const res = await axios.get(FONT_URL, { responseType: 'arraybuffer', timeout: 15000 });
+    const res = await axios.get(FONT_URL, { responseType: 'arraybuffer', timeout: 15000, maxContentLength: 5*1024*1024, maxBodyLength: 5*1024*1024 });
+    if (res.data.byteLength > 5*1024*1024) throw new Error('Fonte muito grande');
     fs.writeFileSync(FONT_PATH, Buffer.from(res.data));
 }
 
@@ -98,6 +99,7 @@ async function makeGlowSticker(text) {
 
     const outputPath = path.join(tempDir, `stext_${id}.webp`);
     await new Promise((resolve, reject) => {
+        let to = setTimeout(() => reject(new Error('ffmpeg stexto timeout 30s')), 30000);
         ffmpeg()
             .input(`nullsrc=s=${W}x${H}:r=${fps}:d=${duration}`)
             .inputFormat('lavfi')
@@ -111,16 +113,22 @@ async function makeGlowSticker(text) {
                 '-an'
             ])
             .on('end', () => {
+                clearTimeout(to);
                 try { fs.unlinkSync(textFile); } catch {}
                 resolve();
             })
-            .on('error', reject)
+            .on('error', (e) => {
+                clearTimeout(to);
+                try { fs.unlinkSync(textFile); } catch {}
+                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch {}
+                reject(e);
+            })
             .save(outputPath);
     });
 
-    const buf = fs.readFileSync(outputPath);
+    let buf; try { buf = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha gerar sticker'); }
     const withMeta = await addMetadata(buf, 'Texto Glow', 'Bot');
-    fs.unlinkSync(outputPath);
+    try { fs.unlinkSync(outputPath); } catch (_) {}
     return withMeta;
 }
 

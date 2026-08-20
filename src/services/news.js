@@ -434,9 +434,12 @@ async function downloadToBuffer(mediaUrl, userAgent) {
         timeout: HTTP_TIMEOUT_MS,
         headers: { 'User-Agent': buildHeaders(userAgent)['User-Agent'], 'Accept': '*/*' },
         maxRedirects: 5,
-        validateStatus: () => true
+        validateStatus: () => true,
+        maxContentLength: 10 * 1024 * 1024,
+        maxBodyLength: 10 * 1024 * 1024
     });
     if (res.status < 200 || res.status >= 300 || !res.data) return null;
+    if (res.data.byteLength > 10 * 1024 * 1024) return null;
     const mime = (res.headers && res.headers['content-type']) || '';
     return { buffer: Buffer.from(res.data), mime: String(mime).split(';')[0].trim() };
 }
@@ -647,8 +650,9 @@ async function processQueue() {
     try {
         while (!isShuttingDown && sendQueue.length > 0 && sockRef) {
             if (Date.now() < _rateLimitedUntil) {
-                newsLog(`fila pausada por rate-limit; limpando backlog (${sendQueue.length} itens).`);
-                sendQueue.length = 0;
+                const wait = _rateLimitedUntil - Date.now();
+                newsLog(`fila pausada por rate-limit; aguardando ${Math.ceil(wait/1000)}s (${sendQueue.length} pendentes).`);
+                setTimeout(scheduleProcessQueue, wait + 1000);
                 break;
             }
 

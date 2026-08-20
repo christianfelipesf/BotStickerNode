@@ -111,6 +111,7 @@ function readConfig() {
 function writeConfig(newConfig) {
     const tx = db.transaction((cfg) => {
         for (const [k, v] of Object.entries(cfg)) {
+            if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
             _cfgSet.run(k, JSON.stringify(v));
         }
     });
@@ -196,8 +197,9 @@ function deactivateGroup(jid) {
     try {
         const row = _gsGet.get(jid);
         if (row && row.menu_image) {
-            const fullPath = path.join(process.cwd(), row.menu_image);
-            if (fs.existsSync(fullPath)) { try { fs.unlinkSync(fullPath); } catch (_) {} }
+            const uploadsDir = path.join(process.cwd(), 'uploads');
+            const fullPath = path.resolve(process.cwd(), row.menu_image);
+            if (fullPath.startsWith(uploadsDir + path.sep) && fs.existsSync(fullPath)) { try { fs.unlinkSync(fullPath); } catch (_) {} }
         }
     } catch (_) {}
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
@@ -548,12 +550,15 @@ function setGroupData(jid, data) {
 }
 
 async function saveGroupMenuImage(jid, buffer) {
+    if (!buffer || buffer.length > 5 * 1024 * 1024) throw new Error('Imagem muito grande (max 5MB)');
     const hash = crypto.createHash('md5').update(jid).digest('hex');
     const fileName = `menu_${hash}.png`;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, fileName);
     const image = await Jimp.read(buffer);
+    if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw new Error('Imagem muito grande (max 3000x3000)');
+    image.resize({ w: 512, h: 512 });
     await image.write(filePath);
     const relativePath = `uploads/${fileName}`;
     setGroupData(jid, { menuImage: relativePath });
@@ -569,9 +574,8 @@ const ACTIVITY_FLUSH_INTERVAL = 30000;
 function _flushActivity() {
     if (!_activityBuffer.size) return;
     const entries = Array.from(_activityBuffer.entries());
-    _activityBuffer.clear();
-    for (const [jid, members] of entries) {
-        try {
+    const tx = db.transaction((rows) => {
+        for (const [jid, members] of rows) {
             const row = ensureGroupState(jid);
             const act = safeJson(row.activity, {});
             if (!act[jid]) act[jid] = {};
@@ -580,7 +584,13 @@ function _flushActivity() {
                 act[jid][sender].count += info.count;
             }
             _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image);
-        } catch (_) {}
+        }
+    });
+    try {
+        tx(entries);
+        _activityBuffer.clear();
+    } catch (e) {
+        console.error('❌ [activity] flush falhou, mantendo buffer:', e.message);
     }
 }
 
@@ -636,9 +646,8 @@ const MSG_FLUSH_BATCH = 20;
 function flushMessagesSync() {
     if (_msgFlushTimer) { clearTimeout(_msgFlushTimer); _msgFlushTimer = null; }
     if (_msgBuffer.length === 0) return;
-    const toInsert = _msgBuffer;
-    _msgBuffer = [];
-    _msgBufferByJid = new Map();
+    const toInsert = _msgBuffer.slice();
+    const tmpByJid = new Map(_msgBufferByJid);
     const limitsByJid = new Map();
     for (const r of toInsert) { if (!limitsByJid.has(r.jid)) limitsByJid.set(r.jid, r.limit); }
     try {
@@ -646,8 +655,16 @@ function flushMessagesSync() {
             for (const r of rows) _msgInsert.run(r.jid, r.pushName, r.text, r.time);
             for (const [jid, limit] of limitsByJid) _msgTrimByJid.run(jid, jid, limit);
         })(toInsert);
+        _msgBuffer = _msgBuffer.slice(toInsert.length);
+        for (const [jid] of tmpByJid) {
+            const remain = _msgBuffer.filter(r => r.jid === jid).length;
+            if (remain === 0) _msgBufferByJid.delete(jid);
+            else _msgBufferByJid.set(jid, remain);
+        }
         try { db.pragma('incremental_vacuum(200)'); } catch (_) {}
-    } catch (e) { console.error('❌ Falha ao gravar messages:', e.message); }
+    } catch (e) {
+        console.error('❌ Falha ao gravar messages:', e.message);
+    }
 }
 
 function scheduleMsgFlush() {

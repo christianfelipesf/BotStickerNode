@@ -16,6 +16,7 @@ const {
 // Deduplication
 // ============================================================
 const processedMessages = new Set();
+const DEDUP_MAX = 5000;
 setInterval(() => processedMessages.clear(), 10 * 60 * 1000).unref();
 
 // ============================================================
@@ -26,6 +27,10 @@ const recentMessagesByGroup = new Map();
 
 function trackRecentMessage(jid, key) {
     if (!jid || !key || !key.id) return;
+    if (recentMessagesByGroup.size > 500 && !recentMessagesByGroup.has(jid)) {
+        const oldest = recentMessagesByGroup.keys().next().value;
+        recentMessagesByGroup.delete(oldest);
+    }
     let list = recentMessagesByGroup.get(jid);
     if (!list) { list = []; recentMessagesByGroup.set(jid, list); }
     list.push({ id: key.id, participant: key.participant || null, fromMe: !!key.fromMe });
@@ -66,7 +71,7 @@ function registerPartialPending(jid, msgId, commandName, botJid) {
     if (partialPending.has(k)) return;
     let resolveFn;
     const promise = new Promise(resolve => { resolveFn = resolve; });
-    partialPending.set(k, { resolve: resolveFn, botJid, commandName, jid, isGroup: jid?.endsWith('@g.us') });
+    partialPending.set(k, { resolve: resolveFn, botJid, commandName, jid, isGroup: jid?.endsWith('@g.us'), createdAt: Date.now() });
     return promise;
 }
 
@@ -106,10 +111,10 @@ function setPartialTimer(jid, msgId, ms) {
 setInterval(() => {
     const cutoff = Date.now() - 5 * 60 * 1000;
     for (const [k, entry] of partialPending.entries()) {
-        if (entry.timer && entry.timer._idleStart && entry.timer._idleStart < cutoff) {
-            try { clearTimeout(entry.timer); } catch (_) {}
+        if (entry.createdAt && entry.createdAt < cutoff) {
+            try { if (entry.timer) clearTimeout(entry.timer); } catch (_) {}
             partialPending.delete(k);
-            try { entry.resolve && entry.resolve({ reacted: true }); } catch (_) {}
+            try { entry.resolve && entry.resolve({ reacted: false }); } catch (_) {}
         }
     }
 }, 60 * 1000).unref();
@@ -128,14 +133,23 @@ module.exports = {
         const _evtStart = Date.now();
         try {
             const m = messages[0];
-            if (!m.message || processedMessages.has(m.key.id)) return;
+            const dedupKey = `${m.key.remoteJid || ''}:${m.key.id || ''}`;
+            if (!m.message || processedMessages.has(dedupKey)) return;
 
-            const messageTime = m.messageTimestamp?.low || m.messageTimestamp || 0;
+            let messageTime = 0;
+            if (m.messageTimestamp) {
+                if (typeof m.messageTimestamp === 'number') messageTime = m.messageTimestamp;
+                else if (typeof m.messageTimestamp === 'object' && typeof m.messageTimestamp.low === 'number') messageTime = m.messageTimestamp.low;
+                else messageTime = Number(m.messageTimestamp) || 0;
+                if (messageTime > 1e12) messageTime = Math.floor(messageTime / 1000);
+            }
             if (messageTime < Math.floor(startTime / 1000) + 2) return;
 
-            processedMessages.add(m.key.id);
+            if (processedMessages.size > DEDUP_MAX) processedMessages.clear();
+            processedMessages.add(dedupKey);
 
             const from = m.key.remoteJid;
+            if (!from) return;
             const isGroup = from.endsWith('@g.us');
             if (isGroup) trackRecentMessage(from, m.key);
 

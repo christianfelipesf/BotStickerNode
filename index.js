@@ -80,8 +80,8 @@ loadCommands({ verbose: false });
 // Limpeza automática de temp/ a cada 30 min (arquivos > 1h)
 startTempCleanup();
 
-// Restaurar sub-sessões Baileys persistidas (silencioso — só loga o resultado)
-(async () => {
+// Restaurar sub-sessões Baileys persistidas (aguarda antes do startBot)
+const _restorePromise = (async () => {
     try {
         const restored = await subSessions.restoreFromDisk();
         if (restored.length) {
@@ -170,6 +170,7 @@ async function startBot() {
         console.log('⏸️ [Baileys] desligado manualmente — não iniciando');
         return;
     }
+    try { await _restorePromise; } catch (_) {}
     const { state, saveCreds } = await useMultiFileAuthState('session');
     const { getCachedBaileysVersion } = require('./src/services/version');
     const version = await getCachedBaileysVersion();
@@ -213,17 +214,21 @@ async function startBot() {
                 ? u.lastDisconnect.error.output?.statusCode 
                 : u.lastDisconnect.error?.statusCode;
             try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
+            try {
+                const principalState = require('./src/services/principalState');
+                principalState.setDisconnected();
+            } catch (_) {}
             if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
                 if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
                 else console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped.`);
                 return;
             }
             if (code !== DisconnectReason.loggedOut) {
-                setTimeout(startBot, 5000);
+                setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
             } else { 
-                fs.rmSync('session', { recursive: true, force: true }); 
+                try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
                 _qrAttempts = 0;
-                setTimeout(startBot, 5000); 
+                setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000); 
             }
         } else if (u.connection === 'open') {
             global.__baileysEnabled = true;
@@ -247,11 +252,6 @@ async function startBot() {
                 dashboard.log('action', 'SISTEMA',
                     `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
                     'Sistema', '—');
-            } catch (_) {}
-        } else if (u.connection === 'close') {
-            try {
-                const principalState = require('./src/services/principalState');
-                principalState.setDisconnected();
             } catch (_) {}
         }
     });

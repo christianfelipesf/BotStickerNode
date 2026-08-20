@@ -48,8 +48,8 @@ function setCached(promptConfig, text) {
     responseCache.set(key, { text, ts: Date.now() });
     // LRU cleanup if cache grows too large
     if (responseCache.size > 500) {
-        const oldest = [...responseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
-        if (oldest) responseCache.delete(oldest[0]);
+        const firstKey = responseCache.keys().next().value;
+        if (firstKey) responseCache.delete(firstKey);
     }
 }
 
@@ -64,7 +64,7 @@ function _isRetryableError(err) {
     const status = err?.response?.status || err?.statusCode;
     if (status === 429 || status === 503 || status >= 500) return true;
     const msg = String(err.message || err || '').toLowerCase();
-    return msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('timeout') || msg.includes('429') || msg.includes('503') || msg.includes('5');
+    return msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('timeout') || msg.includes('429') || msg.includes('503') || /\b5\d\d\b/.test(msg);
 }
 
 function _isAuthError(err) {

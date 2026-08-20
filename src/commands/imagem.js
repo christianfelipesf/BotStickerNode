@@ -6,9 +6,20 @@ module.exports = {
     aliases: ['setimg', 'setmenu'],
     category: 'grupos',
     description: 'Altera a imagem do menu neste grupo',
-    async execute(sock, m, { from, isGroup, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, getMediaMessage, saveGroupMenuImage } = utils;
+    async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+        const { react, getMediaMessage, saveGroupMenuImage, getAdmins, isUserAdmin, normalizeJid } = utils;
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        const meId = normalizeJid(sock.user.id);
+        const senderNorm = normalizeJid(sender);
+        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
+        let allowed = isBotOwner;
+        if (!allowed) {
+            try { const admins = await getAdmins(sock, from); allowed = isUserAdmin(sender, admins); } catch (_) {}
+        }
+        if (!allowed) {
+            await sock.sendMessage(from, { text: '❌ Apenas admins podem alterar a imagem do menu.' }, { quoted: m });
+            return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        }
         
         let imgMedia = null;
         const quotedImageInfo = m.message.extendedTextMessage?.contextInfo;

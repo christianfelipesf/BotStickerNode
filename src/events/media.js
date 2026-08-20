@@ -4,9 +4,13 @@ const pino = require('pino');
 const DOWNLOAD_TIMEOUT = 30000;
 
 function downloadWithTimeout(msg, opts) {
+    let timeout;
+    const dl = downloadMediaMessage(msg, 'buffer', {}, opts).catch(e => { clearTimeout(timeout); throw e; });
+    // evita unhandled rejection quando race vence no timeout
+    dl.catch(() => {});
     return Promise.race([
-        downloadMediaMessage(msg, 'buffer', {}, opts),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Download timeout')), DOWNLOAD_TIMEOUT))
+        dl.finally(() => clearTimeout(timeout)),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Download timeout')), DOWNLOAD_TIMEOUT); })
     ]);
 }
 const {

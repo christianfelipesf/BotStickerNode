@@ -91,7 +91,14 @@ module.exports = {
             
             if (p === 'prefix') config.prefix = v.trim()[0] || '!';
             else if (p === 'showLogoInMenu' || p === 'voiceEffects' || p === 'dashboardEnabled' || p === 'newsEnabled' || p === 'newsRandomSub' || p === 'newsOnePerCycle' || p === 'subSessionsGroups') config[p] = v.toLowerCase() === 'true';
-            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs' || p === 'maxMediaDurationSeconds') config[p] = parseInt(v, 10);
+            else if (p === 'summaryLimit' || p === 'clearDefaultLimit' || p === 'dashboardPort' || p === 'dashboardMaxLogs' || p === 'dashboardHistoryHours' || p === 'newsSendDelayMs' || p === 'newsFetchStaggerMs' || p === 'newsMaxPerCycle' || p === 'newsMaxRetries' || p === 'newsRetryBaseDelayMs' || p === 'dashboardTrimIntervalMs' || p === 'maxMediaDurationSeconds') {
+                const n = parseInt(v, 10);
+                if (!Number.isFinite(n)) { await sock.sendMessage(from, { text: `❌ Valor inválido para ${p}` }, { quoted: m }); return lastBotResponse; }
+                if (p === 'dashboardPort' && (n < 1024 || n > 65535)) { await sock.sendMessage(from, { text: `❌ Porta inválida (1024-65535)` }, { quoted: m }); return lastBotResponse; }
+                if (p === 'maxMediaDurationSeconds' && (n < 30 || n > 36000)) { await sock.sendMessage(from, { text: `❌ Duração inválida (30-36000s)` }, { quoted: m }); return lastBotResponse; }
+                if (p === 'clearDefaultLimit' && (n < 1 || n > 100)) { await sock.sendMessage(from, { text: `❌ Limite inválido (1-100)` }, { quoted: m }); return lastBotResponse; }
+                config[p] = n;
+            }
             else if (p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs') {
                 // Aceita: "45" (minutos), "45m", "60s", "1h", "2700000ms".
                 // newsPollIntervalMinutes → grava em MINUTOS (número puro).

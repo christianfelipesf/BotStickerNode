@@ -30,6 +30,7 @@ async function addMetadata(buffer, pack, author) {
 }
 
 async function mediaToSticker(buffer, mimeType, pack, author) {
+    if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Mídia muito grande (max 10MB)');
     const mime = (mimeType || '').toLowerCase();
     const isVideo = mime.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
@@ -40,16 +41,18 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     try {
         if (!isVideo) {
             const image = await Jimp.read(buffer);
+            if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw new Error('Imagem muito grande');
             image.resize({ w: 512, h: 512 });
             const pngBuffer = await image.getBuffer('image/png');
             fs.writeFileSync(inputPath, pngBuffer);
             await webp.cwebp(inputPath, outputPath, "-q 60");
         } else {
             fs.writeFileSync(inputPath, buffer);
-            const stats = fs.statSync(inputPath);
+            let stats; try { stats = fs.statSync(inputPath); } catch (_) { throw new Error('Vídeo vazio'); }
             if (!stats.size) throw new Error('Vídeo vazio');
 
             await new Promise((resolve, reject) => {
+                let to = setTimeout(() => reject(new Error('ffmpeg timeout 30s')), 30000);
                 ffmpeg(inputPath)
                     .inputOptions(['-t 6'])
                     .outputOptions([
@@ -63,17 +66,17 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                         '-fps_mode', 'vfr'
                     ])
                     .toFormat('webp')
-                    .on('end', resolve)
-                    .on('error', reject)
+                    .on('end', () => { clearTimeout(to); resolve(); })
+                    .on('error', (e) => { clearTimeout(to); reject(e); })
                     .save(outputPath);
             });
 
-            const outStat = fs.statSync(outputPath);
+            let outStat; try { outStat = fs.statSync(outputPath); } catch (_) { throw new Error('Vídeo gerou WebP vazio/inválido'); }
             if (outStat.size < 512) {
                 try { fs.unlinkSync(outputPath); } catch (_) {}
                 throw new Error('Vídeo gerou WebP vazio/inválido');
             }
-            const header = fs.readFileSync(outputPath).slice(0, 12);
+            let header; try { header = fs.readFileSync(outputPath).slice(0, 12); } catch (_) { throw new Error('Vídeo gerou arquivo não-WebP'); }
             if (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP') {
                 try { fs.unlinkSync(outputPath); } catch (_) {}
                 throw new Error('Vídeo gerou arquivo não-WebP');
@@ -92,6 +95,7 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             cleanup.push(firstFrameWebp);
             try {
                 await new Promise((resolve, reject) => {
+                    let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
                     ffmpeg(inputPath)
                         .outputOptions([
                             '-vframes', '1',
@@ -104,11 +108,12 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                             '-an'
                         ])
                         .toFormat('webp')
-                        .on('end', resolve)
-                        .on('error', reject)
+                        .on('end', () => { clearTimeout(to); resolve(); })
+                        .on('error', (e) => { clearTimeout(to); reject(e); })
                         .save(firstFrameWebp);
                 });
-                if (fs.existsSync(firstFrameWebp) && fs.statSync(firstFrameWebp).size >= 64) {
+                let fbOk = false; try { fbOk = fs.existsSync(firstFrameWebp) && fs.statSync(firstFrameWebp).size >= 64; } catch (_) {}
+                if (fbOk) {
                     const fallback = await addMetadata(fs.readFileSync(firstFrameWebp), pack, author);
                     if (fallback && fallback.length >= 64) return fallback;
                 }
@@ -123,18 +128,21 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
 }
 
 async function stickerToMedia(buffer, isAnimated = false) {
+    if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Sticker muito grande');
     const tempId = crypto.randomBytes(4).toString('hex');
     const inputPath = path.join(tempDir, `stk_in_${tempId}.webp`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.${isAnimated ? 'mp4' : 'png'}`);
     try {
         fs.writeFileSync(inputPath, buffer);
         await new Promise((resolve, reject) => {
+            let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
             let ff = ffmpeg(inputPath);
             if (isAnimated) ff.outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2']).toFormat('mp4');
             else ff.outputOptions(['-vcodec png', '-compression_level 0', '-f image2']);
-            ff.on('end', resolve).on('error', reject).save(outputPath);
+            ff.on('end', () => { clearTimeout(to); resolve(); }).on('error', (e) => { clearTimeout(to); reject(e); }).save(outputPath);
         });
-        return { buffer: fs.readFileSync(outputPath), mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
+        let outBuf; try { outBuf = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão sticker'); }
+        return { buffer: outBuf, mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
     } catch (err) {
         console.error('❌ [FFMPEG] Falha:', err.message);
         throw err;
@@ -144,6 +152,8 @@ async function stickerToMedia(buffer, isAnimated = false) {
 }
 
 async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
+    if (!buffer || buffer.length > 20 * 1024 * 1024) throw new Error('Mídia muito grande');
+    if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) throw new Error('Speed inválido');
     const isVideo = mimeType.includes('video');
     const tempId = crypto.randomBytes(4).toString('hex');
     const inputPath = path.join(tempDir, `speed_in_${tempId}${isVideo ? '.mp4' : '.ogg'}`);
@@ -151,6 +161,7 @@ async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
     try {
         fs.writeFileSync(inputPath, buffer);
         await new Promise((resolve, reject) => {
+            let to = setTimeout(() => reject(new Error('ffmpeg changeSpeed timeout 30s')), 30000);
             let ff = ffmpeg(inputPath);
             let audioFilter = `atempo=${speed}`;
             if (voiceEffects) {
@@ -176,9 +187,10 @@ async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
                     '-compression_level 10'
                 ]).toFormat('ogg');
             }
-            ff.on('end', resolve).on('error', reject).save(outputPath);
+            ff.on('end', () => { clearTimeout(to); resolve(); }).on('error', (e) => { clearTimeout(to); reject(e); }).save(outputPath);
         });
-        return fs.readFileSync(outputPath);
+        let out; try { out = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha changeSpeed'); }
+        return out;
     } catch (e) {
         console.error('❌ [SPEED] Falha:', e.message);
         throw e;

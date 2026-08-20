@@ -9,7 +9,7 @@ const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-const hasCookies = fs.existsSync(cookiesPath);
+function hasCookies() { return fs.existsSync(cookiesPath); }
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/i;
 
@@ -106,7 +106,7 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         args.push('--no-playlist');
     }
 
-    if (hasCookies) args.push('--cookies', cookiesPath);
+    if (hasCookies()) args.push('--cookies', cookiesPath);
 
     args.push(url);
     return args;
@@ -142,13 +142,23 @@ async function callBtchApi(endpoint, url) {
 }
 
 async function downloadFromUrl(fileUrl, destPath) {
+    if (!/^https?:\/\//i.test(fileUrl)) throw new Error('URL inválida');
     const writer = fs.createWriteStream(destPath);
-    const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000 });
-    res.data.pipe(writer);
-    await new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-    });
+    try {
+        const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
+        let total = 0;
+        res.data.on('data', c => { total += c.length; if (total > 100*1024*1024) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
+        res.data.pipe(writer);
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+            res.data.on('error', reject);
+        });
+        try { if (fs.statSync(destPath).size > 100*1024*1024) throw new Error('Arquivo >100MB'); } catch (e) { if (e.message.includes('100MB')) throw e; }
+    } catch (e) {
+        try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
+        throw e;
+    }
 }
 
 async function downloadBtch(platform, url, id, hd) {
@@ -160,9 +170,11 @@ async function downloadBtch(platform, url, id, hd) {
         const results = [];
         const dl = (mediaUrl, idx = 0) => {
             if (!mediaUrl) return null;
-            const ext = path.extname(new URL(mediaUrl).pathname) || '.mp4';
-            const dest = path.join(tempDir, `dl_${id}_btch_${idx}${ext}`);
-            return { url: mediaUrl, dest };
+            try {
+                const ext = path.extname(new URL(mediaUrl).pathname) || '.mp4';
+                const dest = path.join(tempDir, `dl_${id}_btch_${idx}${ext}`);
+                return { url: mediaUrl, dest };
+            } catch (_) { return null; }
         };
 
         if (platform === 'instagram') {
@@ -309,13 +321,15 @@ async function downloadBtch(platform, url, id, hd) {
 function findDownloadedFiles(id) {
     try {
         const files = fs.readdirSync(tempDir)
-            .filter(f => f.startsWith(`dl_${id}_`) && /\.(mp4|webm|mkv|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(f) && !f.endsWith('.part'))
-            .map(f => ({
-                path: path.join(tempDir, f),
-                time: fs.statSync(path.join(tempDir, f)).mtimeMs,
-                size: fs.statSync(path.join(tempDir, f)).size,
-                name: f
-            }))
+            .filter(f => f.startsWith(`dl_${id}_`) && /\.(mp4|webm|mkv|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(f) && !/\.part(\.|$)/i.test(f) && !f.endsWith('.ytdl') && !f.endsWith('.temp.mp4'))
+            .map(f => {
+                try {
+                    const full = path.join(tempDir, f);
+                    const stat = fs.statSync(full);
+                    return { path: full, time: stat.mtimeMs, size: stat.size, name: f };
+                } catch (_) { return null; }
+            })
+            .filter(Boolean)
             .filter(f => f.size >= 1024)
             .sort((a, b) => a.time - b.time);
 
@@ -379,7 +393,7 @@ module.exports = {
 
         if (platform === 'youtube') {
             const maxSeconds = getMaxDurationSeconds();
-            const info = await fetchYouTubeDuration(url, hasCookies ? cookiesPath : null);
+            const info = await fetchYouTubeDuration(url, hasCookies() ? cookiesPath : null);
             if (Number.isFinite(info.seconds) && info.seconds > maxSeconds) {
                 await sock.sendMessage(from, {
                     text: buildDurationErrorMessage({ url, seconds: info.seconds, title: info.title, platform, maxSeconds })
@@ -410,25 +424,29 @@ module.exports = {
                         '--no-warnings', '--ignore-errors', '--no-abort-on-error',
                         '--extractor-args', 'tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com',
                         '--print', '%(title)s',
-                        ...(hasCookies ? ['--cookies', cookiesPath] : []),
+                        ...(hasCookies() ? ['--cookies', cookiesPath] : []),
                     ];
                     if (platform === 'twitter') titleArgs.push('--yes-playlist');
                     else titleArgs.push('--no-playlist');
-                    const dump = spawn('yt-dlp', [...titleArgs, url], { shell: false, windowsHide: true });
+                    titleArgs.push(url);
+                    const dump = spawn('yt-dlp', titleArgs, { shell: false, windowsHide: true });
                     const chunks = [];
                     dump.stdout.on('data', d => chunks.push(d));
-                    await new Promise((resolve) => { dump.on('error', () => resolve()); dump.on('close', () => resolve()); });
+                    const tmo = setTimeout(() => { try { dump.kill('SIGKILL'); } catch (_) {} }, 15000);
+                    await new Promise((resolve) => { dump.on('error', () => { clearTimeout(tmo); resolve(); }); dump.on('close', () => { clearTimeout(tmo); resolve(); }); });
                     title = Buffer.concat(chunks).toString('utf8').trim().split('\n')[0];
                 } catch (_) { title = '' }
 
                 let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
                 allFiles = findDownloadedFiles(id);
 
-                if (allFiles.length === 0 && platform === 'instagram' && !hasCookies) {
+                if (allFiles.length === 0 && platform === 'instagram' && !hasCookies()) {
                     for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
                         console.log(`[RETRY] Instagram --cookies-from-browser ${browser}...`);
                         const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-                        retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--cookies-from-browser', browser);
+                        const idx = retryArgs.indexOf('--add-header');
+                        if (idx !== -1) retryArgs.splice(idx, 0, '--cookies-from-browser', browser);
+                        else retryArgs.splice(retryArgs.length - 1, 0, '--cookies-from-browser', browser);
                         result = await runYtDlp(retryArgs, 60000);
                         allFiles = findDownloadedFiles(id);
                         if (allFiles.length > 0) break;
@@ -438,7 +456,9 @@ module.exports = {
                 if (allFiles.length === 0 && platform === 'instagram') {
                     console.log(`[RETRY] Instagram --yes-playlist...`);
                     const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-                    retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
+                    const idx2 = retryArgs.indexOf('--add-header');
+                    if (idx2 !== -1) retryArgs.splice(idx2, 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
+                    else retryArgs.splice(retryArgs.length - 1, 0, '--yes-playlist');
                     result = await runYtDlp(retryArgs);
                     allFiles = findDownloadedFiles(id);
                 }
@@ -453,7 +473,8 @@ module.exports = {
                 throw new Error('Não foi possível baixar a mídia. O link pode ser inválido ou estar protegido.');
             }
 
-            const totalSize = allFiles.reduce((acc, f) => acc + fs.statSync(f).size, 0);
+            let totalSize = 0;
+            try { totalSize = allFiles.reduce((acc, f) => { try { return acc + fs.statSync(f).size; } catch (_) { return acc; } }, 0); } catch (_) { totalSize = 0; }
             if (totalSize > 100 * 1024 * 1024) {
                 for (const f of allFiles) { try { fs.unlinkSync(f); } catch (_) {} }
                 throw new Error(`Limite de 100MB excedido (${(totalSize / 1048576).toFixed(2)}MB).`);

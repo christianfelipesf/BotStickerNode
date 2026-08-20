@@ -10,10 +10,14 @@ module.exports = {
             await sock.sendMessage(from, { text: `❌ Use: ${config.prefix}nome <novo nome>` }, { quoted: m });
             return lastBotResponse;
         }
-        
-        setGroupData(from, { botName: fullArgsText });
+        const cleanName = String(fullArgsText).trim().slice(0, 30).replace(/[\n\r]/g, ' ');
+        if (!cleanName) {
+            await sock.sendMessage(from, { text: `❌ Nome inválido.` }, { quoted: m });
+            return lastBotResponse;
+        }
+        setGroupData(from, { botName: cleanName });
         let currentBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
-        await sock.sendMessage(from, { text: `✅ Nome do bot alterado para: *${fullArgsText}* neste grupo!` }, { quoted: m });
+        await sock.sendMessage(from, { text: `✅ Nome do bot alterado para: *${cleanName}* neste grupo!` }, { quoted: m });
         
         return currentBotResponse;
     }
