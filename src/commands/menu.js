@@ -31,7 +31,32 @@ module.exports = {
         const currentBotName = getBotName(from, config);
         const groupData = getGroupData(from);
 
-        const menuText = `*${currentBotName}*\n\n╭─── *GERAL* ───\n│ 📂 *${config.prefix}menu*\n│ 📊 *${config.prefix}status*\n│ 👤 *${config.prefix}perfil*\n│ 🤖 *${config.prefix}ai* <texto>\n╰───────────────\n\n╭─── *ADMIN* ───\n│ 🚫 *${config.prefix}ban* (marque)\n│ ⚠️ *${config.prefix}adv* (marque)\n│ 🛡️ *${config.prefix}antilink*\n│ 🔇 *${config.prefix}mute* (marque)\n│ 🔊 *${config.prefix}desmute* (marque)\n│ 🧹 *${config.prefix}limpar* [n]\n╰───────────────\n\n╭─── *MÍDIA* ───\n│ 🖼️ *${config.prefix}s* (sticker)\n│ 🔄 *${config.prefix}toimg*\n│ 🎞️ *${config.prefix}togif*\n│ 🔓 *${config.prefix}revelar*\n│ 🎵 *${config.prefix}play* <nome>\n│ 📥 *${config.prefix}dl* <link>\n│ 📥 *${config.prefix}dhd* <link>\n│ 🗣️ *${config.prefix}tts* <texto>\n│ ⚡ *${config.prefix}acelerar*\n│ 🐌 *${config.prefix}desacelerar*\n╰───────────────\n\n╭─── *GRUPOS* ───\n│ 📢 *${config.prefix}mencionar*\n│ 📝 *${config.prefix}resumir*\n│ 🏷️ *${config.prefix}nome* <nome>\n│ 🖼️ *${config.prefix}imagem* (marque)\n│ 🔗 *${config.prefix}linkgp*\n╰───────────────\n\n╭─── *CONFIG* ───\n│ ⚙️ *${config.prefix}config*\n│ 🛠️ *${config.prefix}set* <parâm> <valor>\n╰───────────────\n\n╭─── *SISTEMA* ───\n│ 📦 *${config.prefix}dump*\n│ 🏰 *${config.prefix}grupos*\n╰───────────────\n\n_📖 ${config.prefix}menuadmin — comandos de admin_\n_👑 ${config.prefix}menudono — comandos do dono_`;
+        const p = config.prefix;
+        const menuText = `*${currentBotName} — Menu Principal* 📖\n_comandos principais_\n\n` +
+            `╭─── *GERAL* ───\n` +
+            `│ 👤 *${p}perfil* — foto do perfil\n` +
+            `│ 📊 *${p}status* — info do bot\n` +
+            `│ 🤖 *${p}ai* <texto> — conversa com IA\n` +
+            `│ 🌐 *${p}traduzir* <texto> — traduz\n` +
+            `│ 📖 *${p}tutorial* — guia de uso\n` +
+            `│ 📝 *${p}resumir* — resume conversa\n` +
+            `╰───────────────\n\n` +
+            `╭─── *MÍDIA* ───\n` +
+            `│ 🖼️ *${p}s* — cria sticker\n` +
+            `│ 🔓 *${p}revelar* — revela view once\n` +
+            `│ 🔄 *${p}toimg* — sticker → mídia\n` +
+            `│ 🎞️ *${p}togif* — vídeo/sticker → gif\n` +
+            `│ ✨ *${p}stexto* <texto> — sticker de texto\n` +
+            `│ 🎵 *${p}play* <nome> — baixa música\n` +
+            `│ 📥 *${p}dl* <link> — download\n` +
+            `│ 📥 *${p}dhd* <link> — download HD\n` +
+            `│ 🗣️ *${p}tts* <texto> — texto → áudio\n` +
+            `│ ⚡ *${p}acelerar* • 🐌 *${p}desacelerar* — áudio/vídeo\n` +
+            `╰───────────────\n\n` +
+            `╭─── *OUTROS* ───\n` +
+            `│ 📖 *${p}menuadmin* — comandos de admin\n` +
+            `│ 👑 *${p}menudono* — comandos do dono\n` +
+            `╰───────────────`;
 
         // Escolhe imagem do menu:
         // 1. Imagem customizada por grupo (definida com !imagem)

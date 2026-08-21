@@ -44,10 +44,6 @@ module.exports = {
             `│ 🔗 *${p}linkgp* — pega link do grupo (bot precisa ser admin)\n` +
             `│ 🔗 *${p}setlink* <link> — define link p/ !divulgar\n` +
             `╰───────────────\n\n` +
-            `╭─── *OUTROS* ───\n` +
-            `│ 👤 *${p}perfil* (marque) — foto do perfil\n` +
-            `│ 📝 *${p}resumir* — resumo com IA\n` +
-            `╰───────────────\n\n` +
             `_Use ${p}menudono para comandos do dono do bot._`;
 
         return sock.sendMessage(from, { text }, { quoted: m });

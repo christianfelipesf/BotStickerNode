@@ -349,10 +349,73 @@ async function mediaToGif(buffer, mimeType) {
     }
 }
 
+async function mediaToGifVideo(buffer, mimeType) {
+    if (!buffer || buffer.length > 20 * 1024 * 1024) throw new Error('Mídia muito grande');
+    const isSticker = (mimeType || '').toLowerCase().includes('sticker');
+    const tempId = crypto.randomBytes(4).toString('hex');
+    const inputPath = path.join(tempDir, `gifvid_in_${tempId}${isSticker ? '.webp' : '.mp4'}`);
+    const outputPath = path.join(tempDir, `gifvid_out_${tempId}.mp4`);
+    try {
+        fs.writeFileSync(inputPath, buffer);
+        if (isSticker) {
+            try {
+                await new Promise((resolve, reject) => {
+                    let to = setTimeout(() => reject(new Error('ffmpeg gifVideo timeout 30s')), 30000);
+                    ffmpeg(inputPath)
+                        .outputOptions([
+                            '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=15,setsar=1',
+                            '-c:v', 'libx264',
+                            '-pix_fmt', 'yuv420p',
+                            '-crf', '18',
+                            '-preset', 'fast',
+                            '-movflags', '+faststart',
+                            '-an'
+                        ])
+                        .toFormat('mp4')
+                        .on('end', () => { clearTimeout(to); resolve(); })
+                        .on('error', (e) => { clearTimeout(to); reject(e); })
+                        .save(outputPath);
+                });
+            } catch (_) {
+                const { buffer: mp4Buffer } = await stickerToMedia(buffer, true);
+                fs.writeFileSync(outputPath, mp4Buffer);
+            }
+        } else {
+            await new Promise((resolve, reject) => {
+                let to = setTimeout(() => reject(new Error('ffmpeg gifVideo timeout 30s')), 30000);
+                ffmpeg(inputPath)
+                    .outputOptions([
+                        '-vf', 'fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
+                        '-c:v', 'libx264',
+                        '-pix_fmt', 'yuv420p',
+                        '-crf', '18',
+                        '-preset', 'fast',
+                        '-movflags', '+faststart',
+                        '-an',
+                        '-t', '6'
+                    ])
+                    .toFormat('mp4')
+                    .on('end', () => { clearTimeout(to); resolve(); })
+                    .on('error', (e) => { clearTimeout(to); reject(e); })
+                    .save(outputPath);
+            });
+        }
+        let out; try { out = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão GIF video'); }
+        if (!out || out.length < 512) throw new Error('GIF video gerado vazio');
+        return out;
+    } catch (e) {
+        console.error('❌ [TOGIFVIDEO] Falha:', e.message);
+        throw e;
+    } finally {
+        [inputPath, outputPath].forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+    }
+}
+
 module.exports = {
     addMetadata,
     mediaToSticker,
     stickerToMedia,
     changeSpeed,
-    mediaToGif
+    mediaToGif,
+    mediaToGifVideo
 };
