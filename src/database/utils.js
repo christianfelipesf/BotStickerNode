@@ -630,6 +630,49 @@ function getTopMember(jid) {
     } catch (_) { return 'Nenhum registro hoje'; }
 }
 
+function getCachedParticipantName(jid, participantJid) {
+    if (!jid || !participantJid) return null;
+    try {
+        const buf = _activityBuffer.get(jid);
+        if (buf && buf.has(participantJid)) {
+            const v = buf.get(participantJid);
+            if (v && v.name && !['usuario', 'usuário'].includes(String(v.name).trim().toLowerCase())) return v.name;
+        }
+        const row = _gsGet.get(jid);
+        if (row) {
+            const act = safeJson(row.activity, {});
+            const ga = act[jid];
+            if (ga && ga[participantJid] && ga[participantJid].name) {
+                const n = ga[participantJid].name;
+                if (n && !['usuario', 'usuário'].includes(String(n).trim().toLowerCase())) return n;
+            }
+        }
+    } catch (_) {}
+    return null;
+}
+
+/**
+ * Obtém o nome do participante de grupo de forma performática e sem rate-limit.
+ * Ordem: pushName válido -> cache activity -> groupMetadataCached (5-15min TTL) -> 'Usuário'
+ * Nunca expõe número de telefone em texto.
+ */
+async function getGroupParticipantName(sock, groupId, senderId, pushName) {
+    const isGeneric = (n) => !n || ['usuario', 'usuário'].includes(String(n).trim().toLowerCase());
+    if (pushName && !isGeneric(pushName)) return String(pushName).trim();
+    if (groupId && senderId && groupId.endsWith('@g.us')) {
+        const cached = getCachedParticipantName(groupId, senderId);
+        if (cached && !isGeneric(cached)) return cached;
+        try {
+            const meta = await groupMetadataCached(sock, groupId);
+            const p = meta?.participants?.find(x => (x.id || x.jid) === senderId);
+            const found = p?.notify || p?.name || p?.verifiedName || null;
+            if (found && !isGeneric(found)) return String(found).trim();
+        } catch (_) {}
+    }
+    if (pushName && !isGeneric(pushName)) return String(pushName).trim();
+    return 'Usuário';
+}
+
 // ============================================================
 // Message Buffer
 // ============================================================
@@ -916,7 +959,7 @@ module.exports = {
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
-    updateMemberActivity, getTopMember,
+    updateMemberActivity, getTopMember, getCachedParticipantName, getGroupParticipantName,
     getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,

@@ -17,11 +17,12 @@ const {
     getMediaMessage, react, reactStatus, isViewOnce,
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif,
-    isDashboardEnabled
+    isDashboardEnabled, groupMetadataCached, getGroupParticipantName
 } = require('../database/utils');
 
-async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
+async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts = {}) {
     const sender = m.key.participant || m.key.remoteJid;
+    const explicitName = explicitOpts.senderName || null;
     try {
         const mediaMessage = getMediaMessage(m.message);
         if (!mediaMessage) return lastBotResponse;
@@ -40,12 +41,21 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
             return await reactStatus(sock, m, from, false, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        const senderName = m.pushName || 'Usuário';
+        let pushForLookup = m.pushName || null;
+        if (!pushForLookup && explicitName && explicitOpts.senderJid && sender === explicitOpts.senderJid) {
+            pushForLookup = explicitName;
+        } else if (!pushForLookup && explicitName && !explicitOpts.senderJid) {
+            pushForLookup = explicitName;
+        }
+        let senderName = await getGroupParticipantName(sock, from, sender, pushForLookup);
+        if (!senderName || senderName === 'Usuário') {
+            senderName = 'Usuário';
+        }
         let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
         const opts = { mentions: [sender], quoted: m };
 
         const dashboardOn = isDashboardEnabled(from);
-        const groupMetadata = from.endsWith('@g.us') ? await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
+        const groupMetadata = from.endsWith('@g.us') ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
         const mediaType = isAudio ? 'audio' : (isVideo ? 'video' : 'image');
 
         if (dashboardOn) {
@@ -74,7 +84,15 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN) {
     }
 }
 
-async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speed = 1.0) {
+async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
+    let speed = 1.0;
+    let explicitOpts = {};
+    if (typeof speedOrOpts === 'object' && speedOrOpts !== null) {
+        explicitOpts = speedOrOpts;
+        speed = explicitOpts.speed ?? 1.0;
+    } else {
+        speed = speedOrOpts;
+    }
     try {
         let mediaMessage = null;
         const quotedInfo = m.message.extendedTextMessage?.contextInfo;
@@ -106,10 +124,6 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         lastBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
 
-        if (isViewOnceMsg && action !== 'reveal') {
-            lastBotResponse = await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN);
-        }
-
         const buffer = await downloadWithTimeout(
             targetMsg,
             { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
@@ -117,11 +131,10 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         if (!buffer) throw new Error();
 
-        if (action === 'reveal' || action === 'toimg') {
-            if (isViewOnceMsg) {
-                lastBotResponse = await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN);
-                if (action === 'reveal') return lastBotResponse;
-            }
+        if (action === 'reveal') {
+            return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts);
+        }
+        if (action === 'toimg') {
 
             if (isSticker) {
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
