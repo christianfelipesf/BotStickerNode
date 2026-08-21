@@ -46,11 +46,12 @@ module.exports = {
                 return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
+            const safeTitle = String(video.title || 'sem título').trim() || 'sem título';
             const duration = parseDurationToSeconds(video.seconds ?? video.duration);
             const maxSeconds = getMaxDurationSeconds();
             if (duration > maxSeconds) {
                 await sock.sendMessage(from, {
-                    text: `⏱️ *Limite de duração excedido!*\n\n📌 O *!play* baixa no máximo *${formatDuration(maxSeconds)}* (${maxSeconds}s).\n🎵 *Vídeo:* ${video.title || '?'}\n⏰ *Duração:* ${formatDuration(duration)}\n\n💡 Para vídeos longos, use *!d <link>* e baixe apenas o trecho que quiser em outro app.\n⚙️ _Limite configurável:_ \`!set maxMediaDurationSeconds <segundos>\``
+                    text: `⏱️ *Limite de duração excedido!*\n\n📌 O *!play* baixa no máximo *${formatDuration(maxSeconds)}* (${maxSeconds}s).\n🎵 *Vídeo:* ${safeTitle}\n⏰ *Duração:* ${formatDuration(duration)}\n\n💡 Para vídeos longos, use *!d <link>* e baixe apenas o trecho que quiser em outro app.\n⚙️ _Limite configurável:_ \`!set maxMediaDurationSeconds <segundos>\``
                 }, { quoted: m });
                 return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
@@ -63,7 +64,7 @@ module.exports = {
 
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-            console.log(`🎵 [PLAY] Baixando: ${video.title} (${formatDuration(duration)})`);
+            console.log(`🎵 [PLAY] Baixando: ${safeTitle} (${formatDuration(duration)})`);
 
             const hasCookies = fs.existsSync(cookiesPath);
             // tenta yt-dlp com cookies/user-agent (igual download.js) + fallback BTCH
@@ -149,7 +150,7 @@ module.exports = {
                 await sock.sendMessage(from, {
                     audio: { url: outPath },
                     mimetype: 'audio/mp4',
-                    fileName: `${video.title}.mp3`
+                    fileName: `${String(video.title || 'audio').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.mp3`
                 }, { quoted: m });
 
                 try { fs.unlinkSync(outPath); } catch (_) {}

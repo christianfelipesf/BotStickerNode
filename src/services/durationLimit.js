@@ -52,7 +52,7 @@ function fetchYouTubeDuration(url, cookiesPath) {
                 const firstLine = out.split(/\r?\n/)[0];
                 const parts = firstLine.split('||');
                 const seconds = parseFloat(parts[0]);
-                const title = (parts[1] || '').trim();
+                const title = String(parts[1] || '').trim();
                 if (!Number.isFinite(seconds) || seconds <= 0) {
                     resolve({ seconds: null, title: title || null, error: 'unknown-duration' });
                     return;
@@ -67,7 +67,7 @@ function fetchYouTubeDuration(url, cookiesPath) {
 
 function buildDurationErrorMessage({ url, seconds, title, platform, maxSeconds }) {
     const durTxt = formatDuration(seconds || 0);
-    const titleTxt = title || url;
+    const titleTxt = String(title || url || '').trim() || String(url || '');
     const maxTxt = formatDuration(maxSeconds);
     return `⏱️ *Limite de duração excedido!*\n\n` +
         `📌 *!d* (YouTube) baixa no máximo *${maxTxt}* (${maxSeconds}s).\n` +
