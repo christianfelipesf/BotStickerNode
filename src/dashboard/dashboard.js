@@ -338,7 +338,7 @@ function init(config) {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
         sameSite: 'lax',
-        secure: 'auto'
+        secure: false
     }));
 
     const { readConfig, writeConfig, getVersion, readStats } = require('../database/utils');
