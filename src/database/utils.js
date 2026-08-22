@@ -804,7 +804,7 @@ function flushNow() { flushMessagesSync(); if (_activityFlushTimer) { clearTimeo
 // Group metadata cache & admin helpers
 // ============================================================
 const _gmCache = new Map();
-const _gmCacheTtlMs = 5000;
+const _gmCacheTtlMs = 120000;
 
 async function groupMetadataCached(sock, jid) {
     if (!sock || !jid) return { subject: 'Grupo', participants: [] };

@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const { getMaxDurationSeconds, formatDuration } = require('../services/durationLimit');
+const { enqueueDownload, enqueueSend } = require('../services/queue');
+const { sendMessageSafe } = require('../database/utils');
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 
@@ -24,6 +26,32 @@ function parseDurationToSeconds(d) {
     return 0;
 }
 
+function searchViaYtDlp(query) {
+    return new Promise((resolve) => {
+        const proc = spawn('yt-dlp', [
+            '--no-warnings',
+            '--flat-playlist',
+            '--print', '%(id)s|%(title)s|%(duration)s',
+            `ytsearch1:${query}`
+        ], { windowsHide: true });
+        let out = '';
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} resolve(null); }, 30000);
+        proc.stdout.on('data', d => { out += d.toString(); });
+        proc.stderr.on('data', () => {});
+        proc.on('error', () => { clearTimeout(timer); resolve(null); });
+        proc.on('close', () => {
+            clearTimeout(timer);
+            const line = out.trim().split(/\r?\n/).filter(Boolean).pop();
+            if (!line) return resolve(null);
+            const f = line.split('|');
+            const id = f[0];
+            if (!id || id === 'NA') return resolve(null);
+            const title = f.length > 2 ? f.slice(1, -1).join('|') || 'sem título' : 'sem título';
+            resolve({ id, url: `https://www.youtube.com/watch?v=${id}`, title, seconds: Number(f[f.length - 1]) || 0 });
+        });
+    });
+}
+
 module.exports = {
     name: 'play',
     aliases: ['p', 'musica', 'youtube'],
@@ -38,8 +66,13 @@ module.exports = {
         let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
 
         try {
-            const searchResults = await yts(q);
-            const video = searchResults.videos[0];
+            let video;
+            try {
+                video = (await yts(q)).videos[0];
+            } catch (searchErr) {
+                console.log(`⚠️ [PLAY] yt-search falhou (${String(searchErr.message).slice(0, 120)}) — resolvendo busca via yt-dlp`);
+                video = await searchViaYtDlp(q);
+            }
 
             if (!video) {
                 await sock.sendMessage(from, { text: '❌ Nenhum vídeo encontrado.' }, { quoted: m });
@@ -72,7 +105,7 @@ module.exports = {
             let lastError = '';
 
             try {
-                await new Promise((resolve, reject) => {
+                await enqueueDownload(() => new Promise((resolve, reject) => {
                     const args = [
                         '--no-warnings',
                         '--no-check-certificates',
@@ -106,7 +139,7 @@ module.exports = {
                         if (code === 0) resolve();
                         else reject(new Error(`yt-dlp exit code ${code}: ${stderr.slice(0, 300)}`));
                     });
-                });
+                }));
                 try { downloaded = fs.existsSync(outPath) && fs.statSync(outPath).size > 1024; } catch (_) { downloaded = false; }
             } catch (e) {
                 lastError = e.message;
@@ -147,11 +180,11 @@ module.exports = {
 
             if (fs.existsSync(outPath)) {
                 try { if (fs.statSync(outPath).size < 1024) throw new Error('Arquivo muito pequeno'); } catch (e) { throw new Error('Arquivo não foi gerado: ' + e.message); }
-                await sock.sendMessage(from, {
+                await enqueueSend(() => sendMessageSafe(sock, from, {
                     audio: { url: outPath },
                     mimetype: 'audio/mp4',
                     fileName: `${String(video.title || 'audio').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.mp3`
-                }, { quoted: m });
+                }, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
 
                 try { fs.unlinkSync(outPath); } catch (_) {}
                 currentBotResponse = await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);

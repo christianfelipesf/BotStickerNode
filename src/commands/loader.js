@@ -2,6 +2,24 @@ const fs = require('fs');
 const path = require('path');
 
 const commands = new Map();
+const aliasMap = new Map();
+
+function _rebuildAliasMap() {
+    aliasMap.clear();
+    for (const command of commands.values()) {
+        if (!Array.isArray(command.aliases)) continue;
+        for (const a of command.aliases) {
+            if (a && !aliasMap.has(a)) aliasMap.set(a, command);
+        }
+    }
+}
+
+/**
+ * Resolve um comando por nome ou alias em O(1).
+ */
+function resolveCommand(name) {
+    return commands.get(name) || aliasMap.get(name) || null;
+}
 
 /**
  * Carrega comandos de src/commands/ de forma síncrona.
@@ -47,10 +65,13 @@ function loadCommands(options = {}) {
         console.log(`📦 [commands] ${summary.loaded} comandos, ${summary.aliases} aliases${summary.warnings ? `, ${summary.warnings} aviso(s)` : ''}`);
     }
 
+    _rebuildAliasMap();
+
     return summary;
 }
 
 module.exports = {
     loadCommands,
-    commands
+    commands,
+    resolveCommand
 };

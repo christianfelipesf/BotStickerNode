@@ -29,11 +29,48 @@ async function addMetadata(buffer, pack, author) {
     }
 }
 
+const STICKER_IMG_MAX = 10 * 1024 * 1024;
+const STICKER_VIDEO_MAX = 50 * 1024 * 1024;
+
+async function shrinkImageBuffer(buffer, tempId) {
+    const inputPath = path.join(tempDir, `stk_shrink_in_${tempId}.bin`);
+    const outputPath = path.join(tempDir, `stk_shrink_out_${tempId}.jpg`);
+    fs.writeFileSync(inputPath, buffer);
+    try {
+        await new Promise((resolve, reject) => {
+            const to = setTimeout(() => reject(new Error('ffmpeg timeout 60s')), 60000);
+            ffmpeg(inputPath)
+                .outputOptions(['-vf', "scale='min(1600,iw)':-2", '-q:v', '5'])
+                .toFormat('mjpeg')
+                .on('end', () => { clearTimeout(to); resolve(); })
+                .on('error', (e) => { clearTimeout(to); reject(e); })
+                .save(outputPath);
+        });
+        const out = fs.readFileSync(outputPath);
+        if (out.length < 1024) throw new Error('compressão gerou arquivo vazio');
+        return out;
+    } finally {
+        try { fs.unlinkSync(inputPath); } catch (_) {}
+        try { fs.unlinkSync(outputPath); } catch (_) {}
+    }
+}
+
 async function mediaToSticker(buffer, mimeType, pack, author) {
-    if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Mídia muito grande (max 10MB)');
+    if (!buffer || !buffer.length) throw new Error('Mídia vazia');
     const mime = (mimeType || '').toLowerCase();
     const isVideo = mime.includes('video');
+    if (isVideo && buffer.length > STICKER_VIDEO_MAX) throw new Error('Mídia muito grande (max 50MB)');
     const tempId = crypto.randomBytes(4).toString('hex');
+    if (!isVideo && buffer.length > STICKER_IMG_MAX) {
+        console.log(`🖼️ [STICKER] imagem ${(buffer.length / 1048576).toFixed(1)}MB > 10MB — comprimindo antes de converter`);
+        try {
+            buffer = await shrinkImageBuffer(buffer, tempId);
+        } catch (e) {
+            console.error(`❌ [STICKER] compressão falhou: ${e.message}`);
+            throw new Error('Mídia muito grande (max 10MB)');
+        }
+        if (buffer.length > STICKER_IMG_MAX) throw new Error('Mídia muito grande (max 10MB)');
+    }
     const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
     const cleanup = [inputPath, outputPath];

@@ -93,22 +93,30 @@ const _restorePromise = (async () => {
 })();
 
 // --- Tratamento de Erros Globais ---
-process.on('uncaughtException', (err) => {
-    if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
-    console.error('💥 [ERRO FATAL]:', err);
+let _fatalExiting = false;
+function _fatalExit(label, err) {
+    console.error(`💥 [${label}]:`, err);
     try { flushNow(); } catch (_) {}
-    try { dashboard.log('error', 'SISTEMA', `ERRO FATAL: ${err.message}`); } catch (_) {}
+    try { dashboard.log('error', 'SISTEMA', `${label}: ${err?.message || err}`); } catch (_) {}
+    // Estado do processo é indefinido após erro fatal — sai para o gerenciador reiniciar.
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 500).unref();
+    _fatalExiting = true;
+}
+process.on('uncaughtException', (err) => {
+    if (_fatalExiting) return;
+    if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
+    _fatalExit('ERRO FATAL', err);
 });
 process.on('unhandledRejection', (reason) => {
+    if (_fatalExiting) return;
     if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
     if (reason?.isBoom) {
         const code = reason.output?.statusCode;
         if (code === 428 || code === 515 || code === 502) return;
     }
     if (reason?.message?.includes('Connection Closed') || reason?.message?.includes('Precondition Required')) return;
-    console.error('💥 [REJEIÇÃO NÃO TRATADA]:', reason);
-    try { flushNow(); } catch (_) {}
-    try { dashboard.log('error', 'SISTEMA', `REJEIÇÃO: ${reason?.message || reason}`); } catch (_) {}
+    _fatalExit('REJEIÇÃO NÃO TRATADA', reason);
 });
 
 // FFmpeg: lazy detection (executado na 1ª vez que precisar)
@@ -151,6 +159,7 @@ console.log('═'.repeat(60));
 
 let _qrAttempts = 0;
 const MAX_QR_ATTEMPTS = 3;
+let _reconnecting = false;
 global.__qrControl = {
     getAttempts: () => _qrAttempts,
     getMaxAttempts: () => MAX_QR_ATTEMPTS,
@@ -170,91 +179,100 @@ async function startBot() {
         console.log('⏸️ [Baileys] desligado manualmente — não iniciando');
         return;
     }
+    if (_reconnecting) {
+        console.log('⏳ [Baileys] reconexão já em andamento — ignorando chamada duplicada');
+        return;
+    }
+    _reconnecting = true;
     try { await _restorePromise; } catch (_) {}
-    const { state, saveCreds } = await useMultiFileAuthState('session');
-    const { getCachedBaileysVersion } = require('./src/services/version');
-    const version = await getCachedBaileysVersion();
-    
-    const sock = makeWASocket({ 
-        version, 
-        logger: pino({ level: 'fatal' }), 
-        printQRInTerminal: false, 
-        auth: state, 
-        browser: [config.botName, 'Chrome', '120.0.0.0'] 
-    });
-
-    global.__baileysSock = sock;
-
-    try { dashboard.attachSock(sock); } catch (_) {}
-    try { dashboard.pushGroupsSnapshot(); } catch (_) {}
     try {
-        const curCfg = readConfig();
-        if (curCfg.newsEnabled !== false) {
-            news.attachSock(sock);
-            news.start();
-        }
-        // news desativado é mostrado no boot summary (não loga aqui)
-    } catch (_) {}
+        const { state, saveCreds } = await useMultiFileAuthState('session');
+        const { getCachedBaileysVersion } = require('./src/services/version');
+        const version = await getCachedBaileysVersion();
 
-    sock.ev.on('creds.update', saveCreds);
+        const sock = makeWASocket({
+            version,
+            logger: pino({ level: 'fatal' }),
+            printQRInTerminal: false,
+            auth: state,
+            browser: [config.botName, 'Chrome', '120.0.0.0']
+        });
 
-    sock.ev.on('connection.update', (u) => {
-        if (u.qr) {
-            _qrAttempts++;
-            console.log(`\n⚡ --- QR CODE #${_qrAttempts} --- ⚡`);
-            qrcode.generate(u.qr, { small: true });
-            try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
-            if (_qrAttempts >= MAX_QR_ATTEMPTS) {
-                console.log(`⛔ Limite de ${MAX_QR_ATTEMPTS} QR codes atingido. Pare o bot e apague a pasta session/ manualmente ou use o painel admin.`);
+        global.__baileysSock = sock;
+
+        try { dashboard.attachSock(sock); } catch (_) {}
+        try { dashboard.pushGroupsSnapshot(); } catch (_) {}
+        try {
+            const curCfg = readConfig();
+            if (curCfg.newsEnabled !== false) {
+                news.attachSock(sock);
+                news.start();
             }
-        }
-        if (u.connection === 'close') {
-            global.__baileysSock = null;
-            const code = (u.lastDisconnect.error instanceof Boom) 
-                ? u.lastDisconnect.error.output?.statusCode 
-                : u.lastDisconnect.error?.statusCode;
-            try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
-            try {
-                const principalState = require('./src/services/principalState');
-                principalState.setDisconnected();
-            } catch (_) {}
-            if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
-                if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
-                else console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped.`);
-                return;
+            // news desativado é mostrado no boot summary (não loga aqui)
+        } catch (_) {}
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', (u) => {
+            if (u.qr) {
+                _qrAttempts++;
+                console.log(`\n⚡ --- QR CODE #${_qrAttempts} --- ⚡`);
+                qrcode.generate(u.qr, { small: true });
+                try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
+                if (_qrAttempts >= MAX_QR_ATTEMPTS) {
+                    console.log(`⛔ Limite de ${MAX_QR_ATTEMPTS} QR codes atingido. Pare o bot e apague a pasta session/ manualmente ou use o painel admin.`);
+                }
             }
-            if (code !== DisconnectReason.loggedOut) {
-                setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
-            } else { 
-                try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
+            if (u.connection === 'close') {
+                global.__baileysSock = null;
+                _reconnecting = false;
+                const code = (u.lastDisconnect.error instanceof Boom)
+                    ? u.lastDisconnect.error.output?.statusCode
+                    : u.lastDisconnect.error?.statusCode;
+                try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
+                try {
+                    const principalState = require('./src/services/principalState');
+                    principalState.setDisconnected();
+                } catch (_) {}
+                if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
+                    if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
+                    else console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped.`);
+                    return;
+                }
+                if (code !== DisconnectReason.loggedOut) {
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
+                } else {
+                    try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
+                    _qrAttempts = 0;
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
+                }
+            } else if (u.connection === 'open') {
+                _reconnecting = false;
                 _qrAttempts = 0;
-                setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000); 
+                global.__baileysEnabled = true;
+                try {
+                    const { readConfig, writeConfig } = require('./src/database/utils');
+                    const cfg = readConfig();
+                    if (cfg.baileysEnabled === false) writeConfig({ ...cfg, baileysEnabled: true });
+                } catch (_) {}
+                const utils = require('./src/database/utils');
+                const version = utils.getVersion();
+                const stats = utils.readStats();
+                const ts = new Date().toLocaleString('pt-BR');
+                const phone = sock.user?.id?.split?.(':')?.[0] || null;
+                console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
+                try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
+                try {
+                    const principalState = require('./src/services/principalState');
+                    principalState.setConnected({ version, phone });
+                } catch (_) {}
+                try {
+                    dashboard.log('action', 'SISTEMA',
+                        `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
+                        'Sistema', '—');
+                } catch (_) {}
             }
-        } else if (u.connection === 'open') {
-            global.__baileysEnabled = true;
-            try {
-                const { readConfig, writeConfig } = require('./src/database/utils');
-                const cfg = readConfig();
-                if (cfg.baileysEnabled === false) writeConfig({ ...cfg, baileysEnabled: true });
-            } catch (_) {}
-            const utils = require('./src/database/utils');
-            const version = utils.getVersion();
-            const stats = utils.readStats();
-            const ts = new Date().toLocaleString('pt-BR');
-            const phone = sock.user?.id?.split?.(':')?.[0] || null;
-            console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
-            try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
-            try {
-                const principalState = require('./src/services/principalState');
-                principalState.setConnected({ version, phone });
-            } catch (_) {}
-            try {
-                dashboard.log('action', 'SISTEMA',
-                    `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
-                    'Sistema', '—');
-            } catch (_) {}
-        }
-    });
+        });
 
     // Evento de erro do socket (evita unhandled rejection com Boom 428 etc)
     sock.ev.on('error', (err) => {
@@ -273,6 +291,13 @@ async function startBot() {
     sock.ev.on('messages.upsert', (upsert) => {
         handleMessageUpsert(sock, upsert, { commands, config, startTime });
     });
+    } catch (e) {
+        _reconnecting = false;
+        console.error('💥 [startBot] falhou:', e.message);
+        if (_qrAttempts < MAX_QR_ATTEMPTS) {
+            setTimeout(() => { startBot().catch(e2 => console.error('reconnect falhou:', e2.message)); }, 5000);
+        }
+    }
 }
 
 global.__startBot = () => {

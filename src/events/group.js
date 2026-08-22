@@ -1,4 +1,4 @@
-const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo } = require('../database/utils');
+const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo, groupMetadataCached, clearGroupMetadataCache } = require('../database/utils');
 const dashboard = require('../dashboard/dashboard');
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
@@ -6,9 +6,12 @@ const safeRemember = (...args) => { try { dashboard.rememberGroupInfo(...args); 
 
 module.exports = {
     handleGroupParticipantsUpdate: async (sock, anu) => {
+        // Invalida cache ANTES de qualquer early-return: mudança de participantes
+        // afeta getAdmins/enforcement, não só o dashboard.
+        try { clearGroupMetadataCache(anu.id); } catch (_) {}
         if (!isDashboardEnabled(anu.id)) return;
         try {
-            const metadata = await sock.groupMetadata(anu.id).catch(() => null);
+            const metadata = await groupMetadataCached(sock, anu.id).catch(() => null);
             const subject = metadata?.subject || null;
             const memberCount = Array.isArray(metadata?.participants) ? metadata.participants.length : undefined;
             if (subject) {

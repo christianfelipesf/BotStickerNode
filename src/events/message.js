@@ -1,4 +1,5 @@
 const { getModel } = require('../services/ai');
+const { resolveCommand } = require('../commands/loader');
 const cooldown = require('../services/cooldown');
 const trace = require('../services/trace');
 const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('./dashboard-handler');
@@ -214,7 +215,7 @@ module.exports = {
             const commandName = args.shift().toLowerCase();
             const fullArgsText = args.join(' ');
 
-            const cmd = commands.get(commandName) || Array.from(commands.values()).find(c => c.aliases?.includes(commandName));
+            const cmd = resolveCommand(commandName);
             if (!cmd) return;
 
             // === Activation control commands always work ===
@@ -284,44 +285,36 @@ module.exports = {
                 ai: require('../services/ai')
             };
 
-            // === Tracing setup (leve, sem monkey-patch de console) ===
+            // === Tracing contextual (sem monkey-patch do console — seguro p/ comandos concorrentes) ===
             const t0 = Date.now();
             let stepN = 0;
             const traceTag = `cmd.!${commandName}`;
-            let _traceCapture = false;
-            const origLog = console.log.bind(console);
-            console.log = (...a) => {
-                if (!_traceCapture) return origLog(...a);
+            const cmdLog = (...a) => {
                 const now = Date.now();
                 const delta = now - t0;
                 stepN += 1;
                 const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
-                origLog(`   └─ [${new Date().toLocaleTimeString('pt-BR', { hour12: false })}] [+${String(delta).padStart(5,' ')}ms / total ${now - t0}ms] ${traceTag} #${stepN}${msg ? ` ${msg}` : ''}`);
+                console.log(`   └─ [${new Date().toLocaleTimeString('pt-BR', { hour12: false })}] [+${String(delta).padStart(5,' ')}ms / total ${now - t0}ms] ${traceTag} #${stepN}${msg ? ` ${msg}` : ''}`);
             };
-
-            _traceCapture = true;
-            console.log('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
+            cmdLog('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
             // === Command execution ===
             try {
+                context.log = cmdLog;
                 const result = await cmd.execute(sock, m, context);
                 if (result !== undefined) lastBotResponse = result;
                 const elapsed = Date.now() - t0;
-                console.log('fim', `ok em ${elapsed}ms`);
+                cmdLog('fim', `ok em ${elapsed}ms`);
                 if (botActiveInGroup && elapsed >= 800) {
                     safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
                 console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
-                console.log('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
+                cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
                 if (botActiveInGroup || !isGroup) {
                     safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
-                throw cmdErr;
-            } finally {
-                _traceCapture = false;
-                console.log = origLog;
             }
 
         } catch (e) {

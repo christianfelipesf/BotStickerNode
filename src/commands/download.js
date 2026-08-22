@@ -4,6 +4,8 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const axios = require('axios');
 const { getMaxDurationSeconds, fetchYouTubeDuration, buildDurationErrorMessage } = require('../services/durationLimit');
+const { enqueueDownload, enqueueSend } = require('../services/queue');
+const { sendMessageSafe } = require('../database/utils');
 
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -353,14 +355,19 @@ async function sendMedia(sock, from, m, filePath, title) {
 
     const fileName = (title ? title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) : 'media') + ext;
 
+    // Envio serializado pela fila global + retry/backoff em rate-limit (429)
+    const send = (payload) => enqueueSend(() =>
+        sendMessageSafe(sock, from, payload, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 })
+    );
+
     if (mime.startsWith('video/')) {
-        await sock.sendMessage(from, { video: { url: filePath }, mimetype: 'video/mp4', fileName }, { quoted: m });
+        return await send({ video: { url: filePath }, mimetype: 'video/mp4', fileName });
     } else if (mime.startsWith('image/')) {
-        await sock.sendMessage(from, { image: { url: filePath }, fileName }, { quoted: m });
+        return await send({ image: { url: filePath }, fileName });
     } else if (mime.startsWith('audio/')) {
-        await sock.sendMessage(from, { audio: { url: filePath }, mimetype: 'audio/mp4', fileName }, { quoted: m });
+        return await send({ audio: { url: filePath }, mimetype: 'audio/mp4', fileName });
     } else {
-        await sock.sendMessage(from, { document: { url: filePath }, fileName, mimetype: mime }, { quoted: m });
+        return await send({ document: { url: filePath }, fileName, mimetype: mime });
     }
 }
 
@@ -411,7 +418,7 @@ module.exports = {
 
             if (BTCH_PLATFORMS.has(platform)) {
                 currentBotResponse = await react(sock, m, '📥', currentBotResponse, GLOBAL_COOLDOWN);
-                allFiles = await downloadBtch(platform, url, id, hd);
+                allFiles = await enqueueDownload(() => downloadBtch(platform, url, id, hd));
             }
 
             if (allFiles.length === 0 && YTDLP_PLATFORMS.has(platform)) {
@@ -437,31 +444,36 @@ module.exports = {
                     title = Buffer.concat(chunks).toString('utf8').trim().split('\n')[0];
                 } catch (_) { title = '' }
 
-                let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
-                allFiles = findDownloadedFiles(id);
+                let result = await enqueueDownload(async () => {
+                    let files = [];
+                    let r = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
+                    files = findDownloadedFiles(id);
 
-                if (allFiles.length === 0 && platform === 'instagram' && !hasCookies()) {
-                    for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
-                        console.log(`[RETRY] Instagram --cookies-from-browser ${browser}...`);
-                        const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-                        const idx = retryArgs.indexOf('--add-header');
-                        if (idx !== -1) retryArgs.splice(idx, 0, '--cookies-from-browser', browser);
-                        else retryArgs.splice(retryArgs.length - 1, 0, '--cookies-from-browser', browser);
-                        result = await runYtDlp(retryArgs, 60000);
-                        allFiles = findDownloadedFiles(id);
-                        if (allFiles.length > 0) break;
+                    if (files.length === 0 && platform === 'instagram' && !hasCookies()) {
+                        for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
+                            console.log(`[RETRY] Instagram --cookies-from-browser ${browser}...`);
+                            const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                            const idx = retryArgs.indexOf('--add-header');
+                            if (idx !== -1) retryArgs.splice(idx, 0, '--cookies-from-browser', browser);
+                            else retryArgs.splice(retryArgs.length - 1, 0, '--cookies-from-browser', browser);
+                            r = await runYtDlp(retryArgs, 60000);
+                            files = findDownloadedFiles(id);
+                            if (files.length > 0) break;
+                        }
                     }
-                }
 
-                if (allFiles.length === 0 && platform === 'instagram') {
-                    console.log(`[RETRY] Instagram --yes-playlist...`);
-                    const retryArgs = buildYtDlpArgs(url, platform, hd, template);
-                    const idx2 = retryArgs.indexOf('--add-header');
-                    if (idx2 !== -1) retryArgs.splice(idx2, 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
-                    else retryArgs.splice(retryArgs.length - 1, 0, '--yes-playlist');
-                    result = await runYtDlp(retryArgs);
-                    allFiles = findDownloadedFiles(id);
-                }
+                    if (files.length === 0 && platform === 'instagram') {
+                        console.log(`[RETRY] Instagram --yes-playlist...`);
+                        const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                        const idx2 = retryArgs.indexOf('--add-header');
+                        if (idx2 !== -1) retryArgs.splice(idx2, 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
+                        else retryArgs.splice(retryArgs.length - 1, 0, '--yes-playlist');
+                        r = await runYtDlp(retryArgs);
+                        files = findDownloadedFiles(id);
+                    }
+                    return files;
+                });
+                allFiles = allFiles.length ? allFiles : result;
             }
 
             if (allFiles.length === 0 && platform === 'instagram') {
