@@ -1,0 +1,42 @@
+Resumo - !teste botoes
+
+Problema inicial:
+- !teste nao mostrava botoes (Native Flow)
+
+O que foi feito:
+1. Simplificado src/commands/teste.js para 1 botao apenas (quick_reply)
+2. Corrigido formato Native Flow para Baileys 6.6.0:
+   - uso de proto.Message.InteractiveMessage + nativeFlowMessage
+   - messageParamsJson='{}' e messageVersion=1
+   - relay com additionalNodes (biz node)
+   - buildMixedNativeFlowBizNode() com actual_actors/host_storage/privacy_mode_ts
+   - isJidGroup ? [bizNode] : [botNode, bizNode]
+3. Liberado execucao em grupo desativado/parcial:
+   - src/events/message.js: PARTIAL_BYPASS_COMMANDS e activationControlCmds inclui teste/testar/testenative/testebotoes
+4. Handler de clique em src/events/message.js:
+   - getInteractiveResponseInfo() robusto (unwrap 7 niveis + protocolMessage)
+   - trata !ping/!menu/!status/ai_ok/teste_ping e executa comando correspondente
+   - logs [ENTRY] e [DEBUG irInfo] para diagnostico
+   - clique do proprio numero do bot nao gera evento (precisa testar de outro numero)
+5. Bibliotecas:
+   - Instalado e removido baileys-mbuilder 4.7.0-lts (obfuscado, travava require) 
+   - Criado shim local src/services/mbuilder.js com API MB.Button / ButtonV2 / Carousel / AIRich usando proto + biz node
+   - Dependencia principal continua @whiskeysockets/baileys ^6.6.0 (sem trocar fork)
+6. Comando final src/commands/teste.js:
+   - !teste button    -> MB.Button 1 botao
+   - !teste buttonv2  -> MB.ButtonV2 multi-row
+   - !teste carousel  -> MB.Carousel 2 cards
+   - !teste airich    -> MB.AIRich hyperlink
+   - !teste / !teste all -> envia os 4
+
+Arquivos alterados:
+- src/commands/teste.js
+- src/events/message.js
+- src/database/media.js
+- src/services/mbuilder.js (novo)
+- package.json (instalacao temporaria baileys-mbuilder)
+
+Como testar:
+- Reiniciar bot (npm start)
+- No celular atualizado, de outro numero do grupo: !teste button -> clicar Ping
+- Deve responder "Native Flow OK" + executar !ping
