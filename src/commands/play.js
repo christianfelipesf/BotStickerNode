@@ -52,6 +52,38 @@ function searchViaYtDlp(query) {
     });
 }
 
+async function getPlayThumbBuffer(video) {
+    let thumbUrl = null;
+    try {
+        if (video.thumbnail) thumbUrl = typeof video.thumbnail === 'string' ? video.thumbnail : video.thumbnail.url;
+        else if (video.image) thumbUrl = typeof video.image === 'string' ? video.image : video.image.url;
+        else if (video.thumbnails && Array.isArray(video.thumbnails) && video.thumbnails[0]?.url) thumbUrl = video.thumbnails[0].url;
+        else if (video.videoId) thumbUrl = `https://img.youtube.com/vi/${video.videoId}/hqdefault.jpg`;
+        else if (video.id) thumbUrl = `https://img.youtube.com/vi/${video.id}/hqdefault.jpg`;
+        else if (video.url) {
+            const m = video.url.match(/(?:v=|\/)([A-Za-z0-9_-]{11})/);
+            if (m) thumbUrl = `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg`;
+        }
+    } catch (_) {}
+    if (!thumbUrl) return null;
+    try {
+        const resp = await axios.get(thumbUrl, { responseType: 'arraybuffer', timeout: 8000 });
+        if (!resp.data) return null;
+        const { Jimp } = require('jimp');
+        const img = await Jimp.read(Buffer.from(resp.data));
+        try { img.resize({ w: 300, h: 300 }); } catch (_) { try { img.resize(300, 300); } catch (_) {} }
+        const buf = await img.getBuffer('image/jpeg', { quality: 80 });
+        if (buf.length > 100 * 1024) {
+            try {
+                const small = await Jimp.read(buf);
+                try { small.resize({ w: 200, h: 200 }); } catch (_) { try { small.resize(200, 200); } catch (_) {} }
+                return await small.getBuffer('image/jpeg', { quality: 70 });
+            } catch (_) { return buf; }
+        }
+        return buf;
+    } catch (_) { return null; }
+}
+
 module.exports = {
     name: 'play',
     aliases: ['p', 'musica', 'youtube'],
@@ -180,11 +212,29 @@ module.exports = {
 
             if (fs.existsSync(outPath)) {
                 try { if (fs.statSync(outPath).size < 1024) throw new Error('Arquivo muito pequeno'); } catch (e) { throw new Error('Arquivo não foi gerado: ' + e.message); }
-                await enqueueSend(() => sendMessageSafe(sock, from, {
+                // preview com thumb via externalAdReply (audio + foto)
+                let thumb = null;
+                try { thumb = await getPlayThumbBuffer(video); } catch (_) { thumb = null; }
+                const audioPayload = {
                     audio: { url: outPath },
                     mimetype: 'audio/mp4',
-                    fileName: `${String(video.title || 'audio').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.mp3`
-                }, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
+                    fileName: `${String(video.title || 'audio').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.mp3`,
+                    ...(thumb ? {
+                        contextInfo: {
+                            externalAdReply: {
+                                title: String(safeTitle).slice(0, 40),
+                                body: `${formatDuration(duration)} • YouTube`,
+                                thumbnail: thumb,
+                                mediaType: 1,
+                                mediaUrl: video.url,
+                                sourceUrl: video.url,
+                                renderLargerThumbnail: true,
+                                showAdAttribution: false
+                            }
+                        }
+                    } : {})
+                };
+                await enqueueSend(() => sendMessageSafe(sock, from, audioPayload, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
 
                 try { fs.unlinkSync(outPath); } catch (_) {}
                 currentBotResponse = await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);

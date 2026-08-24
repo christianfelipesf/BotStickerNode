@@ -1,0 +1,61 @@
+module.exports = {
+    name: 'deletarmsg',
+    aliases: ['deletemsg', 'apagarmsg', 'delmsg', 'deletar', 'apagarmensagem'],
+    description: 'Apaga a mensagem marcada (responda a mensagem com o comando).',
+    category: 'admin',
+    async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+        if (!isGroup) {
+            return await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
+        }
+
+        const admins = await utils.getAdmins(sock, from);
+        const isSenderAdmin = utils.isUserAdmin(sender, admins);
+        const meId = utils.normalizeJid(sock.user?.id || '');
+        const senderNorm = utils.normalizeJid(sender);
+        const isOwner = m.key.fromMe || sender === meId || senderNorm === meId;
+
+        if (!isSenderAdmin && !isOwner) {
+            return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });
+        }
+
+        const ctx = m.message.extendedTextMessage?.contextInfo;
+        const stanzaId = ctx?.stanzaId;
+        const participant = ctx?.participant;
+        const quotedMessage = ctx?.quotedMessage;
+
+        if (!stanzaId || !quotedMessage) {
+            return await sock.sendMessage(from, { text: '❌ Você precisa *responder/marcar* a mensagem que deseja apagar.\n\nEx: responda a mensagem com *!deletarmsg*' }, { quoted: m });
+        }
+
+        const isBotAdmin = await utils.botIsAdmin(sock, from);
+        if (!isBotAdmin) {
+            return await sock.sendMessage(from, { text: '❌ Eu preciso ser administrador para apagar mensagens.' }, { quoted: m });
+        }
+
+        try {
+            const isQuotedFromMe = participant ? utils.normalizeJid(participant) === meId : false;
+            const key = {
+                remoteJid: from,
+                id: stanzaId,
+                participant: participant || undefined,
+                fromMe: isQuotedFromMe
+            };
+
+            await utils.sendMessageSafe(sock, from, { delete: key }, { maxRetries: 2 });
+            await utils.react(sock, m, '🗑️', lastBotResponse, GLOBAL_COOLDOWN);
+
+            // Tenta também apagar o comando do usuário para limpar o chat
+            try {
+                await utils.sendMessageSafe(sock, from, { delete: m.key }, { maxRetries: 1 });
+            } catch (_) {}
+
+            return;
+        } catch (e) {
+            console.error('[deletarmsg] falha:', e.message);
+            const msg = e.message?.includes('rate-overlimit') || e.data?.statusCode === 429
+                ? '❌ Falha por limite de requisições. Tente novamente em alguns segundos.'
+                : '❌ Não foi possível apagar essa mensagem. Ela pode ser muito antiga ou de outro bot.';
+            return await sock.sendMessage(from, { text: msg }, { quoted: m });
+        }
+    }
+};

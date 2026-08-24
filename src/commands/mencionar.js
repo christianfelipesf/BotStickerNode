@@ -1,7 +1,7 @@
 module.exports = {
     name: 'mencionar',
-    aliases: ['todos', 'tagall', 'cita', 'citar', 'tag'],
-    category: 'grupos',
+    aliases: ['todos', 'tagall', 'tag', 'mencionarall'],
+    category: 'admin',
     description: 'Marca todos os membros do grupo',
     async execute(sock, m, { from, isGroup, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react } = utils;

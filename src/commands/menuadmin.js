@@ -32,13 +32,16 @@ module.exports = {
             `╭─── *MODERAÇÃO* ───\n` +
             `│ 🚫 *${p}ban* (marque/responda) — remove membro\n` +
             `│ ⚠️ *${p}adv* (marque) — advertência 3/3 = ban\n` +
+            `│ ✅ *${p}limparadv* [@user|all] — limpa advertências\n` +
             `│ 🛡️ *${p}antilink* — ativa/desativa filtro de links\n` +
             `│ 🔇 *${p}mute* @user — silencia\n` +
             `│ 🔊 *${p}desmute* @user — dessilencia\n` +
             `│ 🧹 *${p}limpar* [n] — apaga mensagens\n` +
+            `│ 🗑️ *${p}deletarmsg* (responda) — apaga mensagem marcada\n` +
             `╰───────────────\n\n` +
             `╭─── *GRUPO* ───\n` +
             `│ 📢 *${p}mencionar* [texto] — marca todos\n` +
+            `│ 💬 *${p}cita* (responda mensagem) — reescreve marcando todos\n` +
             `│ 🏷️ *${p}nome* <nome> — nome do bot no grupo\n` +
             `│ 🖼️ *${p}imagem* (responda imagem) — imagem do menu\n` +
             `│ 🔗 *${p}linkgp* — pega link do grupo (bot precisa ser admin)\n` +
