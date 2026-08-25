@@ -1,0 +1,91 @@
+não tem algo pra fazer pro script ficar inteligente por exemplo algo do tipo, ele encontra um video muito grande e nao consegue transformar em sticker ai ele tenta em qualidade menor ou diminuir o tempo, falo coisas desses tipo pense fora da caixa
+Thought · 6ms
+Ideias fora da caixa para sticker resiliente — vou mapear o fluxo atual antes de propor o plano.
+→Read . 
+→Read package.json 
+→Read src 
+→Read index.js 
+✓Explore Task — Explore sticker pipeline
+↳ 25 toolcalls · 1m 13s
+ctrl+x down view subagents
+→Read src\database\sticker.js 
+→Read src\events\media.js 
+Thought · 8.7s
+Plano — Sticker Inteligente / Resiliente (auto-degradação + "pensar fora da caixa")
+1. Contexto verificado
+Pipeline atual em src/database/sticker.js:58-201 (mediaToSticker) é single-shot:
+- parâmetros fixos: src/database/sticker.js:113-123 -t 6 -vf scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=12 -q:v 60. Se falhar lança, único catch tenta fallback estático src/database/sticker.js:166-192 (-vframes 1). Se ainda falhar ou output >1MB (src/events/media.js:162 / src/database/sticker.js:130), retorna erro genérico ❌ Não foi possível gerar... (src/events/media.js:170) sem retentar.
+- imagem: Jimp.scaleToFit 512 + webp.cwebp -q 80 (src/database/sticker.js:94-103), shrinkImageBuffer único scale min(1600,iw) -q:v 5 (src/database/sticker.js:42-43), sem ladder.
+- sem ffprobe — duração desconhecida antes do ffmpeg; -t 6 só trunca, não adapta bitrate.
+- sem validação de output >1MB com retry; sem fila (PQueue existe em src/services/queue.js:3 mas src/events/media.js:87 não usa).
+Limites WhatsApp que forçam inteligência: WebP ≤1MB, recomendado ≤6s animado, 512×512.
+2. Objetivo do usuário
+Quando vídeo é "muito grande / longo / pesado" e conversão falha, não falhar seco — tentar automaticamente: menor qualidade, menor duração, menor resolução/fps, até entregar algo usável. Pensar fora da caixa em outras degradações inteligentes.
+3. Design proposto — Sticker Adaptativo em Ladder
+3.1 Pré-voo inteligente (ffprobe leve)
+Novo probeVideo(inputPath) com ffprobe (via fluent-ffmpeg.ffprobe ou spawn ffprobe -v error -show_entries stream=width,height,duration,bit_rate -of json) + fs.stat. Dados: duration, w/h, bitrate, size. Custo <200ms. Decide ladder antes de transcodar. Loga em [STICKER-LOG].
+3.2 Ladder de tentativas — vídeo → webp
+Extrair lógica atual de src/database/sticker.js:110-139 para função tryVideoProfile(inputPath, outputPath, profile). Loop sequencial até 3-4 perfis + fallback estático:
+Tentativa	Resolução	fps	q:v
+1 (atual)	512	12	60
+2	512	10	45
+3	384	10	40
+4	320	8	35
+Cada tentativa: fs.stat(output). Se size >1MB → próxima tentativa (não erro fatal). Se size <512 → retry. Timeout por tentativa 30s (mantém). Entre tentativas unlink output.
+Idéia "fora da caixa" extra:
+- Trim inteligente: se duration >6, tentar ss=0 (primeiros 6s), se ainda >1MB tentar ss=duration/2 -2 (centro, onde costuma estar ação) via -ss antes de -i.
+- Split em N stickers: se duration >12 e todas tentativas falham, oferecer automaticamente 2-3 stickers de 3s cada (-ss 0 -t 3, -ss 3 -t 3...) e enviar em sequência com sendQueue (src/services/queue.js:4). Opcional por flag.
+- Áudio strip já feito (-an) mas verificar streams extras — adicionar -map 0:v:0.
+3.3 Ladder imagem
+Substituir bloco src/database/sticker.js:88-103 por loop: scaleToFit 512→384→320 e cwebp -q 80→60→40 até output ≤1MB. Já existe shrinkImageBuffer para >10MB; estender para pós-conversão também. Logar cada tentativa.
+3.4 Validação de saída como loop, não throw imediato
+Mover checks src/database/sticker.js:130-139 e src/events/media.js:161-166 para dentro do ladder. Só throw após esgotar perfis.
+3.5 Feedback ao usuário
+Hoje reactStatus ⏳→❌ mudo. Propor: se entrou em retry, editar/enviar mensagem intermediária ⚙️ Vídeo pesado, tentando versão leve (2/4)... (apagável). No sucesso após retry, caption ✅ Gerado em qualidade adaptada (384p 10fps) para transparência.
+3.6 Flags de usuário (opt-in fora da caixa)
+Parse de !s com sufixos sem quebrar compat: !s low, !s 3s, !s crop, !s split. src/commands/s.js:7 passa explicitOpts já suportado em src/events/media.js:87. Se flag presente, pula direto ao perfil pedido.
+3.7 Outras ideias fora da caixa (incluir no plano, implementar opcional)
+- Enviar como GIF video (src/database/sticker.js:457 mediaToGifVideo) automaticamente se ladder webp falhar — ainda é sticker-like animado.
+- Compressão prévia se buffer > STICKER_VIDEO_MAX (50MB): em vez de throw src/database/sticker.js:69, fazer ffmpeg -vf scale=720:-2 -crf 28 -preset fast para reduzir antes do ladder.
+- Métricas leves em bot.db (tabela sticker_attempts): perfil que funcionou / durações / taxa de fallback → tunar ladder sem adivinhar.
+- Rate-limit via src/services/queue.js:enqueueProcess para sticker — evita OOM com 3 vídeos paralelos (hoje sem fila). Reusar processQueue concurrency 3.
+4. Arquivos a tocar (impacto mínimo e isolado)
+- src/database/sticker.js — core. Adicionar probeVideo, STICKER_PROFILES, tryVideoProfile, adaptiveMediaToSticker wrapper; refatorar mediaToSticker para loop sem quebrar assinatura (mantém compatível com src/events/media.js:159 e src/dashboard/dashboard.js:1290). Estimativa 80-120 linhas.
+- src/events/media.js — alterar ramo action==='sticker' (159-172) para: chamar novo mediaToStickerAdaptive com callback de progresso, tratar size>1MB já dentro, e opcional envio multi-sticker. Adicionar parse de flags em speedOrOpts.
+- Novo src/services/stickerProbe.js (ou funções dentro de sticker.js) — ffprobe wrapper com timeout 5s.
+- src/services/queue.js — opcional: enqueueProcess ao redor da conversão.
+- src/database/utils.js:10,959 — re-exportar nova função se criada.
+Nenhum change em index.js além de garantir ffprobe path (mesma lógica ensureFfmpeg).
+5. Sequência de implementação (fases)
+Fase 1 — diagnóstico + probe (30min): adicionar probeVideo, logs, nenhum comportamento muda.
+Fase 2 — ladder vídeo (core, 1-2h): implementar perfis 1-4 + validação loop + fallback estático como último perfil. Teste com vídeos 5MB/20MB/50MB, 12s vertical/horizontal.
+Fase 3 — ladder imagem (30min): loop q/resolução.
+Fase 4 — UX (30min): mensagem progresso + caption adaptado + flag parse.
+Fase 5 — extras (opcionais, feature-flagged): split multi-sticker, fallback gifVideo, métricas DB, fila.
+6. Verificação
+- Unit: mock ffmpeg perfis, fs.stat simulado >1MB → garante próxima tentativa.
+- Integração: 3 fixtures reais (imagem 8MB, vídeo 4s 1080p, vídeo 15s 4K) → assert output ≤1MB e RIFF/WEBP header (src/events/media.js:164).
+- Carga: 3 !s concorrentes com vídeo 20MB → sem OOM, fila respeita concurrency 3.
+7. Riscos / Tradeoffs
+- Mais tentativas = até 90s de CPU (3×30s) → mitigar com timeout curto nas tentativas degradadas (20s) e p-queue.
+- Qualidade degradada pode gerar sticker borrado → por isso caption informa perfil usado.
+- ffprobe ausente em containers antigos → fallback para ladder sem probe (tenta perfil1 direto).
+8. Perguntas para você antes de executar
+1. Prefere resiliência totalmente automática (tenta silenciosamente até funcionar) ou com interação (pergunta vídeo grande, quer versão 3s leve ou dividir em 2 stickers?)?
+2. Permitir split em múltiplos stickers para vídeos >10s? Ou mantém só 1 sticker truncado?
+3. Aceita feedback intermediário (tentando qualidade menor...) ou prefere só ⏳ até terminar?
+4. Quer flags manuais (!s low, !s 3s) ou deixa só automático?
+Responda e eu já parto para implementação faseada.
+▣  Plan · Muse Spark 1.2 Free · 2m 1s
+nao so pra esse comando mas tente ver oq pode fazer com outros nessa mesma logica de ser proativo
+Thought · 644ms
+Expandindo a ideia de resiliência para todo o bot — mapeando cada comando para ver onde dá pra ser proativo.
+→Read src\commands 
+✓Explore Task — Explore all commands logic
+↳ 44 toolcalls · 2m 38s
+ctrl+x down view subagents
+Thought · 1.5s
+Plano — Bot Proativo / Resiliente (todos os comandos, não só sticker)
+Investigação completa em 68 comandos + 16 services. Diagnóstico abaixo é factual (file:line verificado), plano é só leitura — sem edição.
+Visão
+Hoje o bot é fail-fast + mensagem genérica ❌ (src/events/media.js:194, src/commands/traduzir.js:68, src/services/tts.js:107). Proposta: ladder degradativo + retry inteligente + fallback externo + feedback progressivo, reutilizável em 5 domínios.
