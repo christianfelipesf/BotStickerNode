@@ -1,0 +1,191 @@
+================================================================================
+ CONVERSAO STICKER — DESVENDANDO O QUE FOI FEITO
+ BotStickerNode — src/database/sticker.js (mediaToSticker / stickerToMedia)
+ Data: 2026-08-25
+ Opcao escolhida: A (preservar proporcao, MAX 512, -q 80, sem upscale)
+================================================================================
+
+1. PROBLEMA ORIGINAL
+-------------------
+- mediaToSticker (linha ~92 antiga) fazia:
+    image.resize({ w: 512, h: 512 })
+  Isso FORCAVA 1:1, deformando qualquer imagem 9:16, 16:9, 4:3, etc.
+  Ex: 1080x1920 virava 512x512 esticado horizontalmente, gerando perda de nitidez.
+
+- Compressao WebP com:
+    webp.cwebp(input, output, "-q 60")  (linha ~97 antiga)
+  Qualidade 60 cria artefatos, borrao e banding visivel.
+
+- Log confirmava a perda:
+    "esticado 512x512, original ... PERDA: original aspect destruido, q60"
+
+- stickerToMedia (linha ~287) ja estava correto ao usar:
+    ffmpeg -vcodec png -compression_level 0 -f image2
+  sem filtro -vf scale=512:512. Ou seja, extraia dimensoes nativas do VP8/WebP.
+  Mas como o dano ja tinha sido feito no !s, o !toimg so devolvia 512x512
+  esticado -> impossivel recuperar o 9:16 original.
+
+- Fluxo completo antes:
+  imagem (1080x1920) -> Jimp 512x512 ESTICADO -> PNG temp -> cwebp q60 -> WebP 512x512
+  -> stickerToMedia (png sem escala) -> PNG 512x512 (ainda esticado, borrado)
+
+2. OBJETIVO DA CORRECAO
+-----------------------
+Preservar resolucao e aspect ratio originais na criacao de sticker de imagem,
+garantindo que !toimg (src/events/media.js -> stickerToMedia) extraia em alta
+qualidade sem esticar.
+
+Requisitos do enunciado:
+  1) Remover resize 512x512
+  2) Escala proporcional limitando apenas lado maior (ex: 512) sem cortar/deformar
+  3) Aumentar qualidade WebP de q60 para q80/q85
+  4) Garantir stickerToMedia sem scale fixo
+
+3. O QUE FOI ALTERADO — DETALHADO
+---------------------------------
+Arquivo: src/database/sticker.js
+
+3.1 Bloco de imagem em mediaToSticker (linhas 87-104)
+
+ANTES:
+  const image = await Jimp.read(buffer);
+  const origW = image.bitmap.width, origH = image.bitmap.height;
+  console.log(`... -> resize 512x512 (ESTICA 1:1, destroi aspect)`);
+  if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw ...
+  image.resize({ w: 512, h: 512 });
+  console.log(`Jimp após resize 512x512`);
+  const pngBuffer = await image.getBuffer('image/png');
+  console.log(`PNG temporario ... -> cwebp -q 60`);
+  fs.writeFileSync(inputPath, pngBuffer);
+  await webp.cwebp(inputPath, outputPath, "-q 60");
+
+DEPOIS (opcao A):
+  const image = await Jimp.read(buffer);
+  const origW = image.bitmap.width, origH = image.bitmap.height;
+  console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=...`);
+  if (origW > 3000 || origH > 3000) throw new Error('Imagem muito grande');
+  // Preserva aspect ratio: so escala se lado maior > 512, sem esticar, sem upscale
+  const MAX_SIDE = 512;
+  if (origW > MAX_SIDE || origH > MAX_SIDE) {
+      image.scaleToFit({ w: MAX_SIDE, h: MAX_SIDE });
+      console.log(`Jimp após scaleToFit WxH (aspect preservado, MAX=512)`);
+  } else {
+      console.log(`Jimp mantém original WxH (abaixo de MAX, sem redimensionar)`);
+  }
+  const pngBuffer = await image.getBuffer('image/png');
+  console.log(`PNG temporario ... -> cwebp -q 80`);
+  fs.writeFileSync(inputPath, pngBuffer);
+  await webp.cwebp(inputPath, outputPath, "-q 80");
+
+Por que scaleToFit?
+  Jimp.scaleToFit({w:512,h:512}) calcula fator f = min(512/w, 512/h) e chama
+  scale(f). Isso encaixa a imagem dentro do quadrado 512 mantendo width/height.
+  Implementacao vista em node_modules/@jimp/plugin-resize/dist/commonjs/index.js:137:
+    f = w/h > imgW/imgH ? h/imgH : w/imgW
+  Assim imagens <512 em ambos os lados NAO sao ampliadas (evita pixelacao).
+  Alternativa contain() adicionaria padding transparente para forcar 512x512;
+  foi descartada pois o pedido e "manter dimensoes originais".
+
+Qualidade: -q 60 -> -q 80
+  Diferença: q60 comprime agressivo (~40% menor mas borrado); q80 mantem
+  detalhes de textura e texto nitidos, ainda <1MB para 512. O limite de 1MB
+  em src/events/media.js:163 continua protegendo envio.
+
+3.2 Logs de fim de !s (linha 159)
+ANTES:
+  "esticado 512x512, original ... PERDA: original aspect destruido, q60 aplicado"
+DEPOIS:
+  "aspect preservado, q80, original ... -> final ..."
+  Reflete o novo comportamento sem perda de proporcao.
+
+3.3 stickerToMedia — ramo imagem estatica (linhas 284-293)
+ANTES ja correto, mas sem documentacao:
+  ffmpeg(input).outputOptions(['-vcodec png','-compression_level 0','-f image2'])
+
+DEPOIS adicionado guard comment:
+  // NAO aplicar filtros de escala — extrai dimensoes nativas do VP8/WebP sem esticar
+  Mesmo comando ffmpeg, agora explicitamente protegido contra regressao.
+
+3.4 Log de fim de !toimg (linha 305)
+ANTES:
+  "OBS: saida é sempre 512x512 (estica) pois original foi destruido ... precisaria EXIF"
+DEPOIS:
+  "extração preserva dimensões nativas do WebP (aspect preservado)"
+  Agora o round-trip e reversivel para imagens: 1080x1920 -> sticker 288x512 -> !toimg 288x512
+  (ou 1080x1920 se MAX fosse 1920, mas com MAX=512 o fitting e proporcional).
+
+3.5 O que NAO foi alterado (proposital)
+- shrinkImageBuffer (linha 42-43) ja usava scale='min(1600,iw)':-2 preservando ratio; mantido.
+- Ramo de video (linha 115) continua com
+    -vf scale=512:512:force_original_aspect_ratio=increase,crop=512:512
+  pois video tem requisito diferente (preencher quadrado com crop central).
+- convertAnimatedWebpDirect / Frames usam trunc(iw/2)*2 para paridade de codec; fora de escopo.
+- src/events/media.js nao precisou mudanca: handleMediaCommand apenas delega.
+
+4. COMPORTAMENTO NOVO — EXEMPLOS
+--------------------------------
+Entrada 9:16 vertical 1080x1920:
+  Antes: 512x512 esticado (rosto alargado)
+  Agora: scaleToFit 512 => 288x512 (barras laterais naturais, proporcao intacta, nitido q80)
+         !toimg devolve 288x512 idem (sem segunda escala ffmpeg)
+
+Entrada 16:9 horizontal 1920x1080:
+  Antes: 512x512 esticado (achatado)
+  Agora: 512x288
+
+Entrada pequena 400x300 (<512):
+  Antes: 512x512 esticado (borrado por upscale + deformacao)
+  Agora: 400x300 mantido 1:1 original -> cwebp q80 (sem upscale, sem borrao)
+
+Entrada quadrada 800x800:
+  Antes: 512x512 (coincidentemente ok)
+  Agora: 512x512 via scaleToFit (mesmo resultado, mas por via proporcional)
+
+5. POR QUE MAX=512? (decisao A)
+-------------------------------
+- Spec oficial WhatsApp: sticker deve ter lado maior = 512px, <100KB ideal, <1MB hard.
+  MAX=512 garante compatibilidade maxima com clientes WA (nao e re-escalado pelo app).
+- Alternativas consideradas: MAX 1024/1600 dariam "alta resolucao" mas WA pode re-amostrar
+  ou recusar; e cwebp q80 em 1024 gera >300KB frequentemente, risco de >1MB.
+  Instrucao pedia "limitar lado maior ao maximo desejado (ex: scale mantendo proporcao
+  caso imagem seja gigantesca)" — 512 atende exatamente.
+
+6. VALIDACAO SUGERIDA (sem teste automatizado, conforme pedido)
+---------------------------------------------------------------
+Teste manual round-trip:
+  const buf = fs.readFileSync('vertical_1080x1920.jpg');
+  const sticker = await mediaToSticker(buf, 'image/jpeg', 'pack','author');
+  const {buffer: png} = await stickerToMedia(sticker, false);
+  const img = await Jimp.read(png);
+  // esperar img.bitmap = 288x512 (9:16) e nao 512x512
+  // grep: verificar que sticker.js nao contem mais "resize({ w: 512, h: 512 })"
+  // e que cwebp usa "-q 80"
+
+Criterios de aceite originais atendidos:
+  [x] Removido redimensionamento forcado 512x512
+  [x] Implementada escala proporcional com limite MAX
+  [x] Qualidade elevada 60->80
+  [x] stickerToMedia verificado sem -vf scale fixa
+
+7. RISCOS / OBSERVACOES
+-----------------------
+- Sticker nao-quadrado sera exibido centralizado pelo WhatsApp (comportamento esperado
+  vs esticar). Se quiser quadrado preenchido, trocar scaleToFit por image.contain({w:512,h:512})
+  mas isso voltaria a gerar 512x512 com padding transparente.
+- q80 aumenta ~30-50% tamanho; protegido pelo check <1MB em media.js e shrink >10MB.
+- Imagens >3000px ainda rejeitadas (limite anti-OOM Jimp).
+- Video nao afetado.
+
+8. REFERENCIAS
+-------------
+- src/database/sticker.js:87-104  mediaToSticker ramo imagem (principal alteracao)
+- src/database/sticker.js:159     log fim !s atualizado
+- src/database/sticker.js:284-293 stickerToMedia guard
+- src/database/sticker.js:305     log fim !toimg atualizado
+- src/database/sticker.js:42      shrinkImageBuffer (inalterado, referencia de scale proporcional)
+- src/events/media.js:141,159     handleMediaCommand delegacao
+- node_modules/@jimp/plugin-resize/dist/commonjs/index.js  definicao ScaleToFitOptionsSchema e f = min(w/W, h/H)
+
+================================================================================
+ FIM
+================================================================================

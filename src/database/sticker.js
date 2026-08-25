@@ -87,14 +87,20 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
         if (!isVideo) {
             const image = await Jimp.read(buffer);
             const origW = image.bitmap.width, origH = image.bitmap.height;
-            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)} -> resize 512x512 (ESTICA 1:1, destroi aspect)`);
-            if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw new Error('Imagem muito grande');
-            image.resize({ w: 512, h: 512 });
-            console.log(`[STICKER-LOG] Jimp após resize ${image.bitmap.width}x${image.bitmap.height}`);
+            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)}`);
+            if (origW > 3000 || origH > 3000) throw new Error('Imagem muito grande');
+            // Preserva aspect ratio: só escala se lado maior > 512, sem esticar, sem upscale
+            const MAX_SIDE = 512;
+            if (origW > MAX_SIDE || origH > MAX_SIDE) {
+                image.scaleToFit({ w: MAX_SIDE, h: MAX_SIDE });
+                console.log(`[STICKER-LOG] Jimp após scaleToFit ${image.bitmap.width}x${image.bitmap.height} (aspect preservado, MAX=${MAX_SIDE})`);
+            } else {
+                console.log(`[STICKER-LOG] Jimp mantém original ${image.bitmap.width}x${image.bitmap.height} (abaixo de MAX, sem redimensionar)`);
+            }
             const pngBuffer = await image.getBuffer('image/png');
-            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes -> cwebp -q 60`);
+            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes -> cwebp -q 80`);
             fs.writeFileSync(inputPath, pngBuffer);
-            await webp.cwebp(inputPath, outputPath, "-q 60");
+            await webp.cwebp(inputPath, outputPath, "-q 80");
             try { const s = fs.statSync(outputPath); console.log(`[STICKER-LOG] WebP gerado ${s.size} bytes (${(s.size/1024).toFixed(1)}KB) header=${fs.readFileSync(outputPath).slice(0,4).toString()} `); } catch(_){}
         } else {
             fs.writeFileSync(inputPath, buffer);
@@ -150,7 +156,7 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
             const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
             console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
-            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | esticado 512x512, original ${rawWebp.length} -> final ${result.length} | PERDA: original aspect destruido, q60 aplicado`);
+            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | aspect preservado, q80, original ${rawWebp.length} -> final ${result.length}`);
         } catch(e) {
             console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
         }
@@ -276,6 +282,7 @@ async function stickerToMedia(buffer, isAnimated = false) {
                 await convertAnimatedWebpFrames(buffer, outputPath);
             }
         } else {
+            // NÃO aplicar filtros de escala — extrai dimensões nativas do VP8/WebP sem esticar para 512x512
             await new Promise((resolve, reject) => {
                 let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
                 ffmpeg(inputPath)
@@ -295,7 +302,7 @@ async function stickerToMedia(buffer, isAnimated = false) {
             } else {
                 console.log(`[STICKER-LOG] out MP4 ${outBuf.length} bytes header=${outBuf.slice(0,4).toString('hex')}`);
             }
-            console.log(`[STICKER-LOG] ===== !toimg FIM ===== dur=${Date.now()-startTs2}ms | OBS: saida é sempre 512x512 (estica) pois original foi destruido no !s. Para restaurar 9:16 perfeito precisaria EXIF com original embutido.`);
+            console.log(`[STICKER-LOG] ===== !toimg FIM ===== dur=${Date.now()-startTs2}ms | extração preserva dimensões nativas do WebP (aspect preservado)`);
         } catch(_){}
         return { buffer: outBuf, mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
     } catch (err) {
