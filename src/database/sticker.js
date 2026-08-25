@@ -56,11 +56,19 @@ async function shrinkImageBuffer(buffer, tempId) {
 }
 
 async function mediaToSticker(buffer, mimeType, pack, author) {
+    const startTs = Date.now();
     if (!buffer || !buffer.length) throw new Error('Mídia vazia');
     const mime = (mimeType || '').toLowerCase();
     const isVideo = mime.includes('video');
+    console.log(`\n[STICKER-LOG] ===== !s INICIO ===== tempId pending mime=${mime} isVideo=${isVideo} inputBytes=${buffer.length} (${(buffer.length/1024).toFixed(1)}KB)`);
+    // tenta detectar dimensões originais sem Jimp para log rápido
+    try {
+        const probe = await Jimp.read(buffer).catch(()=>null);
+        if (probe) console.log(`[STICKER-LOG] probe original ${probe.bitmap.width}x${probe.bitmap.height} mime=${mime}`);
+    } catch(_) {}
     if (isVideo && buffer.length > STICKER_VIDEO_MAX) throw new Error('Mídia muito grande (max 50MB)');
     const tempId = crypto.randomBytes(4).toString('hex');
+    console.log(`[STICKER-LOG] tempId=${tempId} pack="${pack}" author="${author}"`);
     if (!isVideo && buffer.length > STICKER_IMG_MAX) {
         console.log(`🖼️ [STICKER] imagem ${(buffer.length / 1048576).toFixed(1)}MB > 10MB — comprimindo antes de converter`);
         try {
@@ -78,11 +86,16 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     try {
         if (!isVideo) {
             const image = await Jimp.read(buffer);
+            const origW = image.bitmap.width, origH = image.bitmap.height;
+            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)} -> resize 512x512 (ESTICA 1:1, destroi aspect)`);
             if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw new Error('Imagem muito grande');
             image.resize({ w: 512, h: 512 });
+            console.log(`[STICKER-LOG] Jimp após resize ${image.bitmap.width}x${image.bitmap.height}`);
             const pngBuffer = await image.getBuffer('image/png');
+            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes -> cwebp -q 60`);
             fs.writeFileSync(inputPath, pngBuffer);
             await webp.cwebp(inputPath, outputPath, "-q 60");
+            try { const s = fs.statSync(outputPath); console.log(`[STICKER-LOG] WebP gerado ${s.size} bytes (${(s.size/1024).toFixed(1)}KB) header=${fs.readFileSync(outputPath).slice(0,4).toString()} `); } catch(_){}
         } else {
             fs.writeFileSync(inputPath, buffer);
             let stats; try { stats = fs.statSync(inputPath); } catch (_) { throw new Error('Vídeo vazio'); }
@@ -120,9 +133,26 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             }
         }
 
-        const result = await addMetadata(fs.readFileSync(outputPath), pack, author);
+        const rawWebp = fs.readFileSync(outputPath);
+        console.log(`[STICKER-LOG] raw WebP antes de addMetadata ${rawWebp.length} bytes`);
+        // inspeciona chunks RIFF para ver se já tem EXIF
+        try {
+            const chk = rawWebp.slice(0, 100).toString('hex').slice(0,80);
+            console.log(`[STICKER-LOG] raw WebP head hex=${chk}...`);
+        } catch(_){}
+        const result = await addMetadata(rawWebp, pack, author);
         if (!result || result.length < 512) {
             throw new Error('Falha ao injetar metadados do sticker');
+        }
+        // log detalhado do resultado
+        try {
+            const imgProbe = new Image(); await imgProbe.load(result);
+            const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
+            const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
+            console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
+            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | esticado 512x512, original ${rawWebp.length} -> final ${result.length} | PERDA: original aspect destruido, q60 aplicado`);
+        } catch(e) {
+            console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
         }
         return result;
     } catch (error) {
@@ -213,6 +243,26 @@ async function convertAnimatedWebpFrames(buffer, outputPath) {
 }
 
 async function stickerToMedia(buffer, isAnimated = false) {
+    const startTs2 = Date.now();
+    console.log(`\n[STICKER-LOG] ===== !toimg INICIO ===== isAnimated=${isAnimated} inputBytes=${buffer?.length || 0} (${buffer? (buffer.length/1024).toFixed(1)+'KB':''}) header=${buffer?.slice(0,4).toString() || ''} WEBP=${buffer?.slice(8,12).toString() || ''}`);
+    // tenta inspecionar EXIF/WebP chunks para ver se tem original embutido (como outros bots fazem)
+    try {
+        const probeImg = new Image(); await probeImg.load(buffer);
+        const exifLen = probeImg.exif ? probeImg.exif.length : 0;
+        const hasExif = !!probeImg.exif;
+        let exifJson = null; let exifPreview='';
+        if (hasExif) {
+            try { exifPreview = probeImg.exif.slice(0,300).toString('utf-8').replace(/\0/g,'.').slice(0,200); } catch(_){}
+            try { const raw = probeImg.exif.slice(22).toString('utf-8'); exifJson = JSON.parse(raw); } catch(_){ }
+        }
+        console.log(`[STICKER-LOG] probe WebP exifLen=${exifLen} hasExif=${hasExif} preview="${exifPreview}" jsonKeys=${exifJson? Object.keys(exifJson).join(','): 'n/a'}`);
+        if (exifJson && exifJson.data) console.log(`[STICKER-LOG] ATENCAO: sticker contém data embutida len=${String(exifJson.data).length} (original embutido detectado!)`);
+        // também loga RIFF chunks
+        let off=12; let chunks=[];
+        while(off+8 < buffer.length && chunks.length<6){ const id=buffer.slice(off,off+4).toString(); const sz=buffer.readUInt32LE(off+4); chunks.push(`${id}:${sz}`); off+=8+sz + (sz%2); }
+        console.log(`[STICKER-LOG] RIFF chunks: ${chunks.join(' | ')}`);
+        console.log(`[STICKER-LOG] Se for sticker do seu bot: exifLen deve ser ~150-200 bytes (só pack/author). Se for de outro bot com restauração perfeita, exifLen será >10KB e conterá JPEG base64.`);
+    } catch(e){ console.log(`[STICKER-LOG] probe WebP falhou: ${e.message}`); }
     if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Sticker muito grande');
     const tempId = crypto.randomBytes(4).toString('hex');
     const inputPath = path.join(tempDir, `stk_in_${tempId}.webp`);
@@ -236,6 +286,17 @@ async function stickerToMedia(buffer, isAnimated = false) {
             });
         }
         let outBuf; try { outBuf = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão sticker'); }
+        // log do resultado e tentativa de detectar dimensões reais
+        try {
+            if (!isAnimated) {
+                const outImg = await Jimp.read(outBuf).catch(()=>null);
+                if (outImg) console.log(`[STICKER-LOG] out PNG ${outImg.bitmap.width}x${outImg.bitmap.height} ${outBuf.length} bytes (${(outBuf.length/1024).toFixed(1)}KB)`);
+                else console.log(`[STICKER-LOG] out PNG ${outBuf.length} bytes header=${outBuf.slice(0,8).toString('hex')}`);
+            } else {
+                console.log(`[STICKER-LOG] out MP4 ${outBuf.length} bytes header=${outBuf.slice(0,4).toString('hex')}`);
+            }
+            console.log(`[STICKER-LOG] ===== !toimg FIM ===== dur=${Date.now()-startTs2}ms | OBS: saida é sempre 512x512 (estica) pois original foi destruido no !s. Para restaurar 9:16 perfeito precisaria EXIF com original embutido.`);
+        } catch(_){}
         return { buffer: outBuf, mime: isAnimated ? 'video/mp4' : 'image/png', ext: isAnimated ? 'mp4' : 'png' };
     } catch (err) {
         console.error('❌ [FFMPEG] Falha:', err.message);

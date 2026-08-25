@@ -373,7 +373,7 @@ async function sendMedia(sock, from, m, filePath, title) {
 
 module.exports = {
     name: 'download',
-    aliases: ['d', 'dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x'],
+    aliases: ['dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x'],
     category: 'mídia',
     description: 'Baixa mídia de redes sociais (Instagram, TikTok, YouTube, Facebook, Twitter, CapCut, Pinterest, Google Drive, e mais)',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
@@ -384,7 +384,7 @@ module.exports = {
         if (!url) {
             await react(sock, m, '❓', lastBotResponse, GLOBAL_COOLDOWN);
             return await sock.sendMessage(from, {
-                text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!d'} <link>\n\n✅ *Plataformas suportadas:*\n• Instagram (posts/reels/carrosséis)\n• TikTok (videos)\n• YouTube (videos/música)\n• Facebook (videos/reels)\n• Twitter / X (imagens/videos)\n• CapCut (templates)\n• Pinterest (pins/imagens/videos)\n• Google Drive (arquivos)\n• MediaFire (arquivos)\n• Douyin (videos)\n• Xiaohongshu (posts)\n• Spotify (música)\n• SoundCloud (música)\n• Threads (imagens/videos)\n• Kuaishou (videos)\n• SnackVideo, Cocofun\n• Reddit, Google Imagens`
+                text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link>\n\n✅ *Plataformas suportadas:*\n• Instagram (posts/reels/carrosséis)\n• TikTok (videos)\n• YouTube (videos/música)\n• Facebook (videos/reels)\n• Twitter / X (imagens/videos)\n• CapCut (templates)\n• Pinterest (pins/imagens/videos)\n• Google Drive (arquivos)\n• MediaFire (arquivos)\n• Douyin (videos)\n• Xiaohongshu (posts)\n• Spotify (música)\n• SoundCloud (música)\n• Threads (imagens/videos)\n• Kuaishou (videos)\n• SnackVideo, Cocofun\n• Reddit, Google Imagens`
             }, { quoted: m });
         }
 

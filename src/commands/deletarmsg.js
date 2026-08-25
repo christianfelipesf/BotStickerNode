@@ -1,6 +1,6 @@
 module.exports = {
     name: 'deletarmsg',
-    aliases: ['deletemsg', 'apagarmsg', 'delmsg', 'deletar', 'apagarmensagem'],
+    aliases: ['d', 'deletemsg', 'apagarmsg', 'delmsg', 'deletar', 'apagarmensagem'],
     description: 'Apaga a mensagem marcada (responda a mensagem com o comando).',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
