@@ -53,7 +53,6 @@ module.exports = {
             || firstArg === 'all'
             || firstArg === '--all';
 
-        lastBotResponse = await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
         lastBotResponse = await react(sock, m, '⬇️', lastBotResponse, GLOBAL_COOLDOWN);
 
         const before = await getGitInfo();

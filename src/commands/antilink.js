@@ -17,6 +17,6 @@ module.exports = {
         utils.setGroupData(from, groupData);
 
         await utils.react(sock, m, '🛡️', lastBotResponse, GLOBAL_COOLDOWN);
-        return await sock.sendMessage(from, { text: `🛡️ Antilink ${groupData.antilink ? 'ATIVADO' : 'DESATIVADO'} para este grupo.` }, { quoted: m });
+        return await sock.sendMessage(from, { text: `🛡️ Antilink ${groupData.antilink ? 'ativado' : 'desativado'} para este grupo.` }, { quoted: m });
     }
 };

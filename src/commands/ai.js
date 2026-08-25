@@ -24,7 +24,11 @@ module.exports = {
                 }
             }
 
-            if (!prompt) return await react(sock, m, '❓', lastBotResponse, GLOBAL_COOLDOWN);
+            if (!prompt) {
+                await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                await sock.sendMessage(from, { text: '❌ Digite um texto para conversar com a IA.' }, { quoted: m });
+                return lastBotResponse;
+            }
 
             if (prompt.length > maxPromptLength * 2) {
                 await sock.sendMessage(from, { text: `❌ Prompt muito longo (${prompt.length} caracteres). Máximo permitido: ${maxPromptLength * 2}.` }, { quoted: m });

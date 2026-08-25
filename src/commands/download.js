@@ -382,7 +382,7 @@ module.exports = {
         const url = extractUrl(fullArgsText);
 
         if (!url) {
-            await react(sock, m, '❓', lastBotResponse, GLOBAL_COOLDOWN);
+            await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             return await sock.sendMessage(from, {
                 text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link>\n\n✅ *Plataformas suportadas:*\n• Instagram (posts/reels/carrosséis)\n• TikTok (videos)\n• YouTube (videos/música)\n• Facebook (videos/reels)\n• Twitter / X (imagens/videos)\n• CapCut (templates)\n• Pinterest (pins/imagens/videos)\n• Google Drive (arquivos)\n• MediaFire (arquivos)\n• Douyin (videos)\n• Xiaohongshu (posts)\n• Spotify (música)\n• SoundCloud (música)\n• Threads (imagens/videos)\n• Kuaishou (videos)\n• SnackVideo, Cocofun\n• Reddit, Google Imagens`
             }, { quoted: m });

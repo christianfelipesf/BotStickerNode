@@ -14,7 +14,8 @@ module.exports = {
         const isSenderAdmin = utils.isUserAdmin(sender, adminsRaw);
 
         if (!isSenderAdmin && !m.key.fromMe) {
-            return await react(sock, m, '🚫', lastBotResponse, GLOBAL_COOLDOWN);
+            await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            return await sock.sendMessage(from, { text: '❌ Apenas administradores podem usar este comando.' }, { quoted: m });
         }
 
         let currentBotResponse = await react(sock, m, '📢', lastBotResponse, GLOBAL_COOLDOWN);
