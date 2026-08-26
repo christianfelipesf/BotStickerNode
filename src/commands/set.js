@@ -77,7 +77,7 @@ module.exports = {
             }
             lines.push('');
             lines.push(`Uso: \`${config.prefix}set <parâmetro> <valor>\``);
-            lines.push(`Ex.: \`${config.prefix}set botName Antigravity Bot\``);
+            lines.push(`Ex.: \`${config.prefix}set botName Antigravity Bot🪐\``);
             lines.push(`Veja o valor atual: \`${config.prefix}set <parâmetro>\` (sem valor)`);
             await sock.sendMessage(from, { text: lines.join('\n') }, { quoted: m });
             return lastBotResponse;

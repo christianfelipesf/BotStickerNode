@@ -125,6 +125,12 @@ body{min-height:100vh}
                 <option value="mp4">MP4</option>
                 <option value="mp3">MP3 (áudio)</option>
             </select>
+            <select id="langSelect" title="Idioma do áudio (YouTube)">
+                <option value="pt" selected>PT-BR (dublado se disponível)</option>
+                <option value="original">Original</option>
+                <option value="en">EN</option>
+                <option value="es">ES</option>
+            </select>
         </div>
         <div class="platforms">
             <strong>Plataformas:</strong> Instagram, TikTok, YouTube, Facebook, Twitter/X, CapCut, Pinterest, Google Drive, MediaFire, Douyin, Spotify, SoundCloud, Threads, Kuaishou, Reddit, Google Imagens
@@ -158,6 +164,7 @@ const resultsEl = document.getElementById('results');
 const dropZone = document.getElementById('dropZone');
 const platformBadge = document.getElementById('platformBadge');
 const fmtSelect = document.getElementById('fmtSelect');
+const langSelect = document.getElementById('langSelect');
 const qualityRadios = document.querySelectorAll('input[name="quality"]');
 
 let abortController = null;
@@ -265,6 +272,8 @@ async function doDownload() {
     abortController = new AbortController();
     const hd = document.querySelector('input[name="quality"]:checked').value === 'best';
     const fmt = fmtSelect.value;
+    const langVal = langSelect ? langSelect.value : 'pt';
+    const lang = langVal === 'original' ? null : langVal;
 
     downloadBtn.disabled = true;
     downloadBtn.textContent = 'Baixando…';
@@ -285,7 +294,7 @@ async function doDownload() {
         const res = await fetch('/api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, hd, fmt }),
+            body: JSON.stringify({ url, hd, fmt, lang }),
             signal: abortController.signal
         });
 

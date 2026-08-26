@@ -439,7 +439,7 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             logger: pino({ level: 'warn' }),
             printQRInTerminal: false,
             auth: state,
-            browser: normalizedPhone ? ['Desktop', 'Chrome', '4.0.0'] : ['Antigravity Bot', 'Chrome', '120.0.0.0'],
+            browser: normalizedPhone ? ['Desktop', 'Chrome', '4.0.0'] : ['Antigravity Bot🪐', 'Chrome', '120.0.0.0'],
             markOnlineOnConnect: false,
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 60_000,

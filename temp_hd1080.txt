@@ -1,0 +1,23 @@
+[debug] Command-line config: ['--simulate', '--no-warnings', '-f', 'bestvideo[ext=mp4][vcodec^=avc1][width<=1080]+bestaudio/best[width<=1080]', 'https://youtube.com/shorts/uJMelJSwNys', '--verbose']
+[debug] Encodings: locale cp1252, fs utf-8, pref cp1252, out cp1252 (No ANSI), error cp1252 (No ANSI), screen cp1252 (No ANSI)
+[debug] yt-dlp version stable@2026.06.09 from yt-dlp/yt-dlp [821bef0f0] (pip)
+[debug] Python 3.14.5 (CPython AMD64 64bit) - Windows-10-10.0.19045-SP0 (OpenSSL 3.0.20 7 Apr 2026)
+[debug] exe versions: ffmpeg 8.1.2-full_build-www.gyan.dev (setts), ffprobe 8.1.2-full_build-www.gyan.dev
+[debug] Optional libraries: Cryptodome-3.23.0, brotli-1.2.0, certifi-2026.05.20, curl_cffi-0.15.0, mutagen-1.47.0, requests-2.34.2, sqlite3-3.50.4, urllib3-2.7.0, websockets-14.2, yt_dlp_ejs-0.8.0
+[debug] JS runtimes: none
+[debug] Proxy map: {}
+[debug] Request Handlers: urllib, requests, websockets, curl_cffi
+[debug] Plugin directories: none
+[debug] Loaded 1739 extractors
+[debug] [youtube] [pot] PO Token Providers: none
+[debug] [youtube] [pot] PO Token Cache Providers: memory
+[debug] [youtube] [pot] PO Token Cache Spec Providers: webpo
+[debug] [youtube] [jsc] JS Challenge Providers: bun (unavailable), deno (unavailable), node (unavailable), quickjs (unavailable)
+[youtube] Extracting URL: https://youtube.com/shorts/uJMelJSwNys
+[youtube] uJMelJSwNys: Downloading webpage
+[debug] [youtube] Forcing "main" player JS variant for player b7457b7c
+        original url = /s/player/b7457b7c/player_es6.vflset/en_US/base.js
+[youtube] uJMelJSwNys: Downloading android vr player API JSON
+[debug] Sort order given by extractor: quality, res, fps, hdr:12, source, vcodec, channels, acodec, lang, proto
+[debug] Formats sorted by: hasvid, ie_pref, quality, res, fps, hdr:12(7), source, vcodec, channels, acodec, lang, proto, size, br, asr, vext, aext, hasaud, id
+[info] uJMelJSwNys: Downloading 1 format(s): 137+251

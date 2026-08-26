@@ -55,7 +55,7 @@ const muteApi = createMuteHelpers({
 // Config management (SQLite)
 // ============================================================
 const DEFAULT_CONFIG = {
-    botName: "Antigravity Bot",
+    botName: "Antigravity Bot🪐",
     prefix: "!",
     newsEnabled: false,
     dashboardUrl: "https://botantigravity.duckdns.org",
@@ -70,8 +70,8 @@ const DEFAULT_CONFIG = {
     summaryLimit: 20,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
-    stickerPack: "Antigravity Bot",
-    stickerAuthor: "Bot",
+    stickerPack: "Antigravity Bot🪐",
+    stickerAuthor: "Antigravity Bot🪐",
     dashboardEnabled: true,
     dashboardPort: 3000,
     dashboardMaxLogs: 200,

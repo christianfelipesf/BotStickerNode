@@ -76,7 +76,76 @@ function getCookiesPath() {
 function hasCookies() { return getCookiesPath() !== null; }
 const BTCH_BASE_URL = 'https://backend1.tioo.eu.org';
 
-function getFormatSelector(platform, hd) {
+function getExtFromContentType(ct) {
+    if (!ct) return null;
+    ct = String(ct).toLowerCase().split(';')[0].trim();
+    const map = {
+        'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png',
+        'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4',
+        'video/webm': '.webm', 'video/quicktime': '.mov', 'video/x-matroska': '.mkv',
+        'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/ogg': '.ogg'
+    };
+    return map[ct] || null;
+}
+
+function sniffExtFromFile(filePath) {
+    try {
+        const fd = fs.openSync(filePath, 'r');
+        const buf = Buffer.alloc(16);
+        const read = fs.readSync(fd, buf, 0, 16, 0);
+        fs.closeSync(fd);
+        if (read < 4) return null;
+        if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return '.jpg';
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return '.png';
+        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return '.gif';
+        if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return '.webp';
+        const head = buf.toString('utf8', 4, 12);
+        if (head.includes('ftyp')) return '.mp4';
+        if (buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3) return '.mkv';
+    } catch (_) {}
+    return null;
+}
+
+function correctFileExtension(filePath, contentType) {
+    try {
+        if (!fs.existsSync(filePath)) return filePath;
+        const currentExt = path.extname(filePath).toLowerCase();
+        let correctExt = getExtFromContentType(contentType);
+        if (!correctExt) correctExt = sniffExtFromFile(filePath);
+        if (!correctExt) return filePath;
+        if (currentExt === correctExt) return filePath;
+        const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(correctExt);
+        const isVideoExt = ['.mp4', '.webm', '.mkv', '.mov'].includes(currentExt);
+        if (isVideoExt && isImageExt) {
+            const newPath = filePath.replace(/\.[^.]+$/, '') + correctExt;
+            if (filePath !== newPath) {
+                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
+                return newPath;
+            }
+        }
+        if (correctExt && currentExt !== correctExt) {
+            const sniff = sniffExtFromFile(filePath);
+            if (sniff && sniff !== currentExt) {
+                const newPath = filePath.replace(/\.[^.]+$/, '') + sniff;
+                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
+                return newPath;
+            }
+        }
+        return filePath;
+    } catch (_) { return filePath; }
+}
+
+function normalizeLang(lang) {
+    if (!lang) return null;
+    const l = String(lang).trim().toLowerCase();
+    if (!l || l === 'original' || l === 'orig' || l === 'auto') return null;
+    if (l === 'ptbr' || l === 'pt-br' || l === 'pt_br') return 'pt';
+    if (/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(l)) return l.split(/[-_]/)[0];
+    return null;
+}
+
+function getFormatSelector(platform, hd, lang = null) {
+    const normLang = normalizeLang(lang);
     if (platform === 'instagram') {
         return hd ? 'best[height<=720]/best' : 'worst[height<=480]/worst';
     }
@@ -93,12 +162,25 @@ function getFormatSelector(platform, hd) {
             ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
             : 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst/best[width<=640]';
     }
+    // youtube: hd=false=720p, hd=true=1080p (cap), cobre horizontal(height) e vertical Shorts(width)
+    if (normLang && platform === 'youtube') {
+        const langFilter = `[language^=${normLang}]`;
+        return hd
+            ? `bestvideo[ext=mp4][vcodec^=avc1][width<=1080]+bestaudio${langFilter}/bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio${langFilter}/bestvideo[ext=mp4][width<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[width<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best`
+            : `bestvideo[ext=mp4][vcodec^=avc1][width<=720]+bestaudio${langFilter}/bestvideo[ext=mp4][vcodec^=avc1][height<=720]+bestaudio${langFilter}/bestvideo[ext=mp4][width<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[width<=720][ext=mp4]/best[height<=720][ext=mp4]/best`;
+    }
     return hd
-        ? 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-        : 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst';
+        ? 'bestvideo[ext=mp4][vcodec^=avc1][width<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[width<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best'
+        : 'bestvideo[ext=mp4][vcodec^=avc1][width<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec^=avc1][height<=720]+bestaudio[ext=m4a]/best[width<=720][ext=mp4]/best[height<=720][ext=mp4]/best';
 }
 
-function buildYtDlpArgs(url, platform, hd, outTemplate) {
+function buildYtDlpArgs(url, platform, hd, outTemplate, lang = null) {
+    const normLang = normalizeLang(lang);
+    const extractorArgsParts = ['tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com'];
+    if (normLang && platform === 'youtube') {
+        const ytLang = normLang;
+        extractorArgsParts.push(`youtube:lang=${ytLang}`);
+    }
     const args = [
         '--no-warnings',
         '--no-check-certificates',
@@ -108,8 +190,8 @@ function buildYtDlpArgs(url, platform, hd, outTemplate) {
         '--fragment-retries', '5',
         '--concurrent-fragments', '4',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        '--extractor-args', 'tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com',
-        '-f', getFormatSelector(platform, hd),
+        '--extractor-args', extractorArgsParts.join(';'),
+        '-f', getFormatSelector(platform, hd, normLang),
         '--merge-output-format', 'mp4',
         '-o', outTemplate
     ];
@@ -165,8 +247,10 @@ async function callBtchApi(endpoint, url) {
 async function downloadFromUrl(fileUrl, destPath) {
     if (!/^https?:\/\//i.test(fileUrl)) throw new Error('URL inválida');
     const writer = fs.createWriteStream(destPath);
+    let contentType = null;
     try {
         const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
+        contentType = res.headers ? (res.headers['content-type'] || res.headers['Content-Type'] || null) : null;
         let total = 0;
         res.data.on('data', c => { total += c.length; if (total > 100*1024*1024) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
         res.data.pipe(writer);
@@ -180,6 +264,11 @@ async function downloadFromUrl(fileUrl, destPath) {
         try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
         throw e;
     }
+    try {
+        const corrected = correctFileExtension(destPath, contentType);
+        if (corrected !== destPath) return corrected;
+    } catch (_) {}
+    return destPath;
 }
 
 async function downloadBtch(platform, url, id, hd) {
@@ -212,7 +301,7 @@ async function downloadBtch(platform, url, id, hd) {
                 if (!mediaUrl) continue;
                 const item = dl(mediaUrl, i);
                 if (!item) continue;
-                await downloadFromUrl(item.url, item.dest);
+                item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                 results.push(item.dest);
             }
         } else if (platform === 'tiktok') {
@@ -220,39 +309,39 @@ async function downloadBtch(platform, url, id, hd) {
             for (let i = 0; i < arr.length; i++) {
                 const item = dl(arr[i], i);
                 if (!item) continue;
-                await downloadFromUrl(item.url, item.dest);
+                item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                 results.push(item.dest);
             }
         } else if (platform === 'facebook') {
             const fbUrl = data?.HD || data?.Normal_video || data?.Normal;
             if (!fbUrl) throw new Error('sem mídia');
             const item = dl(fbUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'twitter') {
             if (!data?.url) throw new Error('sem mídia');
             const item = dl(data.url, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'youtube') {
             const vidUrl = data?.mp4 || data?.mp3;
             if (!vidUrl) throw new Error('sem mídia');
             const item = dl(vidUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'capcut') {
             if (!data?.originalVideoUrl) throw new Error('sem mídia');
             const item = dl(data.originalVideoUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'pinterest') {
             if (data?.video_url) {
                 const item = dl(data.video_url, 0);
-                await downloadFromUrl(item.url, item.dest);
+                item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                 results.push(item.dest);
             } else if (data?.image) {
                 const item = dl(data.image, 0);
-                await downloadFromUrl(item.url, item.dest);
+                item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                 results.push(item.dest);
             } else if (data?.result?.length) {
                 for (let i = 0; i < Math.min(data.result.length, 5); i++) {
@@ -260,7 +349,7 @@ async function downloadBtch(platform, url, id, hd) {
                     const imgUrl = pin?.video_url || pin?.image_url || pin?.images?.original;
                     if (!imgUrl) continue;
                     const item = dl(imgUrl, i);
-                    await downloadFromUrl(item.url, item.dest);
+                    item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                     results.push(item.dest);
                 }
             } else throw new Error('sem mídia');
@@ -268,25 +357,25 @@ async function downloadBtch(platform, url, id, hd) {
             const dlUrl = data?.result?.downloadUrl || data?.downloadUrl;
             if (!dlUrl) throw new Error('sem mídia');
             const item = dl(dlUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'mediafire') {
             const mfUrl = data?.result?.url || data?.url;
             if (!mfUrl) throw new Error('sem mídia');
             const item = dl(mfUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'douyin') {
             const links = data?.result?.links || data?.links;
             if (!links?.length) throw new Error('sem mídia');
             const item = dl(links[0]?.url, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'snackvideo') {
             const svUrl = data?.result?.videoUrl || data?.videoUrl || data?.url;
             if (!svUrl) throw new Error('sem mídia');
             const item = dl(svUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'xiaohongshu') {
             const downloads = data?.result?.downloads;
@@ -295,13 +384,13 @@ async function downloadBtch(platform, url, id, hd) {
                 for (let i = 0; i < downloads.length; i++) {
                     const item = dl(downloads[i]?.url, i);
                     if (!item) continue;
-                    await downloadFromUrl(item.url, item.dest);
+                    item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                     results.push(item.dest);
                 }
             } else if (images?.length) {
                 for (let i = 0; i < images.length; i++) {
                     const item = dl(images[i], i);
-                    await downloadFromUrl(item.url, item.dest);
+                    item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
                     results.push(item.dest);
                 }
             } else throw new Error('sem mídia');
@@ -309,32 +398,32 @@ async function downloadBtch(platform, url, id, hd) {
             const cfUrl = data?.result?.no_watermark || data?.result?.watermark || data?.no_watermark || data?.watermark;
             if (!cfUrl) throw new Error('sem mídia');
             const item = dl(cfUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'spotify') {
             const formats = data?.result?.formats || data?.formats;
             if (!formats?.length) throw new Error('sem mídia');
             const best = formats.reduce((a, b) => (parseInt(b.quality) || 0) > (parseInt(a.quality) || 0) ? b : a);
             const item = dl(best.url, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'soundcloud') {
             const scUrl = data?.result?.downloadMp3 || data?.result?.audio || data?.downloadMp3 || data?.audio;
             if (!scUrl) throw new Error('sem mídia');
             const item = dl(scUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'threads') {
             const thUrl = data?.result?.video || data?.result?.image || data?.video || data?.image;
             if (!thUrl) throw new Error('sem mídia');
             const item = dl(thUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'kuaishou') {
             const ksUrl = data?.result?.videoUrl || data?.videoUrl;
             if (!ksUrl) throw new Error('sem mídia');
             const item = dl(ksUrl, 0);
-            await downloadFromUrl(item.url, item.dest);
+            item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         }
 
@@ -396,7 +485,7 @@ function getCachedFile(url) {
     return null;
 }
 
-async function downloadMedia(url, hd = false, fmt = 'mp4') {
+async function downloadMedia(url, hd = false, fmt = 'mp4', lang) {
     const cached = getCachedFile(url);
     if (cached) {
         return { cached: true, ...cached };
@@ -407,40 +496,65 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
         throw new Error('URL não suportada');
     }
 
+    // youtube default: pt (dublagem) com fallback para original; lang=null/original => sem filtro
+    let effectiveLang;
+    if (platform !== 'youtube') {
+        effectiveLang = null;
+    } else if (lang === undefined) {
+        effectiveLang = 'pt';
+    } else if (lang === null) {
+        effectiveLang = null;
+    } else {
+        const n = normalizeLang(lang);
+        if (n === null) {
+            effectiveLang = /^(original|orig)$/i.test(String(lang).trim()) ? null : 'pt';
+        } else {
+            effectiveLang = n;
+        }
+    }
+
     const id = crypto.randomBytes(4).toString('hex');
     let allFiles = [];
     const isAudio = fmt === 'mp3';
+    const preferYtDlp = platform === 'youtube' && !!effectiveLang;
 
-    if (!isAudio && BTCH_PLATFORMS.has(platform)) {
+    if (!isAudio && BTCH_PLATFORMS.has(platform) && !preferYtDlp) {
         allFiles = await downloadBtch(platform, url, id, hd);
     }
 
     if (allFiles.length === 0 && YTDLP_PLATFORMS.has(platform)) {
-        console.log(`[WEB-DL] ${platform} via yt-dlp...`);
+        console.log(`[WEB-DL] ${platform} via yt-dlp...${effectiveLang ? ` lang=${effectiveLang}` : ''}`);
 
         if (isAudio) {
             const tmpl = path.join(CACHE_DIR, `webdl_${id}_%(id)s.mp3`);
+            const audioFormat = effectiveLang ? `bestaudio[language^=${effectiveLang}]/bestaudio/best` : 'bestaudio/best';
+            const extractorArgsParts = [];
+            if (effectiveLang) {
+                const ytLang = effectiveLang;
+                extractorArgsParts.push(`youtube:lang=${ytLang}`);
+            }
             const audioArgs = [
                 '--no-warnings', '--no-check-certificates', '--ignore-errors', '--no-abort-on-error',
                 '--retries', '5', '--fragment-retries', '5', '--concurrent-fragments', '4',
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 '-x', '--audio-format', 'mp3', '--audio-quality', '0',
-                '-f', 'bestaudio/best',
+                '-f', audioFormat,
                 '-o', tmpl
             ];
+            if (extractorArgsParts.length) audioArgs.splice(audioArgs.indexOf('-x'), 0, '--extractor-args', extractorArgsParts.join(';'));
             if (hasCookies()) audioArgs.push('--cookies', getCookiesPath());
             audioArgs.push(url);
             await runYtDlp(audioArgs);
             allFiles = findDownloadedFiles(id);
         } else {
             const template = path.join(CACHE_DIR, `webdl_${id}_%(playlist_index|)s%(playlist_index&_|)s%(id)s.%(ext)s`);
-            let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template));
+            let result = await runYtDlp(buildYtDlpArgs(url, platform, hd, template, effectiveLang));
             allFiles = findDownloadedFiles(id);
 
             if (allFiles.length === 0 && platform === 'instagram' && !hasCookies()) {
                 for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
                     console.log(`[WEB-DL] Instagram retry --cookies-from-browser ${browser}...`);
-                    const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                    const retryArgs = buildYtDlpArgs(url, platform, hd, template, effectiveLang);
                     retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--cookies-from-browser', browser);
                     result = await runYtDlp(retryArgs, 60000);
                     allFiles = findDownloadedFiles(id);
@@ -449,11 +563,16 @@ async function downloadMedia(url, hd = false, fmt = 'mp4') {
             }
 
             if (allFiles.length === 0 && platform === 'instagram') {
-                const retryArgs = buildYtDlpArgs(url, platform, hd, template);
+                const retryArgs = buildYtDlpArgs(url, platform, hd, template, effectiveLang);
                 retryArgs.splice(retryArgs.indexOf('--add-header'), 0, '--yes-playlist', '--extractor-args', 'instagram:allow_direct_url=True');
                 result = await runYtDlp(retryArgs);
                 allFiles = findDownloadedFiles(id);
             }
+        }
+        // fallback btch para youtube com lang quando yt-dlp falhou (btch perde dublagem mas evita falha total)
+        if (allFiles.length === 0 && preferYtDlp && BTCH_PLATFORMS.has(platform) && !isAudio) {
+            console.log(`[WEB-DL] ${platform} yt-dlp falhou, tentando btch fallback...`);
+            allFiles = await downloadBtch(platform, url, id, hd);
         }
     }
 
