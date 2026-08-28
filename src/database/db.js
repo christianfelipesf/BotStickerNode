@@ -87,7 +87,8 @@ db.exec(`
         antilink  INTEGER NOT NULL DEFAULT 0,
         activity  TEXT NOT NULL DEFAULT '{}',
         bot_name  TEXT,
-        menu_image TEXT
+        menu_image TEXT,
+        prefix    TEXT
     );
 
     CREATE TABLE IF NOT EXISTS config (
@@ -171,6 +172,7 @@ db.exec(`
 // ============================================================
 try { db.exec("ALTER TABLE group_state ADD COLUMN bot_name TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN menu_image TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN prefix TEXT"); } catch (_) {}
 
 function checkpointWal() {
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}

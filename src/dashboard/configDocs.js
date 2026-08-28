@@ -6,7 +6,7 @@
 
     const DOCS = {
         botName: 'Nome do bot exibido em menus, figurinhas e respostas de IA.',
-        prefix: 'Símbolo que inicia comandos (ex.: !, /, .). Afeta todos os grupos.',
+        prefix: 'Prefixo padrão global (!) — grupos podem ter prefixo próprio via !setprefix (cada ADM altera só seu grupo).',
         newsEnabled: 'Liga/desliga globalmente o serviço de notícias (subreddits).',
         dashboardUrl: 'URL pública do painel, usada em links de divulgação.',
         showLogoInMenu: 'Mostra o logotipo do bot no menu principal do WhatsApp.',

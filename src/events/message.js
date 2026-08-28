@@ -10,7 +10,8 @@ const {
     incrementCommand, formatUptime,
     readConfig, saveMessage,
     getBotName, react, getMessageText,
-    isDashboardEnabled, groupMetadataCached, updateMemberActivity
+    isDashboardEnabled, groupMetadataCached, updateMemberActivity,
+    readStats, getPrefixForJid
 } = require('../database/utils');
 
 // ============================================================
@@ -152,6 +153,7 @@ module.exports = {
             const from = m.key.remoteJid;
             if (!from) return;
             const isGroup = from.endsWith('@g.us');
+            const effectivePrefix = isGroup ? getPrefixForJid(from) : config.prefix;
             if (isGroup) trackRecentMessage(from, m.key);
 
             const sender = m.key.fromMe
@@ -190,7 +192,7 @@ module.exports = {
             }
 
             // === Save message for !resumir ===
-            if (isGroup && botActive && text && !text.startsWith(config.prefix)) {
+            if (isGroup && botActive && text && !text.startsWith(effectivePrefix)) {
                 saveMessage(from, m.pushName || senderName, text);
             }
 
@@ -201,17 +203,20 @@ module.exports = {
 
             // === Prefix query ===
             if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && botActive) {
-                const stats = require('../database/utils').readStats();
-                const now = Date.now();
+                const botName = getBotName(from, config);
+                const prefixText = `*${botName} — Prefixo* ⌨️\n_prefixo atual_\n\n` +
+                    `╭─── *PREFIXO* ───\n` +
+                    `│ ⌨️ *Prefixo:* ${effectivePrefix}\n` +
+                    `│ 💡 *Alterar:* ${effectivePrefix}setprefix <símbolo>\n` +
+                    `│ 🔄 *Resetar:* ${effectivePrefix}setprefix reset\n` +
+                    `╰───────────────`;
                 lastBotResponse = await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
-                return await sock.sendMessage(from, {
-                    text: `🌌 *${getBotName(from, config)}*\n\n⌨️ *Prefixo:* ${config.prefix}\n⏱️ *Uptime:* ${formatUptime((now - startTime) / 1000)}\n⌨️ *Comandos:* ${stats.totalCommands}\n💻 *Plataforma:* ${process.platform === 'win32' ? 'Windows' : 'Linux'}`
-                }, { quoted: m });
+                return await sock.sendMessage(from, { text: prefixText }, { quoted: m });
             }
 
             // === Command detection ===
-            if (!text.startsWith(config.prefix)) return;
-            const args = text.slice(config.prefix.length).trim().split(/ +/);
+            if (!text.startsWith(effectivePrefix)) return;
+            const args = text.slice(effectivePrefix.length).trim().split(/ +/);
             const commandName = args.shift().toLowerCase();
             const fullArgsText = args.join(' ');
 
@@ -235,12 +240,13 @@ module.exports = {
                 }
             }
 
+            const effectiveConfig = { ...config, prefix: effectivePrefix };
             // === Partial activation ===
             if (isPartActive) {
                 if (PARTIAL_BYPASS_COMMANDS.has(cmd.name)) {
                     // bypass
                 } else if (!_isPartialAllowed(cmd)) {
-                    console.log(`🤐 [PARCIAL] comando ${config.prefix}${commandName} bloqueado em ${from}`);
+                    console.log(`🤐 [PARCIAL] comando ${effectivePrefix}${commandName} bloqueado em ${from}`);
                     try {
                         const gm = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
                         safeDashboardLog('action', gm.subject, `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
@@ -271,15 +277,15 @@ module.exports = {
 
             const botActiveInGroup = botActive || isPartActive;
             if (botActiveInGroup || !isGroup) {
-                safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${config.prefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+                safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${effectivePrefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
 
-            console.log(`🤖 [INTERAÇÃO] Comando ${config.prefix}${commandName} por ${senderName} em ${from}`);
+            console.log(`🤖 [INTERAÇÃO] Comando ${effectivePrefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
 
             const context = {
                 from, isGroup, sender, senderName, fullArgsText, args, commandName,
-                config, utils: require('../database/utils'), model: getModel(), startTime,
+                config: effectiveConfig, utils: require('../database/utils'), model: getModel(), startTime,
                 lastBotResponse, GLOBAL_COOLDOWN,
                 mediaHandler: require('./media'),
                 ai: require('../services/ai')
@@ -296,7 +302,7 @@ module.exports = {
                 const msg = a.map(x => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch (_) { return String(x); } })())).join(' ');
                 console.log(`   └─ [${new Date().toLocaleTimeString('pt-BR', { hour12: false })}] [+${String(delta).padStart(5,' ')}ms / total ${now - t0}ms] ${traceTag} #${stepN}${msg ? ` ${msg}` : ''}`);
             };
-            cmdLog('início', `${senderName} → ${config.prefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
+            cmdLog('início', `${senderName} → ${effectivePrefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
             // === Command execution ===
             try {
@@ -310,7 +316,7 @@ module.exports = {
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
-                console.error(`💥 [CMD-ERROR] ${config.prefix}${commandName}:`, cmdErr);
+                console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
                 cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
                 if (botActiveInGroup || !isGroup) {
                     safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });

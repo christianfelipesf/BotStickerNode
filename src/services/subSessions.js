@@ -140,7 +140,12 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
     }
 
     if (commandName === 'prefixo' || commandName === 'prefix') {
-        await sendSilent(sock, targetJid, `⌨️ Prefixo desta sub-sessão: *${prefix}*\nPara mudar: ${prefix}setprefix <símbolo>`, m);
+        const prefixBox = `*Sub-sessão — Prefixo* ⌨️\n_prefixo atual_\n\n` +
+            `╭─── *PREFIXO* ───\n` +
+            `│ ⌨️ *Prefixo:* *${prefix}*\n` +
+            `│ 💡 *Alterar:* ${prefix}setprefix <símbolo>\n` +
+            `╰───────────────`;
+        await sendSilent(sock, targetJid, prefixBox, m);
         await reactSilent(sock, m, '✅');
         return true;
     }
@@ -153,7 +158,11 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
         }
         session.prefix = newPrefix;
         try { persistSessionMeta(session); } catch (_) {}
-        await sendSilent(sock, targetJid, `✅ Prefixo atualizado para: *${newPrefix}*`, m);
+        const okBox = `*Sub-sessão — Prefixo* ⌨️\n_atualizado_\n\n` +
+            `╭─── *CONFIG* ───\n` +
+            `│ ✅ *Novo prefixo:* *${newPrefix}*\n` +
+            `╰───────────────`;
+        await sendSilent(sock, targetJid, okBox, m);
         await reactSilent(sock, m, '✅');
         return true;
     }
@@ -299,7 +308,11 @@ function attachMessagesHandler(session, sock) {
 
                 if (!t.startsWith(session.prefix)) {
                     if (t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix') {
-                        await sendSilent(sock, from, `⌨️ Prefixo desta sub-sessão: *${session.prefix}*`, m);
+                        const prefixBox = `*Sub-sessão — Prefixo* ⌨️\n_prefixo atual_\n\n` +
+                            `╭─── *PREFIXO* ───\n` +
+                            `│ ⌨️ *Prefixo:* *${session.prefix}*\n` +
+                            `╰───────────────`;
+                        await sendSilent(sock, from, prefixBox, m);
                         await reactSilent(sock, m, 'ℹ️');
                     }
                     continue;

@@ -13,20 +13,21 @@ const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require(
 // ============================================================
 // Prepared statements (group_state)
 // ============================================================
-const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image FROM group_state WHERE jid = ?');
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix FROM group_state WHERE jid = ?');
 const _gsUpsert = db.prepare(`
-    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET
         muted = excluded.muted,
         warnings = excluded.warnings,
         antilink = excluded.antilink,
         activity = excluded.activity,
         bot_name = excluded.bot_name,
-        menu_image = excluded.menu_image
+        menu_image = excluded.menu_image,
+        prefix = excluded.prefix
 `);
 const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
-const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image FROM group_state');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix FROM group_state');
 
 // ============================================================
 // Prepared statements (config + stats)
@@ -46,8 +47,8 @@ const { createMuteHelpers } = require('./mute');
 const muteApi = createMuteHelpers({
     getGroupState: (jid) => _gsGet.get(jid),
     upsertGroupState: (jid, muted, warnings, antilink, activity) => {
-        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null };
-        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image);
+        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null, prefix: null };
+        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image, cur.prefix ?? null);
     }
 });
 
@@ -156,7 +157,7 @@ function safeJson(s, fallback) {
 function ensureGroupState(jid) {
     let row = _gsGet.get(jid);
     if (!row) {
-        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null);
+        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null, null);
         row = _gsGet.get(jid);
     }
     return row;
@@ -523,7 +524,7 @@ function cleanupDashboardVisits(maxAgeDays = 30) {
 function getGroupData(jid) {
     try {
         const row = _gsGet.get(jid);
-        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, ...parseGroupState(row) };
+        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, ...parseGroupState(row) };
     } catch (_) {}
     return {};
 }
@@ -534,9 +535,11 @@ function setGroupData(jid, data) {
     const merged = { ...curParsed };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
+    let prefix = cur.prefix ?? null;
     for (const [k, v] of Object.entries(data)) {
         if (k === 'botName') botName = v;
         else if (k === 'menuImage') menuImage = v;
+        else if (k === 'prefix') prefix = v == null ? null : String(v).slice(0, 3) || null;
         else merged[k] = v;
     }
     let mutedObj = merged.muted;
@@ -546,7 +549,34 @@ function setGroupData(jid, data) {
         for (const p of mutedObj) if (p) converted[p] = ts;
         mutedObj = converted;
     } else if (!mutedObj || typeof mutedObj !== 'object') { mutedObj = {}; }
-    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null);
+    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null, prefix);
+}
+
+// ============================================================
+// Prefix helpers (por grupo)
+// ============================================================
+function getPrefixForJid(jid) {
+    if (jid && jid.endsWith('@g.us')) {
+        try {
+            const gd = getGroupData(jid);
+            if (gd.prefix) return String(gd.prefix);
+        } catch (_) {}
+    }
+    try { return String(readConfig().prefix || DEFAULT_CONFIG.prefix); } catch (_) { return DEFAULT_CONFIG.prefix; }
+}
+
+function setGroupPrefix(jid, prefixChar) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    const p = String(prefixChar || '').trim()[0] || null;
+    if (!p) return false;
+    setGroupData(jid, { prefix: p });
+    return true;
+}
+
+function clearGroupPrefix(jid) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    setGroupData(jid, { prefix: null });
+    return true;
 }
 
 async function saveGroupMenuImage(jid, buffer) {
@@ -583,7 +613,7 @@ function _flushActivity() {
                 if (!act[jid][sender]) act[jid][sender] = { name: info.name, count: 0 };
                 act[jid][sender].count += info.count;
             }
-            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image);
+            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null);
         }
     });
     try {
@@ -905,7 +935,7 @@ setTimeout(() => {
         const today = new Date().toLocaleDateString();
         const rows = _gsAll.all();
         const tx = db.transaction((rs) => {
-            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image);
+            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null);
         });
         const lastReset = (() => { try { const r = _statsGet.get('_activityDate'); return r ? r.value : 0; } catch { return 0; } })();
         if (lastReset !== today) {
@@ -925,7 +955,7 @@ setTimeout(() => {
             if (Array.isArray(raw)) {
                 const obj = {};
                 for (const p of raw) if (p) obj[p] = now;
-                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image);
+                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null);
                 converted++;
             } else if (raw && typeof raw === 'object') {
                 let changed = false;
@@ -933,7 +963,7 @@ setTimeout(() => {
                     const ts = Number(raw[k]);
                     if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
                 }
-                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image);
+                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null);
             }
         }
         if (converted > 0 || expired > 0) {
@@ -954,7 +984,7 @@ module.exports = {
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
     getPartialWaitMs, setPartialWaitMs,
-    getGroupData, setGroupData, saveGroupMenuImage,
+    getGroupData, setGroupData, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
     isViewOnce, getMediaMessage, getContextInfo, getMessageText,
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
