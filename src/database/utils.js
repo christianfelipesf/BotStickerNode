@@ -13,10 +13,10 @@ const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require(
 // ============================================================
 // Prepared statements (group_state)
 // ============================================================
-const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix FROM group_state WHERE jid = ?');
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author FROM group_state WHERE jid = ?');
 const _gsUpsert = db.prepare(`
-    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET
         muted = excluded.muted,
         warnings = excluded.warnings,
@@ -24,10 +24,12 @@ const _gsUpsert = db.prepare(`
         activity = excluded.activity,
         bot_name = excluded.bot_name,
         menu_image = excluded.menu_image,
-        prefix = excluded.prefix
+        prefix = excluded.prefix,
+        sticker_pack = excluded.sticker_pack,
+        sticker_author = excluded.sticker_author
 `);
 const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
-const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix FROM group_state');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author FROM group_state');
 
 // ============================================================
 // Prepared statements (config + stats)
@@ -47,8 +49,8 @@ const { createMuteHelpers } = require('./mute');
 const muteApi = createMuteHelpers({
     getGroupState: (jid) => _gsGet.get(jid),
     upsertGroupState: (jid, muted, warnings, antilink, activity) => {
-        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null, prefix: null };
-        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image, cur.prefix ?? null);
+        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null, prefix: null, sticker_pack: null, sticker_author: null };
+        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image, cur.prefix ?? null, cur.sticker_pack ?? null, cur.sticker_author ?? null);
     }
 });
 
@@ -157,7 +159,7 @@ function safeJson(s, fallback) {
 function ensureGroupState(jid) {
     let row = _gsGet.get(jid);
     if (!row) {
-        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null, null);
+        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null, null, null, null);
         row = _gsGet.get(jid);
     }
     return row;
@@ -524,7 +526,7 @@ function cleanupDashboardVisits(maxAgeDays = 30) {
 function getGroupData(jid) {
     try {
         const row = _gsGet.get(jid);
-        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, ...parseGroupState(row) };
+        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, ...parseGroupState(row) };
     } catch (_) {}
     return {};
 }
@@ -536,10 +538,14 @@ function setGroupData(jid, data) {
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
     let prefix = cur.prefix ?? null;
+    let stickerPack = cur.sticker_pack ?? null;
+    let stickerAuthor = cur.sticker_author ?? null;
     for (const [k, v] of Object.entries(data)) {
         if (k === 'botName') botName = v;
         else if (k === 'menuImage') menuImage = v;
         else if (k === 'prefix') prefix = v == null ? null : String(v).slice(0, 3) || null;
+        else if (k === 'stickerPack') stickerPack = v == null ? null : String(v).slice(0, 30) || null;
+        else if (k === 'stickerAuthor') stickerAuthor = v == null ? null : String(v).slice(0, 30) || null;
         else merged[k] = v;
     }
     let mutedObj = merged.muted;
@@ -549,7 +555,7 @@ function setGroupData(jid, data) {
         for (const p of mutedObj) if (p) converted[p] = ts;
         mutedObj = converted;
     } else if (!mutedObj || typeof mutedObj !== 'object') { mutedObj = {}; }
-    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null, prefix);
+    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null, prefix, stickerPack, stickerAuthor);
 }
 
 // ============================================================
@@ -576,6 +582,47 @@ function setGroupPrefix(jid, prefixChar) {
 function clearGroupPrefix(jid) {
     if (!jid || !jid.endsWith('@g.us')) return false;
     setGroupData(jid, { prefix: null });
+    return true;
+}
+
+// ============================================================
+// Sticker pack/author helpers (por grupo)
+// ============================================================
+function getStickerPackForJid(jid) {
+    if (jid && jid.endsWith('@g.us')) {
+        try {
+            const gd = getGroupData(jid);
+            if (gd.stickerPack) return String(gd.stickerPack);
+        } catch (_) {}
+    }
+    try { return String(readConfig().stickerPack || DEFAULT_CONFIG.stickerPack); } catch (_) { return DEFAULT_CONFIG.stickerPack; }
+}
+
+function getStickerAuthorForJid(jid) {
+    if (jid && jid.endsWith('@g.us')) {
+        try {
+            const gd = getGroupData(jid);
+            if (gd.stickerAuthor) return String(gd.stickerAuthor);
+        } catch (_) {}
+    }
+    try { return String(readConfig().stickerAuthor || DEFAULT_CONFIG.stickerAuthor); } catch (_) { return DEFAULT_CONFIG.stickerAuthor; }
+}
+
+function setStickerPackForJid(jid, pack, author) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    const p = pack != null ? String(pack).trim().slice(0, 30) : null;
+    const a = author != null ? String(author).trim().slice(0, 30) : null;
+    if (!p && !a) return false;
+    const data = {};
+    if (p) data.stickerPack = p;
+    if (a) data.stickerAuthor = a;
+    setGroupData(jid, data);
+    return true;
+}
+
+function clearStickerPackForJid(jid) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    setGroupData(jid, { stickerPack: null, stickerAuthor: null });
     return true;
 }
 
@@ -613,7 +660,7 @@ function _flushActivity() {
                 if (!act[jid][sender]) act[jid][sender] = { name: info.name, count: 0 };
                 act[jid][sender].count += info.count;
             }
-            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null);
+            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null, row.sticker_pack ?? null, row.sticker_author ?? null);
         }
     });
     try {
@@ -935,7 +982,7 @@ setTimeout(() => {
         const today = new Date().toLocaleDateString();
         const rows = _gsAll.all();
         const tx = db.transaction((rs) => {
-            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null);
+            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
         });
         const lastReset = (() => { try { const r = _statsGet.get('_activityDate'); return r ? r.value : 0; } catch { return 0; } })();
         if (lastReset !== today) {
@@ -955,7 +1002,7 @@ setTimeout(() => {
             if (Array.isArray(raw)) {
                 const obj = {};
                 for (const p of raw) if (p) obj[p] = now;
-                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null);
+                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
                 converted++;
             } else if (raw && typeof raw === 'object') {
                 let changed = false;
@@ -963,7 +1010,7 @@ setTimeout(() => {
                     const ts = Number(raw[k]);
                     if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
                 }
-                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null);
+                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
             }
         }
         if (converted > 0 || expired > 0) {
@@ -985,6 +1032,7 @@ module.exports = {
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
     getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
+    getStickerPackForJid, getStickerAuthorForJid, setStickerPackForJid, clearStickerPackForJid,
     isViewOnce, getMediaMessage, getContextInfo, getMessageText,
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,

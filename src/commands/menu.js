@@ -43,6 +43,7 @@ module.exports = {
             `╰───────────────\n\n` +
             `╭─── *MÍDIA* ───\n` +
             `│ 🖼️ *${p}s* — cria sticker\n` +
+            `│ 🏷️ *${p}rename* pack/autor — pack e autor do sticker\n` +
             `│ 🔓 *${p}revelar* — revela view once\n` +
             `│ 🔄 *${p}toimg* — sticker → mídia\n` +
             `│ 🎞️ *${p}togif* — vídeo/sticker → gif\n` +

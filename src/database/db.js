@@ -88,7 +88,9 @@ db.exec(`
         activity  TEXT NOT NULL DEFAULT '{}',
         bot_name  TEXT,
         menu_image TEXT,
-        prefix    TEXT
+        prefix    TEXT,
+        sticker_pack TEXT,
+        sticker_author TEXT
     );
 
     CREATE TABLE IF NOT EXISTS config (
@@ -173,6 +175,8 @@ db.exec(`
 try { db.exec("ALTER TABLE group_state ADD COLUMN bot_name TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN menu_image TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN prefix TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_pack TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_author TEXT"); } catch (_) {}
 
 function checkpointWal() {
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
