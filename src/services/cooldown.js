@@ -47,7 +47,25 @@ const CMD_COOLDOWN_DEFAULTS = {
     mute: 3000,
     desmute: 3000,
     antilink: 3000,
-    adv: 3000
+    adv: 3000,
+    beijar: 2000,
+    beijo: 2000,
+    abraco: 2000,
+    cafune: 2000,
+    tapa: 2000,
+    soco: 2000,
+    morder: 2000,
+    lamber: 2000,
+    chute: 2000,
+    matar: 2000,
+    cutucar: 2000,
+    cuddle: 2000,
+    highfive: 2000,
+    comandosinteracao: 1000,
+    interacao: 1000,
+    interacoes: 1000,
+    dono: 2000,
+    owner: 2000
 };
 
 function getKey(commandName, userId) {

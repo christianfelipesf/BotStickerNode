@@ -54,6 +54,9 @@ module.exports = {
             `│ 🗣️ *${p}tts* <texto> — texto → áudio\n` +
             `│ ⚡ *${p}acelerar* • 🐌 *${p}desacelerar* — áudio/vídeo\n` +
             `╰───────────────\n\n` +
+            `╭─── *INTERAÇÃO* ───\n` +
+            `│ 💞 *${p}comandosinteracao* — beijar, abraço etc\n` +
+            `╰───────────────\n\n` +
             `╭─── *OUTROS* ───\n` +
             `│ 📖 *${p}menuadmin* — comandos de admin\n` +
             `│ 👑 *${p}menudono* — comandos do dono\n` +
