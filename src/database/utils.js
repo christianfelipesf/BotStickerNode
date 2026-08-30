@@ -55,6 +55,90 @@ const muteApi = createMuteHelpers({
 });
 
 // ============================================================
+// Blacklist helpers (por grupo)
+// ============================================================
+const _blGetAll = db.prepare('SELECT user_jid, added_by, added_at FROM group_blacklist WHERE group_jid = ? ORDER BY added_at ASC');
+const _blHas = db.prepare('SELECT 1 FROM group_blacklist WHERE group_jid = ? AND user_jid = ? LIMIT 1');
+const _blInsert = db.prepare('INSERT OR IGNORE INTO group_blacklist (group_jid, user_jid, added_by, added_at) VALUES (?, ?, ?, ?)');
+const _blDelete = db.prepare('DELETE FROM group_blacklist WHERE group_jid = ? AND user_jid = ?');
+const _blClear = db.prepare('DELETE FROM group_blacklist WHERE group_jid = ?');
+const _blCount = db.prepare('SELECT COUNT(*) as c FROM group_blacklist WHERE group_jid = ?');
+
+function normalizeBlacklistJid(jid) {
+    if (!jid) return null;
+    try { return normalizeJid(jid); } catch (_) { return null; }
+}
+
+function getBlacklist(groupJid) {
+    if (!groupJid) return [];
+    try { return _blGetAll.all(groupJid); } catch (_) { return []; }
+}
+
+function isBlacklisted(groupJid, userJid) {
+    if (!groupJid || !userJid) return false;
+    try {
+        const normTarget = normalizeBlacklistJid(userJid);
+        if (!normTarget) return false;
+        const targetUser = normTarget.split('@')[0];
+        // Verifica por user part (compatível com lid/pn/s.whatsapp.net)
+        const rows = _blGetAll.all(groupJid);
+        for (const r of rows) {
+            const norm = normalizeBlacklistJid(r.user_jid);
+            if (!norm) continue;
+            if (norm.split('@')[0] === targetUser) return true;
+        }
+        return false;
+    } catch (_) { return false; }
+}
+
+function addToBlacklist(groupJid, userJid, addedBy) {
+    if (!groupJid || !userJid) return false;
+    const norm = normalizeBlacklistJid(userJid);
+    if (!norm) return false;
+    try {
+        const r = _blInsert.run(groupJid, norm, addedBy ? normalizeBlacklistJid(addedBy) || addedBy : null, Date.now());
+        return r.changes > 0;
+    } catch (_) { return false; }
+}
+
+function removeFromBlacklist(groupJid, userJid) {
+    if (!groupJid || !userJid) return false;
+    try {
+        const normTarget = normalizeBlacklistJid(userJid);
+        if (!normTarget) return false;
+        const targetUser = normTarget.split('@')[0];
+        const rows = _blGetAll.all(groupJid);
+        let removed = false;
+        for (const r of rows) {
+            const norm = normalizeBlacklistJid(r.user_jid);
+            if (!norm) continue;
+            if (norm.split('@')[0] === targetUser) {
+                const del = _blDelete.run(groupJid, r.user_jid);
+                if (del.changes > 0) removed = true;
+            }
+        }
+        return removed;
+    } catch (_) { return false; }
+}
+
+function clearBlacklist(groupJid) {
+    if (!groupJid) return false;
+    try { const r = _blClear.run(groupJid); return r.changes; } catch (_) { return 0; }
+}
+
+function countBlacklist(groupJid) {
+    if (!groupJid) return 0;
+    try { const row = _blCount.get(groupJid); return row ? row.c : 0; } catch (_) { return 0; }
+}
+
+function parseNumberToJid(raw) {
+    if (!raw) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) return null;
+    return `${digits}@s.whatsapp.net`;
+}
+
+// ============================================================
 // Config management (SQLite)
 // ============================================================
 const DEFAULT_CONFIG = {
@@ -1043,6 +1127,7 @@ module.exports = {
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,
     canAdminControl,
     ...muteApi,
+    getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,
     getNewsState, setNewsState, clearNewsState, clearAllNewsState,

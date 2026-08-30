@@ -167,6 +167,15 @@ db.exec(`
         timestamp   INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_dashboard_visits_ts ON dashboard_visits(timestamp);
+
+    CREATE TABLE IF NOT EXISTS group_blacklist (
+        group_jid TEXT NOT NULL,
+        user_jid  TEXT NOT NULL,
+        added_by  TEXT,
+        added_at  INTEGER NOT NULL,
+        PRIMARY KEY (group_jid, user_jid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_blacklist_group ON group_blacklist(group_jid);
 `);
 
 // ============================================================

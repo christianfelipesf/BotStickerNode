@@ -31,6 +31,7 @@ module.exports = {
         const text = `*${botName} — Menu Admin* 🛡️\n_comandos de administração_\n\n` +
             `╭─── *MODERAÇÃO* ───\n` +
             `│ 🚫 *${p}ban* (marque/responda) — remove membro\n` +
+            `│ ⛔ *${p}listanegra* [@/nº] — lista negra com auto-ban ao voltar\n` +
             `│ ⚠️ *${p}adv* (marque) — advertência 3/3 = ban\n` +
             `│ ✅ *${p}limparadv* [@user|all] — limpa advertências\n` +
             `│ 🛡️ *${p}antilink* — ativa/desativa filtro de links\n` +
