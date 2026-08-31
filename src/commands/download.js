@@ -9,7 +9,8 @@ const { sendMessageSafe } = require('../database/utils');
 const {
     PLATFORM_CONFIG, YTDLP_PLATFORMS, BTCH_PLATFORMS, BTCH_BASE_URL,
     correctFileExtension, sniffExtFromFile, extractUrl, getPlatform,
-    normalizeLang, parseLangFromText, getFormatSelector, callBtchApi, downloadFromUrl
+    normalizeLang, parseLangFromText, getFormatSelector, callBtchApi, downloadFromUrl,
+    getMaxDownloadBytes, searchYouTube
 } = require('../services/downloaderCore');
 const { runYtDlp: _coreRunYtDlp, buildYtDlpArgs: _coreBuildYtDlpArgs } = require('../services/downloaderCore');
 
@@ -228,17 +229,47 @@ module.exports = {
     name: 'download',
     aliases: ['dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x', 'playv', 'playvideo', 'dhd', 'downloadhd'],
     category: 'mídia',
-    description: 'Baixa mídia de redes sociais (Instagram, TikTok, YouTube, Facebook, Twitter, CapCut, Pinterest, Google Drive, e mais)',
+    description: 'Baixa mídia de redes sociais ou busca YouTube por texto (limite configurável de duração e MB)',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus } = utils;
         const hd = commandName === 'downloadhd' || commandName === 'dhd';
-        const url = extractUrl(fullArgsText);
+        let url = extractUrl(fullArgsText);
+        let searchResult = null;
+        let isSearch = false;
 
         if (!url) {
-            await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
-            return await sock.sendMessage(from, {
-                text: `❌ *Envie um link válido!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link>\n\n✅ *Plataformas suportadas:*\n• Instagram (posts/reels/carrosséis)\n• TikTok (videos)\n• YouTube (videos/música)\n• Facebook (videos/reels)\n• Twitter / X (imagens/videos)\n• CapCut (templates)\n• Pinterest (pins/imagens/videos)\n• Google Drive (arquivos)\n• MediaFire (arquivos)\n• Douyin (videos)\n• Xiaohongshu (posts)\n• Spotify (música)\n• SoundCloud (música)\n• Threads (imagens/videos)\n• Kuaishou (videos)\n• SnackVideo, Cocofun\n• Reddit, Google Imagens`
-            }, { quoted: m });
+            const queryRaw = String(fullArgsText || '').trim();
+            if (queryRaw && queryRaw.length >= 2 && !/^https?:\/\//i.test(queryRaw)) {
+                let currentSearch = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+                try {
+                    // separa eventual token de idioma no fim da busca (ex: "musica original" → lang null)
+                    let searchQuery = queryRaw;
+                    try {
+                        const { parseLangFromQuery } = require('../services/downloaderCore');
+                        const pq = parseLangFromQuery(queryRaw);
+                        if (pq.query !== queryRaw) searchQuery = pq.query;
+                    } catch (_) {}
+                    const found = await searchYouTube(searchQuery);
+                    if (found && found.url) {
+                        url = found.url;
+                        searchResult = found;
+                        isSearch = true;
+                    } else {
+                        await react(sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
+                        return await sock.sendMessage(from, {
+                            text: `❌ *Nenhum resultado para:* "${queryRaw.slice(0,80)}"\n\n💡 Tente reformular a busca ou envie um link direto.\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link ou texto>`
+                        }, { quoted: m });
+                    }
+                } catch (e) {
+                    await react(sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
+                    return await sock.sendMessage(from, { text: `❌ Falha na busca: ${e.message}` }, { quoted: m });
+                }
+            } else {
+                await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                return await sock.sendMessage(from, {
+                    text: `❌ *Envie um link ou texto para buscar!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link ou nome>\nEx: \`!dl never gonna give you up\` ou \`!dl https://youtu.be/...\`\n\n✅ *Plataformas suportadas:*\n• Instagram, TikTok, YouTube (busca por texto), Facebook, Twitter/X, CapCut, Pinterest, Google Drive, MediaFire, Douyin, Xiaohongshu, Spotify, SoundCloud, Threads, Kuaishou, SnackVideo, Cocofun, Reddit`
+                }, { quoted: m });
+            }
         }
 
         const platform = getPlatform(url);
@@ -252,15 +283,21 @@ module.exports = {
         // lang: youtube default pt (dublagem), override via trailing token (original/en/pt/etc.)
         let youtubeLang;
         if (platform === 'youtube') {
-            const parsed = parseLangFromText(fullArgsText, url);
-            if (parsed !== null) {
-                // token explícito encontrado (null = original)
-                youtubeLang = parsed;
-            } else {
-                // sem token: default pt; verifica se não foi passado "original" solto
-                const afterUrl = fullArgsText.slice(fullArgsText.indexOf(url) + url.length).trim().toLowerCase();
-                if (afterUrl === 'original' || afterUrl === 'orig') youtubeLang = null;
+            if (isSearch) {
+                // para busca, tenta parsear lang do fim da query original
+                const qLangParsed = (() => {
+                    try { const { parseLangFromQuery } = require('../services/downloaderCore'); return parseLangFromQuery(String(fullArgsText||'').trim()); } catch (_) { return null; }
+                })();
+                if (qLangParsed && qLangParsed.lang !== undefined) youtubeLang = qLangParsed.lang;
                 else youtubeLang = 'pt';
+            } else {
+                const parsed = parseLangFromText(fullArgsText, url);
+                if (parsed !== null) youtubeLang = parsed;
+                else {
+                    const afterUrl = fullArgsText.slice(fullArgsText.indexOf(url) + url.length).trim().toLowerCase();
+                    if (afterUrl === 'original' || afterUrl === 'orig') youtubeLang = null;
+                    else youtubeLang = 'pt';
+                }
             }
         } else {
             youtubeLang = null;
@@ -271,10 +308,21 @@ module.exports = {
 
         if (platform === 'youtube') {
             const maxSeconds = getMaxDurationSeconds();
-            const info = await fetchYouTubeDuration(url, hasCookies() ? cookiesPath : null);
-            if (Number.isFinite(info.seconds) && info.seconds > maxSeconds) {
+            let ytSeconds = searchResult?.seconds ?? null;
+            let ytTitle = searchResult?.title ?? null;
+            if (!Number.isFinite(ytSeconds) || ytSeconds <= 0) {
+                const info = await fetchYouTubeDuration(url, hasCookies() ? cookiesPath : null);
+                ytSeconds = info.seconds;
+                ytTitle = info.title || ytTitle;
+                if (Number.isFinite(ytSeconds) && ytSeconds > maxSeconds) {
+                    await sock.sendMessage(from, {
+                        text: buildDurationErrorMessage({ url, seconds: ytSeconds, title: ytTitle, platform, maxSeconds })
+                    }, { quoted: m });
+                    return await react(sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
+                }
+            } else if (ytSeconds > maxSeconds) {
                 await sock.sendMessage(from, {
-                    text: buildDurationErrorMessage({ url, seconds: info.seconds, title: info.title, platform, maxSeconds })
+                    text: buildDurationErrorMessage({ url, seconds: ytSeconds, title: ytTitle, platform, maxSeconds })
                 }, { quoted: m });
                 return await react(sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
             }
@@ -363,10 +411,12 @@ module.exports = {
             }
 
             let totalSize = 0;
+            const maxBytes = getMaxDownloadBytes();
+            const maxMB = Math.round(maxBytes / 1024 / 1024);
             try { totalSize = allFiles.reduce((acc, f) => { try { return acc + fs.statSync(f).size; } catch (_) { return acc; } }, 0); } catch (_) { totalSize = 0; }
-            if (totalSize > 100 * 1024 * 1024) {
+            if (totalSize > maxBytes) {
                 for (const f of allFiles) { try { fs.unlinkSync(f); } catch (_) {} }
-                throw new Error(`Limite de 100MB excedido (${(totalSize / 1048576).toFixed(2)}MB).`);
+                throw new Error(`Limite de ${maxMB}MB excedido (${(totalSize / 1048576).toFixed(2)}MB). Use \`!set maxDownloadSizeMB <valor>\` ou tente qualidade menor.`);
             }
 
             currentBotResponse = await react(sock, m, '📤', currentBotResponse, GLOBAL_COOLDOWN);
@@ -374,7 +424,9 @@ module.exports = {
             for (let i = 0; i < allFiles.length; i++) {
                 const filePath = allFiles[i];
                 const ext = path.extname(filePath).slice(1).toUpperCase();
-                const caption = allFiles.length > 1 ? `📎 *Mídia* (${i + 1}/${allFiles.length}) [${ext}]` : 'Mídia';
+                let caption;
+                if (isSearch && searchResult?.title) caption = `🎬 *${searchResult.title.slice(0,60)}* [${ext}]`;
+                else caption = allFiles.length > 1 ? `📎 *Mídia* (${i + 1}/${allFiles.length}) [${ext}]` : 'Mídia';
                 await sendMedia(sock, from, m, filePath, caption);
                 try { fs.unlinkSync(filePath); } catch (_) {}
                 if (allFiles.length > 1) await new Promise(r => setTimeout(r, 800));

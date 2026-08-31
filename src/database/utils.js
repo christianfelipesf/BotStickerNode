@@ -181,6 +181,7 @@ const DEFAULT_CONFIG = {
     newsRetryBaseDelayMs: 15000,
     dashboardTrimIntervalMs: 60 * 1000,
     maxMediaDurationSeconds: 900,
+    maxDownloadSizeMB: 100,
     subSessionsGroups: true,
     dashboardMuted: false,
     dashboardShowQR: false,

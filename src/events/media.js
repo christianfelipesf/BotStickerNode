@@ -17,7 +17,8 @@ const {
     getMediaMessage, react, reactStatus, isViewOnce,
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif, mediaToGifVideo,
-    isDashboardEnabled, groupMetadataCached, getGroupParticipantName
+    isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
+    getStickerPackForJid, getStickerAuthorForJid
 } = require('../database/utils');
 
 async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts = {}) {
@@ -162,14 +163,25 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
                 await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, { quoted: m });
             } else {
-                const requesterName = m.pushName || 'Usuário';
-                const botName = getBotName(from, config);
                 const detectedMime = mediaMessage.videoMessage
                     ? (mediaMessage.videoMessage.mimetype || 'video/mp4')
                     : (mediaMessage.imageMessage?.mimetype || 'image/jpeg');
+                // pack/author: 1) explícito via !s pack/autor, 2) por grupo, 3) fallback requester/bot
+                let pack = explicitOpts.pack || null;
+                let author = explicitOpts.author || null;
+                if (!pack) {
+                    try { pack = getStickerPackForJid(from) || null; } catch (_) {}
+                }
+                if (!author) {
+                    try { author = getStickerAuthorForJid(from) || null; } catch (_) {}
+                }
+                if (!pack) pack = m.pushName || 'Usuário';
+                if (!author) author = getBotName(from, config);
+                const requesterName = pack;
+                const botName = author;
                 try {
-                    console.log(`[STICKER-LOG] handleMediaCommand sticker input mime=${detectedMime} bytes=${buffer.length} from=${from} by=${requesterName}`);
-                    const stickerBuffer = await mediaToSticker(buffer, detectedMime, requesterName, `${botName}`);
+                    console.log(`[STICKER-LOG] handleMediaCommand sticker input mime=${detectedMime} bytes=${buffer.length} from=${from} by=${requesterName} pack="${pack}" author="${author}" explicit=${JSON.stringify(explicitOpts)}`); 
+                    const stickerBuffer = await mediaToSticker(buffer, detectedMime, pack, author);
                     console.log(`[STICKER-LOG] handleMediaCommand sticker gerado ${stickerBuffer.length} bytes header=${stickerBuffer.slice(0,4).toString()} WEBP=${stickerBuffer.slice(8,12).toString()}`);
                     if (!stickerBuffer || stickerBuffer.length < 64) throw new Error('Sticker gerado vazio');
                     if (stickerBuffer.length > 1024 * 1024) throw new Error('Sticker muito grande (>1MB)');

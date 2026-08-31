@@ -198,21 +198,72 @@ async function callBtchApi(endpoint, url) {
     return res.data;
 }
 
+function getMaxDownloadBytes() {
+    try {
+        const { readConfig } = require('../database/utils');
+        const cfg = readConfig();
+        const mb = Number(cfg.maxDownloadSizeMB);
+        if (Number.isFinite(mb) && mb > 0) return Math.max(1, Math.min(500, Math.floor(mb))) * 1024 * 1024;
+    } catch (_) {}
+    return 100 * 1024 * 1024;
+}
+
 async function downloadFromUrl(fileUrl, destPath) {
+    const maxBytes = getMaxDownloadBytes();
     if (!/^https?:\/\//i.test(fileUrl)) throw new Error('URL inválida');
     const writer = fs.createWriteStream(destPath);
     let contentType = null;
     try {
-        const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
+        const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: maxBytes, maxBodyLength: maxBytes });
         contentType = res.headers ? (res.headers['content-type'] || res.headers['Content-Type'] || null) : null;
         let total = 0;
-        res.data.on('data', c => { total += c.length; if (total > 100*1024*1024) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
+        res.data.on('data', c => { total += c.length; if (total > maxBytes) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
         res.data.pipe(writer);
         await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); res.data.on('error', reject); });
-        try { if (fs.statSync(destPath).size > 100*1024*1024) throw new Error('Arquivo >100MB'); } catch (e) { if (e.message.includes('100MB')) throw e; }
+        try { if (fs.statSync(destPath).size > maxBytes) throw new Error(`Arquivo >${Math.round(maxBytes/1024/1024)}MB`); } catch (e) { if (e.message.includes('MB')) throw e; }
     } catch (e) { try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {} throw e; }
     try { const corrected = correctFileExtension(destPath, contentType); if (corrected !== destPath) return corrected; } catch (_) {}
     return destPath;
+}
+
+function parseDurationToSeconds(d) {
+    if (typeof d === 'number' && Number.isFinite(d)) return d;
+    if (typeof d === 'string') {
+        const parts = d.split(':').map(Number);
+        if (parts.some(isNaN)) return 0;
+        if (parts.length === 3) return parts[0]*3600+parts[1]*60+parts[2];
+        if (parts.length === 2) return parts[0]*60+parts[1];
+        if (parts.length === 1) return parts[0];
+    }
+    return 0;
+}
+
+async function searchYouTube(query) {
+    const q = String(query || '').trim();
+    if (!q) return null;
+    // tenta yt-search primeiro
+    try {
+        const yts = require('yt-search');
+        const r = await yts(q);
+        const v = r?.videos?.[0];
+        if (v && v.url) return { id: v.videoId || v.id, url: v.url, title: v.title || 'sem título', seconds: parseDurationToSeconds(v.seconds ?? v.duration), source: 'yt-search' };
+    } catch (_) {}
+    // fallback yt-dlp
+    try {
+        const proc = spawn('yt-dlp', ['--no-warnings', '--flat-playlist', '--print', '%(id)s|%(title)s|%(duration)s', `ytsearch1:${q}`], { windowsHide: true });
+        let out = '';
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, 20000);
+        proc.stdout.on('data', d => { out += d.toString(); });
+        await new Promise((resolve) => { proc.on('error', () => { clearTimeout(timer); resolve(); }); proc.on('close', () => { clearTimeout(timer); resolve(); }); });
+        const line = out.trim().split(/\r?\n/).filter(Boolean).pop();
+        if (!line) return null;
+        const f = line.split('|');
+        const id = f[0];
+        if (!id || id === 'NA') return null;
+        const title = f.length > 2 ? f.slice(1, -1).join('|') || 'sem título' : 'sem título';
+        const seconds = Number(f[f.length - 1]) || 0;
+        return { id, url: `https://www.youtube.com/watch?v=${id}`, title, seconds, source: 'yt-dlp' };
+    } catch (_) { return null; }
 }
 
 function getFileMime(filePath) {
@@ -242,5 +293,5 @@ module.exports = {
     getExtFromContentType, sniffExtFromFile, correctFileExtension,
     extractUrl, getPlatform, normalizeLang, parseLangFromText, parseLangFromQuery,
     getFormatSelector, buildYtDlpArgs, runYtDlp, callBtchApi, downloadFromUrl,
-    getFileMime, findDownloadedFiles
+    getFileMime, findDownloadedFiles, getMaxDownloadBytes, searchYouTube, parseDurationToSeconds
 };
