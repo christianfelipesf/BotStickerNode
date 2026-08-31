@@ -186,14 +186,27 @@ const DEFAULT_CONFIG = {
     instagramCookies: ''
 };
 
+let _configCache = null;
+let _configCacheTs = 0;
+const _CONFIG_TTL_MS = 1500;
+
 function readConfig() {
+    const now = Date.now();
+    if (_configCache && (now - _configCacheTs) < _CONFIG_TTL_MS) {
+        return { ..._configCache };
+    }
     const rows = _cfgGetAll.all();
     const dbConfig = {};
     for (const r of rows) {
         try { dbConfig[r.key] = JSON.parse(r.value); } catch { dbConfig[r.key] = r.value; }
     }
-    return { ...DEFAULT_CONFIG, ...dbConfig, openrouterApiKey: process.env.OPENROUTER_API_KEY || '' };
+    const merged = { ...DEFAULT_CONFIG, ...dbConfig, openrouterApiKey: process.env.OPENROUTER_API_KEY || '' };
+    _configCache = merged;
+    _configCacheTs = now;
+    return { ...merged };
 }
+
+function _invalidateConfigCache() { _configCache = null; _configCacheTs = 0; }
 
 function writeConfig(newConfig) {
     const tx = db.transaction((cfg) => {
@@ -203,6 +216,7 @@ function writeConfig(newConfig) {
         }
     });
     tx(newConfig);
+    _invalidateConfigCache();
     _cachedSummaryLimit = null;
 }
 
@@ -602,6 +616,54 @@ function cleanupDashboardVisits(maxAgeDays = 30) {
         if (r.changes > 0) try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
         return r.changes;
     } catch (_) { return 0; }
+}
+
+// ============================================================
+// Feedback (bug / sugestao)
+// ============================================================
+const FEEDBACK_MAX = 10;
+const FEEDBACK_LIMIT = 999;
+const _fbInsert = db.prepare('INSERT INTO feedback (kind, text, sender_jid, sender_name, group_jid, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+const _fbSelect = db.prepare('SELECT id, kind, text, sender_jid, sender_name, group_jid, created_at FROM feedback WHERE kind = ? ORDER BY created_at DESC, id DESC LIMIT ?');
+const _fbCount = db.prepare('SELECT COUNT(*) as c FROM feedback WHERE kind = ?');
+const _fbTrim = db.prepare('DELETE FROM feedback WHERE kind = ? AND id NOT IN (SELECT id FROM feedback WHERE kind = ? ORDER BY created_at DESC, id DESC LIMIT ?)');
+
+function addFeedback(kind, text, senderJid, senderName, groupJid) {
+    const k = String(kind || '').toLowerCase();
+    if (k !== 'bug' && k !== 'sugestao') return { ok: false, error: 'Tipo inválido' };
+    const t = String(text || '').trim();
+    if (!t) return { ok: false, error: 'Mensagem vazia' };
+    if (t.length > FEEDBACK_LIMIT) return { ok: false, error: `Limite de ${FEEDBACK_LIMIT} caracteres excedido (${t.length}/${FEEDBACK_LIMIT})` };
+    try {
+        const now = Date.now();
+        _fbInsert.run(k, t, senderJid || null, senderName || null, groupJid || null, now);
+        // mantém apenas os 10 últimos
+        try { _fbTrim.run(k, k, FEEDBACK_MAX); } catch (_) {}
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+}
+
+function listFeedback(kind, limit = FEEDBACK_MAX) {
+    const k = String(kind || '').toLowerCase();
+    if (k !== 'bug' && k !== 'sugestao') return [];
+    try {
+        const lim = Math.max(1, Math.min(FEEDBACK_MAX, Number(limit) || FEEDBACK_MAX));
+        return _fbSelect.all(k, lim);
+    } catch (_) { return []; }
+}
+
+function countFeedback(kind) {
+    const k = String(kind || '').toLowerCase();
+    if (k !== 'bug' && k !== 'sugestao') return 0;
+    try { const row = _fbCount.get(k); return row ? row.c : 0; } catch (_) { return 0; }
+}
+
+function clearFeedback(kind) {
+    const k = String(kind || '').toLowerCase();
+    if (k !== 'bug' && k !== 'sugestao') return 0;
+    try { const r = db.prepare('DELETE FROM feedback WHERE kind = ?').run(k); return r.changes; } catch (_) { return 0; }
 }
 
 // ============================================================
@@ -1136,6 +1198,7 @@ module.exports = {
     clearDashboardLogs, deleteDashboardLogsByJid, getDashboardLogByMessageId,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     insertDashboardVisit, getActiveUsers, getVisitHistory, cleanupDashboardVisits,
+    addFeedback, listFeedback, countFeedback, clearFeedback, FEEDBACK_MAX, FEEDBACK_LIMIT,
     flushNow, checkpointWal,
     DEFAULT_CONFIG,
     getDefaultConfig: () => ({ ...DEFAULT_CONFIG })

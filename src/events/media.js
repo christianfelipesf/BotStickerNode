@@ -84,6 +84,13 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
     }
 }
 
+function buildConvertedCaption(senderJid, botName) {
+    const num = String(senderJid || '').split('@')[0].split(':')[0] || 'usuário';
+    const bot = botName || 'Bot';
+    // Copia exata da aparência do menu (mesmos ╭/│/╰ e ─, sem dependência de fonte monoespaçada)
+    return `╭─── *📱 MÍDIA CONVERTIDA* ───\n│ 👤 *Solicitado por:* @${num}\n│ 🤖 *Por:* ${bot}\n│ ⚡ *Status:* Concluído\n╰───────────────`;
+}
+
 async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
     let speed = 1.0;
     let explicitOpts = {};
@@ -134,20 +141,26 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         if (action === 'reveal') {
             return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts);
         }
+
+        // caption padrão para mídias convertidas (estilo menu)
+        const senderJid = m.key.participant || m.key.remoteJid || from;
+        const botNameForCaption = getBotName(from, config);
+        const captionConvertido = buildConvertedCaption(senderJid, botNameForCaption);
+
         if (action === 'toimg') {
 
             if (isSticker) {
                 console.log(`[STICKER-LOG] handleMediaCommand toimg isAnimated=${!!mediaMessage.stickerMessage.isAnimated} quotedBuffer=${buffer.length} bytes`);
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
                 console.log(`[STICKER-LOG] handleMediaCommand toimg converted mime=${converted.mime} bytes=${converted.buffer.length}`);
-                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: `✅ Convertido!` }, { quoted: m });
+                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, { quoted: m });
             } else {
-                await sock.sendMessage(from, { [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: '✅ Aqui está sua mídia!' }, { quoted: m });
+                await sock.sendMessage(from, { [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: captionConvertido }, { quoted: m });
             }
         } else if (action === 'sticker') {
             if (isSticker) {
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
-                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: '✅ Convertido!' }, { quoted: m });
+                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, { quoted: m });
             } else {
                 const requesterName = m.pushName || 'Usuário';
                 const botName = getBotName(from, config);
@@ -179,14 +192,14 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             }
             const mimeType = isSticker ? 'sticker/webp' : (mediaMessage.videoMessage?.mimetype || 'video/mp4');
             const gifVideo = await mediaToGifVideo(buffer, mimeType);
-            await sock.sendMessage(from, { video: gifVideo, gifPlayback: true, mimetype: 'video/mp4', caption: '✅ GIF gerado!' }, { quoted: m });
+            await sock.sendMessage(from, { video: gifVideo, gifPlayback: true, mimetype: 'video/mp4', caption: captionConvertido }, { quoted: m });
         } else if (action === 'speed') {
             if (!mediaMessage.videoMessage && !mediaMessage.audioMessage) {
                 await sock.sendMessage(from, { text: '❌ Marque um vídeo ou áudio.' }, { quoted: m });
                 return lastBotResponse;
             }
             const processed = await changeSpeed(buffer, mediaMessage.videoMessage ? 'video/mp4' : 'audio/mp4', speed);
-            if (mediaMessage.videoMessage) await sock.sendMessage(from, { video: processed, caption: `✅ Vídeo ${speed}x` }, { quoted: m });
+            if (mediaMessage.videoMessage) await sock.sendMessage(from, { video: processed, caption: captionConvertido }, { quoted: m });
             else await sock.sendMessage(from, { audio: processed, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
         }
 

@@ -492,7 +492,10 @@ async function convertGifToMp4(buffer) {
     try {
         fs.writeFileSync(inPath, buffer);
         await new Promise((resolve, reject) => {
-            const ff = spawn('ffmpeg', [
+            let killed = false;
+            let ff = null;
+            const to = setTimeout(() => { killed = true; try { ff && ff.kill('SIGKILL'); } catch (_) {} reject(new Error('ffmpeg gif->mp4 timeout 30s')); }, 30000);
+            ff = spawn('ffmpeg', [
                 '-y',
                 '-i', inPath,
                 '-vf', "scale='min(720,iw)':-2:flags=lanczos",
@@ -505,8 +508,8 @@ async function convertGifToMp4(buffer) {
                 '-an',
                 outPath
             ], { stdio: ['ignore', 'ignore', 'ignore'] });
-            ff.on('error', reject);
-            ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)));
+            ff.on('error', (err) => { clearTimeout(to); reject(err); });
+            ff.on('close', (code) => { clearTimeout(to); if (killed) return; code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)); });
         });
         const mp4 = fs.readFileSync(outPath);
         return mp4.length > 0 ? mp4 : null;

@@ -40,6 +40,8 @@ module.exports = {
             `│ 🌐 *${p}traduzir* <texto> — traduz\n` +
             `│ 📖 *${p}tutorial* — guia de uso\n` +
             `│ 📝 *${p}resumir* — resume conversa\n` +
+            `│ 🐛 *${p}bug* <msg> — reportar bug\n` +
+            `│ 💡 *${p}sugestao* <msg> — enviar sugestão\n` +
             `╰───────────────\n\n` +
             `╭─── *MÍDIA* ───\n` +
             `│ 🖼️ *${p}s* — cria sticker\n` +

@@ -32,14 +32,19 @@ async function addMetadata(buffer, pack, author) {
 const STICKER_IMG_MAX = 10 * 1024 * 1024;
 const STICKER_VIDEO_MAX = 50 * 1024 * 1024;
 
+function _killFfmpeg(cmd) {
+    try { if (cmd && typeof cmd.kill === 'function') cmd.kill('SIGKILL'); } catch (_) {}
+}
+
 async function shrinkImageBuffer(buffer, tempId) {
     const inputPath = path.join(tempDir, `stk_shrink_in_${tempId}.bin`);
     const outputPath = path.join(tempDir, `stk_shrink_out_${tempId}.jpg`);
     fs.writeFileSync(inputPath, buffer);
     try {
         await new Promise((resolve, reject) => {
-            const to = setTimeout(() => reject(new Error('ffmpeg timeout 60s')), 60000);
-            ffmpeg(inputPath)
+            let cmd = null;
+            const to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg timeout 60s')); }, 60000);
+            cmd = ffmpeg(inputPath)
                 .outputOptions(['-vf', "scale='min(1600,iw)':-2", '-q:v', '5'])
                 .toFormat('mjpeg')
                 .on('end', () => { clearTimeout(to); resolve(); })
@@ -87,8 +92,19 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
         if (!isVideo) {
             const image = await Jimp.read(buffer);
             const origW = image.bitmap.width, origH = image.bitmap.height;
-            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)}`);
-            if (origW > 3000 || origH > 3000) throw new Error('Imagem muito grande');
+            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)} mime=${mime} input=${buffer.length}B`);
+            if (origW > 3000 || origH > 3000) {
+                console.error(`❌ [STICKER-IMG] Rejeitado: dimensões ${origW}x${origH} excedem limite 3000`);
+                throw new Error('Imagem muito grande');
+            }
+            // Detecta alfa real (varre bitmap) — se não tem transparência, pode usar cwebp mais simples
+            let hasAlpha = false;
+            try {
+                const data = image.bitmap.data;
+                for (let i = 3; i < data.length; i += 4) { if (data[i] < 255) { hasAlpha = true; break; } }
+            } catch (_) {}
+            console.log(`[STICKER-LOG] Jimp hasAlpha=${hasAlpha} origPixels=${origW*origH}`);
+
             // Preserva aspect ratio: só escala se lado maior > 512, sem esticar, sem upscale
             const MAX_SIDE = 512;
             if (origW > MAX_SIDE || origH > MAX_SIDE) {
@@ -97,46 +113,128 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             } else {
                 console.log(`[STICKER-LOG] Jimp mantém original ${image.bitmap.width}x${image.bitmap.height} (abaixo de MAX, sem redimensionar)`);
             }
+            // Garantir que imagem tenha alfa correto (RGBA) — evita granulado em bordas quando hasAlpha
+            if (hasAlpha) image.rgba(true);
             const pngBuffer = await image.getBuffer('image/png');
-            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes -> cwebp -q 80`);
+            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes (${(pngBuffer.length/1024).toFixed(1)}KB) hasAlpha=${hasAlpha} -> cwebp q85`);
             fs.writeFileSync(inputPath, pngBuffer);
-            await webp.cwebp(inputPath, outputPath, "-q 80");
+
+            // Inteligente: escolhe sequência baseada no tamanho/complexidade
+            // - PNG pequeno (<150KB) e sem alfa → tenta q85 direto (qualidade máxima)
+            // - PNG grande ou com alfa → começa com q85 mas se estourar 950KB cai progressivamente
+            // - Se Jimp gerou PNG >800KB (imagem detalhada), já pula primeiro alpha lossless pesado
+            let imgAttempts;
+            if (!hasAlpha && pngBuffer.length < 300 * 1024) {
+                imgAttempts = [
+                    "-q 85 -m 4 -mt -sharp_yuv",
+                    "-q 80 -m 4 -mt",
+                    "-q 75 -m 4 -mt",
+                    "-q 70"
+                ];
+                console.log(`[STICKER-LOG] Estratégia: sem alfa e PNG leve → q85 simples`);
+            } else if (pngBuffer.length > 600 * 1024) {
+                imgAttempts = [
+                    "-q 80 -alpha_q 90 -m 4 -mt",
+                    "-q 75 -m 4 -mt",
+                    "-q 70",
+                    "-q 60"
+                ];
+                console.log(`[STICKER-LOG] Estratégia: PNG pesado ${pngBuffer.length}B → começa em q80 para evitar estouro`);
+            } else {
+                imgAttempts = [
+                    "-q 85 -alpha_q 100 -m 4 -mt -sharp_yuv -alpha_filter best",
+                    "-q 85 -alpha_q 100 -m 4 -mt",
+                    "-q 80 -alpha_q 90 -m 4 -mt",
+                    "-q 75 -m 4 -mt",
+                    "-q 70"
+                ];
+                console.log(`[STICKER-LOG] Estratégia: padrão q85 alfa100`);
+            }
+
+            let imgOk = false;
+            let lastImgErr = null;
+            for (let i = 0; i < imgAttempts.length; i++) {
+                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (_) {}
+                console.log(`[STICKER-LOG] tentativa imagem ${i+1}/${imgAttempts.length}: ${imgAttempts[i]} | png=${pngBuffer.length}B orig=${origW}x${origH} hasAlpha=${hasAlpha}`);
+                try {
+                    await webp.cwebp(inputPath, outputPath, imgAttempts[i]);
+                    const s = fs.statSync(outputPath);
+                    console.log(`[STICKER-LOG] tentativa ${i+1} gerou ${s.size}B header=${fs.readFileSync(outputPath).slice(0,4).toString()} hex=${fs.readFileSync(outputPath).slice(0,16).toString('hex').slice(0,32)}`);
+                    if (s.size < 64) throw new Error('WebP vazio (<64B)');
+                    if (s.size > 950 * 1024 && i < imgAttempts.length - 1) {
+                        console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} ficou ${s.size}B >950KB (limite 1MB) — causa: PNG ${pngBuffer.length}B + q alto — reduzindo qualidade`);
+                        continue;
+                    }
+                    console.log(`[STICKER-LOG] tentativa imagem ${i+1} OK ${s.size}B (${(s.size/1024).toFixed(1)}KB)`);
+                    imgOk = true;
+                    break;
+                } catch (e) {
+                    lastImgErr = e;
+                    console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} FALHOU | cmd="${imgAttempts[i]}" | motivo="${e.message}" | stack="${e.stack?.split('\n')[1]?.trim() || ''}" | png=${pngBuffer.length} orig=${origW}x${origH}`);
+                }
+            }
+            if (!imgOk) {
+                console.error(`❌ [STICKER-IMG] Todas ${imgAttempts.length} tentativas falharam | tempId=${tempId} | orig=${origW}x${origH} hasAlpha=${hasAlpha} png=${pngBuffer.length} mime=${mime} | último erro="${lastImgErr?.message}"`);
+                throw lastImgErr || new Error('Falha cwebp após todas tentativas');
+            }
             try { const s = fs.statSync(outputPath); console.log(`[STICKER-LOG] WebP gerado ${s.size} bytes (${(s.size/1024).toFixed(1)}KB) header=${fs.readFileSync(outputPath).slice(0,4).toString()} `); } catch(_){}
         } else {
             fs.writeFileSync(inputPath, buffer);
             let stats; try { stats = fs.statSync(inputPath); } catch (_) { throw new Error('Vídeo vazio'); }
             if (!stats.size) throw new Error('Vídeo vazio');
 
-            await new Promise((resolve, reject) => {
-                let to = setTimeout(() => reject(new Error('ffmpeg timeout 30s')), 30000);
-                ffmpeg(inputPath)
-                    .inputOptions(['-t 6'])
-                    .outputOptions([
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=12,setsar=1',
-                        '-c:v', 'libwebp',
-                        '-lossless', '0',
-                        '-q:v', '60',
-                        '-preset', 'default',
-                        '-loop', '0',
-                        '-an',
-                        '-fps_mode', 'vfr'
-                    ])
-                    .toFormat('webp')
-                    .on('end', () => { clearTimeout(to); resolve(); })
-                    .on('error', (e) => { clearTimeout(to); reject(e); })
-                    .save(outputPath);
-            });
-
-            let outStat; try { outStat = fs.statSync(outputPath); } catch (_) { throw new Error('Vídeo gerou WebP vazio/inválido'); }
-            if (outStat.size < 512) {
-                try { fs.unlinkSync(outputPath); } catch (_) {}
-                throw new Error('Vídeo gerou WebP vazio/inválido');
+            // Tentativas proativas: reduz tempo/fps/qualidade até caber em <1MB e ffmpeg não falhar
+            const videoAttempts = [
+                { t: 6, fps: 10, q: 78, preset: 'default' },
+                { t: 4, fps: 10, q: 72, preset: 'default' },
+                { t: 3, fps: 8,  q: 65, preset: 'default' },
+                { t: 2, fps: 8,  q: 55, preset: 'default' }
+            ];
+            let attemptOk = false;
+            let lastVidErr = null;
+            for (let i = 0; i < videoAttempts.length; i++) {
+                const a = videoAttempts[i];
+                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (_) {}
+                console.log(`[STICKER-LOG] tentativa video ${i+1}/${videoAttempts.length}: t=${a.t}s fps=${a.fps} q=${a.q}`);
+                try {
+                    await new Promise((resolve, reject) => {
+                        let cmd = null;
+                        let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg timeout 30s')); }, 30000);
+                        cmd = ffmpeg(inputPath)
+                            .inputOptions([`-t ${a.t}`])
+                            .outputOptions([
+                                '-vf', `scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=${a.fps},setsar=1`,
+                                '-c:v', 'libwebp',
+                                '-lossless', '0',
+                                '-q:v', String(a.q),
+                                '-preset', a.preset,
+                                '-loop', '0',
+                                '-an',
+                                '-fps_mode', 'vfr'
+                            ])
+                            .toFormat('webp')
+                            .on('end', () => { clearTimeout(to); resolve(); })
+                            .on('error', (e) => { clearTimeout(to); reject(e); })
+                            .save(outputPath);
+                    });
+                    let outStat; try { outStat = fs.statSync(outputPath); } catch (_) { throw new Error('Vídeo gerou WebP vazio/inválido'); }
+                    if (outStat.size < 512) throw new Error('Vídeo gerou WebP vazio/inválido');
+                    let header; try { header = fs.readFileSync(outputPath).slice(0, 12); } catch (_) { throw new Error('Vídeo gerou arquivo não-WebP'); }
+                    if (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP') throw new Error('Vídeo gerou arquivo não-WebP');
+                    // Se passou de 900KB, tenta próxima tentativa mais leve (evita estourar 1MB após exif)
+                    if (outStat.size > 950 * 1024 && i < videoAttempts.length - 1) {
+                        console.log(`[STICKER-LOG] tentativa ${i+1} ficou ${outStat.size} bytes >950KB — tentando menor qualidade/duração`);
+                        continue;
+                    }
+                    console.log(`[STICKER-LOG] tentativa ${i+1} OK ${outStat.size} bytes`);
+                    attemptOk = true;
+                    break;
+                } catch (e) {
+                    lastVidErr = e;
+                    console.warn(`⚠️ [STICKER] tentativa ${i+1} falhou: ${e.message} — tentando próxima redução`);
+                }
             }
-            let header; try { header = fs.readFileSync(outputPath).slice(0, 12); } catch (_) { throw new Error('Vídeo gerou arquivo não-WebP'); }
-            if (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP') {
-                try { fs.unlinkSync(outputPath); } catch (_) {}
-                throw new Error('Vídeo gerou arquivo não-WebP');
-            }
+            if (!attemptOk) throw lastVidErr || new Error('Vídeo gerou WebP vazio/inválido após todas tentativas');
         }
 
         const rawWebp = fs.readFileSync(outputPath);
@@ -156,26 +254,27 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
             const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
             const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
             console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
-            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | aspect preservado, q80, original ${rawWebp.length} -> final ${result.length}`);
+            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | aspect preservado, q85 alfa100, original ${rawWebp.length} -> final ${result.length}`);
         } catch(e) {
             console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
         }
         return result;
     } catch (error) {
-        console.error('❌ [CONVERSÃO] Falha:', error.message);
+        console.error(`❌ [CONVERSÃO] Falha geral tempId=${tempId} isVideo=${isVideo} mime=${mime} input=${buffer?.length || 0}B | motivo="${error.message}" | stack="${error.stack?.split('\n')[1]?.trim() || ''}"`);
         if (isVideo && fs.existsSync(inputPath)) {
             const firstFrameWebp = path.join(tempDir, `stk_fb_${tempId}.webp`);
             cleanup.push(firstFrameWebp);
             try {
                 await new Promise((resolve, reject) => {
-                    let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
-                    ffmpeg(inputPath)
+                    let cmd = null;
+                    let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg fallback timeout 30s')); }, 30000);
+                    cmd = ffmpeg(inputPath)
                         .outputOptions([
                             '-vframes', '1',
                             '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
                             '-c:v', 'libwebp',
                             '-lossless', '0',
-                            '-q:v', '60',
+                            '-q:v', '75',
                             '-preset', 'default',
                             '-loop', '0',
                             '-an'
@@ -202,8 +301,9 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
 
 async function convertAnimatedWebpDirect(inputPath, outputPath) {
     await new Promise((resolve, reject) => {
-        let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
-        ffmpeg(inputPath)
+        let cmd = null;
+        let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg stickerToMedia timeout 30s')); }, 30000);
+        cmd = ffmpeg(inputPath)
             .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
             .toFormat('mp4')
             .on('end', () => { clearTimeout(to); resolve(); })
@@ -232,8 +332,9 @@ async function convertAnimatedWebpFrames(buffer, outputPath) {
             written.push(p);
         }
         await new Promise((resolve, reject) => {
-            let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
-            ffmpeg(path.join(frameDir, 'f_%d.webp'))
+            let cmd = null;
+            let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg fallback timeout 30s')); }, 30000);
+            cmd = ffmpeg(path.join(frameDir, 'f_%d.webp'))
                 .inputOptions(['-framerate', String(fps)])
                 .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-crf 18', '-preset slow', '-movflags +faststart', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
                 .toFormat('mp4')
@@ -250,7 +351,16 @@ async function convertAnimatedWebpFrames(buffer, outputPath) {
 
 async function stickerToMedia(buffer, isAnimated = false) {
     const startTs2 = Date.now();
-    console.log(`\n[STICKER-LOG] ===== !toimg INICIO ===== isAnimated=${isAnimated} inputBytes=${buffer?.length || 0} (${buffer? (buffer.length/1024).toFixed(1)+'KB':''}) header=${buffer?.slice(0,4).toString() || ''} WEBP=${buffer?.slice(8,12).toString() || ''}`);
+    // auto-corrige flag isAnimated (Baileys/sticker-maker as vezes envia false pra animado)
+    let effectiveAnimated = !!isAnimated;
+    try {
+        if (!effectiveAnimated && buffer && buffer.includes(Buffer.from('ANIM'))) effectiveAnimated = true;
+    } catch (_) {}
+    if (effectiveAnimated !== !!isAnimated) {
+        console.log(`[STICKER-LOG] isAnimated corrigido: ${isAnimated} -> ${effectiveAnimated} (detectado ANIM chunk)`);
+        isAnimated = effectiveAnimated;
+    }
+    console.log(`\n[STICKER-LOG] ===== !toimg INICIO ===== isAnimated=${isAnimated} (orig=${!!effectiveAnimated}) inputBytes=${buffer?.length || 0} (${buffer? (buffer.length/1024).toFixed(1)+'KB':''}) header=${buffer?.slice(0,4).toString() || ''} WEBP=${buffer?.slice(8,12).toString() || ''}`);
     // tenta inspecionar EXIF/WebP chunks para ver se tem original embutido (como outros bots fazem)
     try {
         const probeImg = new Image(); await probeImg.load(buffer);
@@ -284,8 +394,9 @@ async function stickerToMedia(buffer, isAnimated = false) {
         } else {
             // NÃO aplicar filtros de escala — extrai dimensões nativas do VP8/WebP sem esticar para 512x512
             await new Promise((resolve, reject) => {
-                let to = setTimeout(() => reject(new Error('ffmpeg stickerToMedia timeout 30s')), 30000);
-                ffmpeg(inputPath)
+                let cmd = null;
+                let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg stickerToMedia timeout 30s')); }, 30000);
+                cmd = ffmpeg(inputPath)
                     .outputOptions(['-vcodec png', '-compression_level 0', '-f image2'])
                     .on('end', () => { clearTimeout(to); resolve(); })
                     .on('error', (e) => { clearTimeout(to); reject(e); })
@@ -323,8 +434,10 @@ async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
     try {
         fs.writeFileSync(inputPath, buffer);
         await new Promise((resolve, reject) => {
-            let to = setTimeout(() => reject(new Error('ffmpeg changeSpeed timeout 30s')), 30000);
+            let cmd = null;
+            let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg changeSpeed timeout 30s')); }, 30000);
             let ff = ffmpeg(inputPath);
+            cmd = ff;
             let audioFilter = `atempo=${speed}`;
             if (voiceEffects) {
                 const rate = 44100 * speed;
@@ -363,8 +476,9 @@ async function changeSpeed(buffer, mimeType, speed = 1.0, voiceEffects = true) {
 
 async function convertAnimatedWebpToGifDirect(inputPath, outputPath) {
     await new Promise((resolve, reject) => {
-        let to = setTimeout(() => reject(new Error('ffmpeg toGif timeout 30s')), 30000);
-        ffmpeg(inputPath)
+        let cmd = null;
+        let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg toGif timeout 30s')); }, 30000);
+        cmd = ffmpeg(inputPath)
             .outputOptions([
                 '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
                 '-loop', '0'
@@ -396,8 +510,9 @@ async function convertAnimatedWebpFramesGif(buffer, outputPath) {
             written.push(p);
         }
         await new Promise((resolve, reject) => {
-            let to = setTimeout(() => reject(new Error('ffmpeg fallback timeout 30s')), 30000);
-            ffmpeg(path.join(frameDir, 'f_%d.webp'))
+            let cmd = null;
+            let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg fallback timeout 30s')); }, 30000);
+            cmd = ffmpeg(path.join(frameDir, 'f_%d.webp'))
                 .inputOptions(['-framerate', String(fps)])
                 .outputOptions([
                     '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
@@ -431,8 +546,9 @@ async function mediaToGif(buffer, mimeType) {
             }
         } else {
             await new Promise((resolve, reject) => {
-                let to = setTimeout(() => reject(new Error('ffmpeg toGif timeout 30s')), 30000);
-                ffmpeg(inputPath)
+                let cmd = null;
+                let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg toGif timeout 30s')); }, 30000);
+                cmd = ffmpeg(inputPath)
                     .outputOptions([
                         '-vf', 'fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
                         '-loop', '0'
@@ -465,8 +581,9 @@ async function mediaToGifVideo(buffer, mimeType) {
         if (isSticker) {
             try {
                 await new Promise((resolve, reject) => {
-                    let to = setTimeout(() => reject(new Error('ffmpeg gifVideo timeout 30s')), 30000);
-                    ffmpeg(inputPath)
+                    let cmd = null;
+                    let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg gifVideo timeout 30s')); }, 30000);
+                    cmd = ffmpeg(inputPath)
                         .outputOptions([
                             '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=15,setsar=1',
                             '-c:v', 'libx264',
@@ -487,8 +604,9 @@ async function mediaToGifVideo(buffer, mimeType) {
             }
         } else {
             await new Promise((resolve, reject) => {
-                let to = setTimeout(() => reject(new Error('ffmpeg gifVideo timeout 30s')), 30000);
-                ffmpeg(inputPath)
+                let cmd = null;
+                let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg gifVideo timeout 30s')); }, 30000);
+                cmd = ffmpeg(inputPath)
                     .outputOptions([
                         '-vf', 'fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
                         '-c:v', 'libx264',

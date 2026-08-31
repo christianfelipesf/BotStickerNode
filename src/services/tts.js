@@ -69,8 +69,9 @@ async function synthesize(text, modelPath = defaultModel) {
                 try {
                     // Converter para OPUS (encapsulado em OGG) para WhatsApp
                     await new Promise((res, rej) => {
-                        let to = setTimeout(() => rej(new Error('ffmpeg opus timeout 30s')), 30000);
-                        ffmpeg(wavPath)
+                        let cmd = null;
+                        let to = setTimeout(() => { try { if (cmd && typeof cmd.kill === 'function') cmd.kill('SIGKILL'); } catch (_) {} rej(new Error('ffmpeg opus timeout 30s')); }, 30000);
+                        cmd = ffmpeg(wavPath)
                             .audioCodec('libopus')
                             .outputOptions([
                                 '-b:a 48k',

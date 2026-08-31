@@ -11,37 +11,70 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
-db.pragma('synchronous = FULL');
+db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 db.pragma('wal_autocheckpoint = 1000');
+db.pragma('cache_size = -64000');
+db.pragma('temp_store = MEMORY');
+try { db.pragma('mmap_size = 268435456'); } catch (_) {}
 setInterval(() => { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {} }, 10 * 60 * 1000).unref();
 
+let _vacuumedNow = false;
+let _vacuumPending = false;
+function _runInitialVacuumAsync() {
+    if (_vacuumPending) return;
+    _vacuumPending = true;
+    setImmediate(() => {
+        try {
+            const av = Number(db.pragma('auto_vacuum', { simple: true }));
+            if (av === 0) {
+                db.pragma('auto_vacuum = INCREMENTAL');
+                const beforeBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+                try { db.exec('VACUUM;'); } catch (e) { console.error('[database] VACUUM falhou:', e?.message || e); _vacuumPending = false; return; }
+                const afterBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+                const beforeMb = (beforeBytes / 1048576).toFixed(2);
+                const afterMb = (afterBytes / 1048576).toFixed(2);
+                if (beforeBytes !== afterBytes) {
+                    console.log(`🧹 [database] VACUUM inicial: ${beforeMb} MB → ${afterMb} MB (auto_vacuum=INCREMENTAL ativo)`);
+                    _vacuumedNow = true;
+                }
+            }
+        } catch (e) { console.error('[database] VACUUM inicial falhou:', e?.message || e); }
+        _vacuumPending = false;
+        try {
+            const avFinal = Number(db.pragma('auto_vacuum', { simple: true }));
+            const pageCount = Number(db.pragma('page_count', { simple: true }));
+            const pageSize = Number(db.pragma('page_size', { simple: true }));
+            const freelist = Number(db.pragma('freelist_count', { simple: true }));
+            const totalBytes = pageCount * pageSize;
+            const avLabel = avFinal === 0 ? 'NONE' : avFinal === 1 ? 'FULL' : 'INCREMENTAL';
+            const sizeKb = (totalBytes / 1024).toFixed(1);
+            const freeKb = (freelist * pageSize / 1024).toFixed(1);
+            const note = _vacuumedNow ? '' : (avFinal === 2 ? ' (já migrado)' : '');
+            console.log(`💾 [database] auto_vacuum=${avLabel}, ${pageCount}×${pageSize}B = ${sizeKb} KB, freelist=${freeKb} KB${note}`);
+        } catch (_) {}
+    });
+}
 try {
-    const av = Number(db.pragma('auto_vacuum', { simple: true }));
-    let vacuumedNow = false;
-    if (av === 0) {
-        db.pragma('auto_vacuum = INCREMENTAL');
-        const beforeBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
-        db.exec('VACUUM;');
-        const afterBytes = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
-        const beforeMb = (beforeBytes / 1048576).toFixed(2);
-        const afterMb = (afterBytes / 1048576).toFixed(2);
-        if (beforeBytes !== afterBytes) {
-            console.log(`🧹 [database] VACUUM inicial: ${beforeMb} MB → ${afterMb} MB (auto_vacuum=INCREMENTAL ativo)`);
-            vacuumedNow = true;
-        }
+    const avSync = Number(db.pragma('auto_vacuum', { simple: true }));
+    if (avSync === 0) {
+        _runInitialVacuumAsync();
+        const pageCount = Number(db.pragma('page_count', { simple: true }));
+        const pageSize = Number(db.pragma('page_size', { simple: true }));
+        console.log(`💾 [database] auto_vacuum=NONE, ${pageCount}×${pageSize}B — VACUUM agendado em background (não bloqueia boot)`);
+    } else {
+        const avFinal = avSync;
+        const pageCount = Number(db.pragma('page_count', { simple: true }));
+        const pageSize = Number(db.pragma('page_size', { simple: true }));
+        const freelist = Number(db.pragma('freelist_count', { simple: true }));
+        const totalBytes = pageCount * pageSize;
+        const avLabel = avFinal === 0 ? 'NONE' : avFinal === 1 ? 'FULL' : 'INCREMENTAL';
+        const sizeKb = (totalBytes / 1024).toFixed(1);
+        const freeKb = (freelist * pageSize / 1024).toFixed(1);
+        const note = avFinal === 2 ? ' (já migrado)' : '';
+        console.log(`💾 [database] auto_vacuum=${avLabel}, ${pageCount}×${pageSize}B = ${sizeKb} KB, freelist=${freeKb} KB${note}`);
     }
-    const avFinal = Number(db.pragma('auto_vacuum', { simple: true }));
-    const pageCount = Number(db.pragma('page_count', { simple: true }));
-    const pageSize = Number(db.pragma('page_size', { simple: true }));
-    const freelist = Number(db.pragma('freelist_count', { simple: true }));
-    const totalBytes = pageCount * pageSize;
-    const avLabel = avFinal === 0 ? 'NONE' : avFinal === 1 ? 'FULL' : 'INCREMENTAL';
-    const sizeKb = (totalBytes / 1024).toFixed(1);
-    const freeKb = (freelist * pageSize / 1024).toFixed(1);
-    const note = vacuumedNow ? '' : (avFinal === 2 ? ' (já migrado)' : '');
-    console.log(`💾 [database] auto_vacuum=${avLabel}, ${pageCount}×${pageSize}B = ${sizeKb} KB, freelist=${freeKb} KB${note}`);
 } catch (e) {
     console.error('[database] VACUUM inicial falhou:', e?.message || e);
 }
@@ -176,6 +209,17 @@ db.exec(`
         PRIMARY KEY (group_jid, user_jid)
     );
     CREATE INDEX IF NOT EXISTS idx_group_blacklist_group ON group_blacklist(group_jid);
+
+    CREATE TABLE IF NOT EXISTS feedback (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL CHECK(kind IN ('bug','sugestao')),
+        text        TEXT NOT NULL,
+        sender_jid  TEXT,
+        sender_name TEXT,
+        group_jid   TEXT,
+        created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_kind_created ON feedback(kind, created_at DESC);
 `);
 
 // ============================================================
