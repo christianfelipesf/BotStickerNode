@@ -1,8 +1,4 @@
-function ts() {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
+const { ts } = require('./logFilter');
 
 function patch() {
     const wrap = (orig) => function (...args) {

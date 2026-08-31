@@ -94,9 +94,15 @@ function checkCooldown(commandName, userId) {
 }
 
 function getRemainingSeconds(commandName, userId) {
-    const remaining = checkCooldown(commandName, userId);
-    if (remaining <= 0) return 0;
-    return Math.ceil(remaining / 1000);
+    if (!commandName || !userId) return 0;
+    const key = getKey(commandName, userId);
+    const lastTime = cooldowns.get(key);
+    if (!lastTime) return 0;
+    const cooldownMs = getEffectiveCooldownMs(commandName);
+    if (cooldownMs <= 0) return 0;
+    const elapsed = Date.now() - lastTime;
+    if (elapsed >= cooldownMs) return 0;
+    return Math.ceil((cooldownMs - elapsed) / 1000);
 }
 
 function clearCooldown(commandName, userId) {

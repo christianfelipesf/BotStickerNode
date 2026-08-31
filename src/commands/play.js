@@ -10,33 +10,7 @@ const { sendMessageSafe } = require('../database/utils');
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 
-function normalizeLang(lang) {
-    if (!lang) return null;
-    const l = String(lang).trim().toLowerCase();
-    if (!l || l === 'original' || l === 'orig' || l === 'auto') return null;
-    if (l === 'ptbr' || l === 'pt-br' || l === 'pt_br') return 'pt';
-    if (/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(l)) return l.split(/[-_]/)[0];
-    return null;
-}
-
-function parseLangFromQuery(q) {
-    if (!q) return { query: q, lang: 'pt' };
-    const tokens = q.trim().split(/\s+/);
-    if (tokens.length < 2) return { query: q, lang: 'pt' };
-    const last = tokens[tokens.length - 1].toLowerCase();
-    const langMap = { 'pt': 'pt', 'ptbr': 'pt', 'pt-br': 'pt', 'pt_br': 'pt' };
-    if (['original', 'orig', 'auto'].includes(last)) {
-        return { query: tokens.slice(0, -1).join(' ').trim() || q, lang: null };
-    }
-    if (langMap[last]) return { query: tokens.slice(0, -1).join(' ').trim(), lang: 'pt' };
-    if (/^[a-z]{2,3}$/i.test(last) && ['en','es','fr','de','it','ja','ko','ru','hi','ar','zh','nl','pl','tr'].includes(last)) {
-        return { query: tokens.slice(0, -1).join(' ').trim(), lang: last };
-    }
-    if (/^[a-z]{2,3}[-_][a-z]{2,4}$/i.test(last)) {
-        return { query: tokens.slice(0, -1).join(' ').trim(), lang: last.split(/[-_]/)[0] };
-    }
-    return { query: q, lang: 'pt' };
-}
+const { normalizeLang, parseLangFromQuery } = require('../services/downloaderCore');
 
 function parseDurationToSeconds(d) {
     if (typeof d === 'number' && Number.isFinite(d)) return d;

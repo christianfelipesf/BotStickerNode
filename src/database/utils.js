@@ -79,8 +79,8 @@ function isBlacklisted(groupJid, userJid) {
     try {
         const normTarget = normalizeBlacklistJid(userJid);
         if (!normTarget) return false;
+        if (_blHas.get(groupJid, normTarget)) return true;
         const targetUser = normTarget.split('@')[0];
-        // Verifica por user part (compatível com lid/pn/s.whatsapp.net)
         const rows = _blGetAll.all(groupJid);
         for (const r of rows) {
             const norm = normalizeBlacklistJid(r.user_jid);
@@ -106,6 +106,8 @@ function removeFromBlacklist(groupJid, userJid) {
     try {
         const normTarget = normalizeBlacklistJid(userJid);
         if (!normTarget) return false;
+        const direct = _blDelete.run(groupJid, normTarget);
+        if (direct.changes > 0) return true;
         const targetUser = normTarget.split('@')[0];
         const rows = _blGetAll.all(groupJid);
         let removed = false;
@@ -212,6 +214,7 @@ function writeConfig(newConfig) {
     const tx = db.transaction((cfg) => {
         for (const [k, v] of Object.entries(cfg)) {
             if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+            if (k === 'openrouterApiKey') continue;
             _cfgSet.run(k, JSON.stringify(v));
         }
     });
@@ -704,18 +707,17 @@ function setGroupData(jid, data) {
     _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null, prefix, stickerPack, stickerAuthor);
 }
 
+function _getGroupField(jid, field, cfgKey, defaultVal) {
+    if (jid && jid.endsWith('@g.us')) {
+        try { const gd = getGroupData(jid); if (gd[field]) return String(gd[field]); } catch (_) {}
+    }
+    try { return String(readConfig()[cfgKey] || defaultVal); } catch (_) { return defaultVal; }
+}
+
 // ============================================================
 // Prefix helpers (por grupo)
 // ============================================================
-function getPrefixForJid(jid) {
-    if (jid && jid.endsWith('@g.us')) {
-        try {
-            const gd = getGroupData(jid);
-            if (gd.prefix) return String(gd.prefix);
-        } catch (_) {}
-    }
-    try { return String(readConfig().prefix || DEFAULT_CONFIG.prefix); } catch (_) { return DEFAULT_CONFIG.prefix; }
-}
+function getPrefixForJid(jid) { return _getGroupField(jid, 'prefix', 'prefix', DEFAULT_CONFIG.prefix); }
 
 function setGroupPrefix(jid, prefixChar) {
     if (!jid || !jid.endsWith('@g.us')) return false;
@@ -734,25 +736,9 @@ function clearGroupPrefix(jid) {
 // ============================================================
 // Sticker pack/author helpers (por grupo)
 // ============================================================
-function getStickerPackForJid(jid) {
-    if (jid && jid.endsWith('@g.us')) {
-        try {
-            const gd = getGroupData(jid);
-            if (gd.stickerPack) return String(gd.stickerPack);
-        } catch (_) {}
-    }
-    try { return String(readConfig().stickerPack || DEFAULT_CONFIG.stickerPack); } catch (_) { return DEFAULT_CONFIG.stickerPack; }
-}
+function getStickerPackForJid(jid) { return _getGroupField(jid, 'stickerPack', 'stickerPack', DEFAULT_CONFIG.stickerPack); }
 
-function getStickerAuthorForJid(jid) {
-    if (jid && jid.endsWith('@g.us')) {
-        try {
-            const gd = getGroupData(jid);
-            if (gd.stickerAuthor) return String(gd.stickerAuthor);
-        } catch (_) {}
-    }
-    try { return String(readConfig().stickerAuthor || DEFAULT_CONFIG.stickerAuthor); } catch (_) { return DEFAULT_CONFIG.stickerAuthor; }
-}
+function getStickerAuthorForJid(jid) { return _getGroupField(jid, 'stickerAuthor', 'stickerAuthor', DEFAULT_CONFIG.stickerAuthor); }
 
 function setStickerPackForJid(jid, pack, author) {
     if (!jid || !jid.endsWith('@g.us')) return false;
@@ -1071,12 +1057,8 @@ function getBotJid(sock) {
 async function botIsAdmin(sock, jid) {
     const botRaw = getBotJid(sock);
     if (!botRaw) return false;
-    const botUser = botRaw.split('@')[0];
     const admins = await getAdmins(sock, jid);
-    return admins.some(p => {
-        const ids = [p.id, p.jid, p.lid].filter(Boolean).map(normalizeJid);
-        return new Set(ids.map(s => s.split('@')[0])).has(botUser);
-    });
+    return isUserAdmin(botRaw, admins);
 }
 
 // ============================================================

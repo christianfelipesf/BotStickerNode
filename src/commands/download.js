@@ -6,271 +6,22 @@ const axios = require('axios');
 const { getMaxDurationSeconds, fetchYouTubeDuration, buildDurationErrorMessage } = require('../services/durationLimit');
 const { enqueueDownload, enqueueSend } = require('../services/queue');
 const { sendMessageSafe } = require('../database/utils');
+const {
+    PLATFORM_CONFIG, YTDLP_PLATFORMS, BTCH_PLATFORMS, BTCH_BASE_URL,
+    correctFileExtension, sniffExtFromFile, extractUrl, getPlatform,
+    normalizeLang, parseLangFromText, getFormatSelector, callBtchApi, downloadFromUrl
+} = require('../services/downloaderCore');
+const { runYtDlp: _coreRunYtDlp, buildYtDlpArgs: _coreBuildYtDlpArgs } = require('../services/downloaderCore');
 
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 function hasCookies() { return fs.existsSync(cookiesPath); }
-
-function getExtFromContentType(ct) {
-    if (!ct) return null;
-    ct = String(ct).toLowerCase().split(';')[0].trim();
-    const map = {
-        'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png',
-        'image/gif': '.gif', 'image/webp': '.webp', 'video/mp4': '.mp4',
-        'video/webm': '.webm', 'video/quicktime': '.mov', 'video/x-matroska': '.mkv',
-        'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/ogg': '.ogg'
-    };
-    return map[ct] || null;
-}
-
-function sniffExtFromFile(filePath) {
-    try {
-        const fd = fs.openSync(filePath, 'r');
-        const buf = Buffer.alloc(16);
-        const read = fs.readSync(fd, buf, 0, 16, 0);
-        fs.closeSync(fd);
-        if (read < 4) return null;
-        if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return '.jpg';
-        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return '.png';
-        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return '.gif';
-        if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return '.webp';
-        // mp4 ftyp
-        const head = buf.toString('utf8', 4, 12);
-        if (head.includes('ftyp')) return '.mp4';
-        if (buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3) return '.mkv';
-    } catch (_) {}
-    return null;
-}
-
-function correctFileExtension(filePath, contentType) {
-    try {
-        if (!fs.existsSync(filePath)) return filePath;
-        const currentExt = path.extname(filePath).toLowerCase();
-        let correctExt = getExtFromContentType(contentType);
-        if (!correctExt) correctExt = sniffExtFromFile(filePath);
-        if (!correctExt) return filePath;
-        if (currentExt === correctExt) return filePath;
-        // Se já é imagem correta não renomeia; se é .mp4 mas conteúdo é imagem, corrige
-        const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(correctExt);
-        const isVideoExt = ['.mp4', '.webm', '.mkv', '.mov'].includes(currentExt);
-        if (isVideoExt && isImageExt) {
-            const newPath = filePath.replace(/\.[^.]+$/, '') + correctExt;
-            if (filePath !== newPath) {
-                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
-                return newPath;
-            }
-        }
-        // Caso genérico: se extensão divergir do sniff, corrige
-        if (correctExt && currentExt !== correctExt) {
-            const sniff = sniffExtFromFile(filePath);
-            if (sniff && sniff !== currentExt) {
-                const newPath = filePath.replace(/\.[^.]+$/, '') + sniff;
-                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
-                return newPath;
-            }
-        }
-        return filePath;
-    } catch (_) { return filePath; }
-}
-
-const URL_REGEX = /https?:\/\/[^\s<>"']+/i;
-
-const BTCH_BASE_URL = 'https://backend1.tioo.eu.org';
-
-const PLATFORM_CONFIG = {
-    instagram: { api: 'igdl', hosts: ['instagram.com'], domains: ['instagram.com'], ytdlp: true },
-    tiktok: { api: 'ttdl', hosts: ['tiktok.com', 'vm.tiktok.com'], domains: ['tiktok.com'], ytdlp: true },
-    facebook: { api: 'fbdown', hosts: ['facebook.com', 'fb.watch'], domains: ['facebook.com', 'fb.watch'], ytdlp: true },
-    twitter: { api: 'twitter', hosts: ['twitter.com', 'x.com', 't.co'], domains: ['twitter.com', 'x.com', 't.co'], ytdlp: true },
-    youtube: { api: 'youtube', hosts: ['youtube.com', 'youtu.be'], domains: ['youtube.com', 'youtu.be'], ytdlp: true },
-    capcut: { api: 'capcut', hosts: ['capcut.com', 'capcut.net'], domains: ['capcut.com'], ytdlp: false },
-    pinterest: { api: 'pinterest', hosts: ['pinterest.com', 'pin.it'], domains: ['pinterest.com', 'pin.it'], ytdlp: false },
-    gdrive: { api: 'gdrive', hosts: ['drive.google.com'], domains: ['drive.google.com'], ytdlp: false },
-    mediafire: { api: 'mediafire', hosts: ['mediafire.com'], domains: ['mediafire.com'], ytdlp: false },
-    douyin: { api: 'douyin', hosts: ['douyin.com', 'v.douyin.com'], domains: ['douyin.com'], ytdlp: false },
-    snackvideo: { api: 'snackvideo', hosts: ['snackvideo.com', 's.snackvideo.com'], domains: ['snackvideo.com'], ytdlp: false },
-    xiaohongshu: { api: 'rednote', hosts: ['xiaohongshu.com', 'xhslink.com'], domains: ['xiaohongshu.com', 'xhslink.com'], ytdlp: false },
-    cocofun: { api: 'cocofun', hosts: ['icocofun.com', 'cocofun.com'], domains: ['icocofun.com', 'cocofun.com'], ytdlp: false },
-    spotify: { api: 'spotify', hosts: ['open.spotify.com', 'spotify.link'], domains: ['spotify.com'], ytdlp: false },
-    soundcloud: { api: 'soundcloud', hosts: ['soundcloud.com'], domains: ['soundcloud.com'], ytdlp: false },
-    threads: { api: 'threads', hosts: ['threads.net'], domains: ['threads.net'], ytdlp: false },
-    kuaishou: { api: 'kuaishou', hosts: ['kuaishou.com', 'v.kuaishou.com'], domains: ['kuaishou.com'], ytdlp: false },
-    reddit: { api: null, hosts: ['reddit.com', 'redd.it'], domains: ['reddit.com'], ytdlp: true },
-    google: { api: null, hosts: ['google.com'], domains: ['google.com'], ytdlp: true }
-};
-
-function extractUrl(text) {
-    if (!text) return null;
-    const match = text.match(URL_REGEX);
-    return match ? match[0].replace(/[).,;]+$/, '') : null;
-}
-
-function getPlatform(url) {
-    try {
-        const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-        for (const [name, cfg] of Object.entries(PLATFORM_CONFIG)) {
-            if (cfg.hosts.some(h => host === h || host.endsWith('.' + h))) return name;
-        }
-        return null;
-    } catch (e) {
-        return null;
-    }
-}
-
-const YTDLP_PLATFORMS = new Set(Object.entries(PLATFORM_CONFIG).filter(([, c]) => c.ytdlp).map(([k]) => k));
-const BTCH_PLATFORMS = new Set(Object.entries(PLATFORM_CONFIG).filter(([, c]) => c.api).map(([k]) => k));
-
-function normalizeLang(lang) {
-    if (!lang) return null;
-    const l = String(lang).trim().toLowerCase();
-    if (!l || l === 'original' || l === 'orig' || l === 'auto') return null;
-    if (l === 'ptbr' || l === 'pt-br' || l === 'pt_br') return 'pt';
-    if (/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(l)) return l.split(/[-_]/)[0];
-    return null;
-}
-
-function parseLangFromText(text, url) {
-    if (!text || !url) return null;
-    const idx = text.indexOf(url);
-    if (idx === -1) return null;
-    const after = text.slice(idx + url.length).trim();
-    if (!after) return null;
-    const tokens = after.split(/\s+/).filter(Boolean);
-    if (!tokens.length) return null;
-    const last = tokens[tokens.length - 1].toLowerCase();
-    if (['original', 'orig', 'auto'].includes(last)) return null; // sem filtro = original
-    // pt variants
-    if (['pt', 'ptbr', 'pt-br', 'pt_br'].includes(last)) return 'pt';
-    if (/^[a-z]{2,3}$/i.test(last) && ['en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 'hi', 'ar', 'zh', 'nl', 'pl', 'tr'].includes(last)) return last;
-    if (/^[a-z]{2,3}[-_][a-z]{2,4}$/i.test(last)) return last.split(/[-_]/)[0];
-    return null;
-}
-
-function getFormatSelector(platform, hd, lang = null) {
-    const normLang = normalizeLang(lang);
-    if (platform === 'instagram') {
-        return hd ? 'best[height<=1080]/best' : 'best[height<=720]/best';
-    }
-    if (platform === 'tiktok') {
-        return hd
-            ? 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-            : 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst';
-    }
-    if (platform === 'facebook') {
-        return hd ? 'bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best' : 'worst[ext=mp4]/worst';
-    }
-    if (platform === 'twitter') {
-        return hd
-            ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-            : 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst/best[width<=640]';
-    }
-    if (normLang && platform === 'youtube') {
-        const langFilter = `[language^=${normLang}]`;
-        return hd
-            ? `bestvideo[ext=mp4][vcodec^=avc1][width<=1080]+bestaudio${langFilter}/bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio${langFilter}/bestvideo[ext=mp4][width<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[width<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best`
-            : `bestvideo[ext=mp4][vcodec^=avc1][width<=720]+bestaudio${langFilter}/bestvideo[ext=mp4][vcodec^=avc1][height<=720]+bestaudio${langFilter}/bestvideo[ext=mp4][width<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[width<=720][ext=mp4]/best[height<=720][ext=mp4]/best`;
-    }
-    return hd
-        ? 'bestvideo[ext=mp4][vcodec^=avc1][width<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[width<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best'
-        : 'bestvideo[ext=mp4][vcodec^=avc1][width<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec^=avc1][height<=720]+bestaudio[ext=m4a]/best[width<=720][ext=mp4]/best[height<=720][ext=mp4]/best';
-}
-
 function buildYtDlpArgs(url, platform, hd, outTemplate, lang = null) {
-    const normLang = normalizeLang(lang);
-    const extractorArgsParts = ['tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com'];
-    if (normLang && platform === 'youtube') {
-        const ytLang = normLang;
-        extractorArgsParts.push(`youtube:lang=${ytLang}`);
-    }
-    const args = [
-        '--no-warnings',
-        '--no-check-certificates',
-        '--ignore-errors',
-        '--no-abort-on-error',
-        '--retries', '5',
-        '--fragment-retries', '5',
-        '--concurrent-fragments', '4',
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        '--extractor-args', extractorArgsParts.join(';'),
-        '-f', getFormatSelector(platform, hd, normLang),
-        '--merge-output-format', 'mp4',
-        '-o', outTemplate
-    ];
-
-    if (platform === 'instagram') {
-        args.push('--add-header', 'Referer:https://www.instagram.com/');
-    } else if (platform === 'twitter') {
-        args.push('--yes-playlist');
-        args.push('--add-header', 'Referer:https://x.com/');
-        args.push('--add-header', 'Origin:https://x.com');
-    } else {
-        args.push('--no-playlist');
-    }
-
-    if (hasCookies()) args.push('--cookies', cookiesPath);
-
-    args.push(url);
-    return args;
+    return _coreBuildYtDlpArgs(url, platform, hd, outTemplate, lang, { cookiesPath: hasCookies() ? cookiesPath : null });
 }
-
-function runYtDlp(args, timeoutMs = 300000) {
-    return new Promise((resolve, reject) => {
-        const proc = spawn('yt-dlp', args, { shell: false, windowsHide: true });
-        let stdout = '', stderr = '';
-        const timer = setTimeout(() => {
-            try { proc.kill('SIGKILL'); } catch (_) {}
-            reject(new Error(`yt-dlp timeout após ${Math.round(timeoutMs / 1000)}s`));
-        }, timeoutMs);
-
-        proc.stdout.on('data', d => stdout += d);
-        proc.stderr.on('data', d => stderr += d);
-        proc.on('error', err => { clearTimeout(timer); reject(err); });
-        proc.on('close', code => {
-            clearTimeout(timer);
-            resolve({ code, stdout, stderr });
-        });
-    });
-}
-
-async function callBtchApi(endpoint, url) {
-    const apiUrl = `${BTCH_BASE_URL}/${endpoint}?url=` + encodeURIComponent(url);
-    const res = await axios.get(apiUrl, {
-        headers: { 'User-Agent': 'btch/6.0.36', 'X-Client-Version': '6.0.36' },
-        timeout: 30000
-    });
-    if (res.status !== 200) throw new Error(`API HTTP ${res.status}`);
-    return res.data;
-}
-
-async function downloadFromUrl(fileUrl, destPath) {
-    if (!/^https?:\/\//i.test(fileUrl)) throw new Error('URL inválida');
-    const writer = fs.createWriteStream(destPath);
-    let contentType = null;
-    try {
-        const res = await axios({ url: fileUrl, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
-        contentType = res.headers ? (res.headers['content-type'] || res.headers['Content-Type'] || null) : null;
-        let total = 0;
-        res.data.on('data', c => { total += c.length; if (total > 100*1024*1024) { try { res.data.destroy(); writer.destroy(); } catch (_) {} } });
-        res.data.pipe(writer);
-        await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-            res.data.on('error', reject);
-        });
-        try { if (fs.statSync(destPath).size > 100*1024*1024) throw new Error('Arquivo >100MB'); } catch (e) { if (e.message.includes('100MB')) throw e; }
-    } catch (e) {
-        try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
-        throw e;
-    }
-    // corrige extensão caso tenha sido salva como .mp4 mas conteúdo é imagem
-    try {
-        const corrected = correctFileExtension(destPath, contentType);
-        if (corrected !== destPath) return corrected;
-    } catch (_) {}
-    return destPath;
-}
+function runYtDlp(args, timeoutMs = 300000) { return _coreRunYtDlp(args, timeoutMs); }
 
 async function downloadBtch(platform, url, id, hd) {
     const cfg = PLATFORM_CONFIG[platform];
@@ -430,24 +181,8 @@ async function downloadBtch(platform, url, id, hd) {
 }
 
 function findDownloadedFiles(id) {
-    try {
-        const files = fs.readdirSync(tempDir)
-            .filter(f => f.startsWith(`dl_${id}_`) && /\.(mp4|webm|mkv|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(f) && !/\.part(\.|$)/i.test(f) && !f.endsWith('.ytdl') && !f.endsWith('.temp.mp4'))
-            .map(f => {
-                try {
-                    const full = path.join(tempDir, f);
-                    const stat = fs.statSync(full);
-                    return { path: full, time: stat.mtimeMs, size: stat.size, name: f };
-                } catch (_) { return null; }
-            })
-            .filter(Boolean)
-            .filter(f => f.size >= 1024)
-            .sort((a, b) => a.time - b.time);
-
-        return files.map(f => f.path);
-    } catch (_) {
-        return [];
-    }
+    const { findDownloadedFiles: coreFind } = require('../services/downloaderCore');
+    return coreFind(tempDir, 'dl_', id);
 }
 
 async function sendMedia(sock, from, m, filePath, title) {
@@ -491,7 +226,7 @@ async function sendMedia(sock, from, m, filePath, title) {
 
 module.exports = {
     name: 'download',
-    aliases: ['dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x', 'playv', 'playvideo'],
+    aliases: ['dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x', 'playv', 'playvideo', 'dhd', 'downloadhd'],
     category: 'mídia',
     description: 'Baixa mídia de redes sociais (Instagram, TikTok, YouTube, Facebook, Twitter, CapCut, Pinterest, Google Drive, e mais)',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
