@@ -220,6 +220,15 @@ db.exec(`
         created_at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_kind_created ON feedback(kind, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS antiflood_config (
+        jid             TEXT PRIMARY KEY,
+        enabled         INTEGER NOT NULL DEFAULT 0,
+        include_admins  INTEGER NOT NULL DEFAULT 0,
+        max_msgs        INTEGER NOT NULL DEFAULT 5,
+        window_secs     INTEGER NOT NULL DEFAULT 8,
+        updated_at      INTEGER NOT NULL
+    );
 `);
 
 // ============================================================

@@ -177,10 +177,10 @@ module.exports = {
             const botActive = !isGroup || isActiveGroup(from);
             const dashOn = isDashboardEnabled(from);
 
-            // === Mute & Antilink enforcement ===
+            // === Mute & Antilink & Antiflood enforcement ===
             if (isGroup && botActive) {
                 const enforcement = await enforceMuteAndAntilink(sock, m, from, sender, text);
-                if (enforcement === 'muted' || enforcement === 'antilink') return;
+                if (enforcement === 'muted' || enforcement === 'antilink' || enforcement === 'antiflood') return;
             }
 
             // === Dashboard logging (mídia baixada em background via fila) ===

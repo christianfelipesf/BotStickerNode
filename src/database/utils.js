@@ -141,6 +141,61 @@ function parseNumberToJid(raw) {
 }
 
 // ============================================================
+// Antiflood helpers (por grupo)
+// ============================================================
+const _afGet = db.prepare('SELECT enabled, include_admins, max_msgs, window_secs FROM antiflood_config WHERE jid = ?');
+const _afUpsert = db.prepare(`
+    INSERT INTO antiflood_config (jid, enabled, include_admins, max_msgs, window_secs, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET
+        enabled = excluded.enabled,
+        include_admins = excluded.include_admins,
+        max_msgs = excluded.max_msgs,
+        window_secs = excluded.window_secs,
+        updated_at = excluded.updated_at
+`);
+const _afDelete = db.prepare('DELETE FROM antiflood_config WHERE jid = ?');
+
+function getAntifloodConfig(jid) {
+    if (!jid || !jid.endsWith('@g.us')) return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
+    try {
+        const row = _afGet.get(jid);
+        if (!row) return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
+        return {
+            enabled: !!row.enabled,
+            includeAdmins: !!row.include_admins,
+            maxMsgs: Math.max(2, Math.min(20, Number(row.max_msgs) || 5)),
+            windowSecs: Math.max(3, Math.min(60, Number(row.window_secs) || 8))
+        };
+    } catch (_) { return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 }; }
+}
+
+function setAntifloodConfig(jid, patch = {}) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    try {
+        const cur = getAntifloodConfig(jid);
+        const enabled = patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : (cur.enabled ? 1 : 0);
+        const includeAdmins = patch.includeAdmins !== undefined ? (patch.includeAdmins ? 1 : 0) : (cur.includeAdmins ? 1 : 0);
+        const maxMsgs = patch.maxMsgs !== undefined ? Math.max(2, Math.min(20, Number(patch.maxMsgs) || cur.maxMsgs)) : cur.maxMsgs;
+        const windowSecs = patch.windowSecs !== undefined ? Math.max(3, Math.min(60, Number(patch.windowSecs) || cur.windowSecs)) : cur.windowSecs;
+        _afUpsert.run(jid, enabled, includeAdmins, maxMsgs, windowSecs, Date.now());
+        return true;
+    } catch (_) { return false; }
+}
+
+function toggleAntiflood(jid) {
+    const cur = getAntifloodConfig(jid);
+    setAntifloodConfig(jid, { enabled: !cur.enabled });
+    return !cur.enabled;
+}
+
+function toggleAntifloodAdmin(jid) {
+    const cur = getAntifloodConfig(jid);
+    setAntifloodConfig(jid, { includeAdmins: !cur.includeAdmins });
+    return !cur.includeAdmins;
+}
+
+// ============================================================
 // Config management (SQLite)
 // ============================================================
 const DEFAULT_CONFIG = {
@@ -309,6 +364,7 @@ function deactivateGroup(jid) {
     } catch (_) {}
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
     try { _agpDelete.run(jid); } catch (_) {}
+    try { _afDelete.run(jid); } catch (_) {}
     clearChatHistory(jid);
     muteApi.clearMuted(jid);
     return true;
@@ -1173,6 +1229,7 @@ module.exports = {
     canAdminControl,
     ...muteApi,
     getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid,
+    getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,
     getNewsState, setNewsState, clearNewsState, clearAllNewsState,

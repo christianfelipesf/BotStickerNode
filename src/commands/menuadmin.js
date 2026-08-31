@@ -35,6 +35,7 @@ module.exports = {
             `│ ⚠️ *${p}adv* (marque) — advertência 3/3 = ban\n` +
             `│ ✅ *${p}limparadv* [@user|all] — limpa advertências\n` +
             `│ 🛡️ *${p}antilink* — ativa/desativa filtro de links\n` +
+            `│ 🚨 *${p}antiflood* — ativa/configura antiflood (admin desligado por padrão)\n` +
             `│ 🔇 *${p}mute* @user — silencia\n` +
             `│ 🔊 *${p}desmute* @user — dessilencia\n` +
             `│ 🧹 *${p}limpar* [n] — apaga mensagens\n` +

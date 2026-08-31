@@ -1,4 +1,5 @@
 const { getGroupData, isMuted, botIsAdmin, isUserAdmin, getAdmins, normalizeJid, setGroupData } = require('../database/utils');
+const { enforceAntiflood } = require('../services/antiflood');
 
 async function enforceMuteAndAntilink(sock, m, from, sender, text) {
     const groupData = getGroupData(from);
@@ -38,6 +39,10 @@ async function enforceMuteAndAntilink(sock, m, from, sender, text) {
             return 'antilink';
         }
     }
+
+    // Antiflood (respeita flag de admin)
+    const flood = await enforceAntiflood(sock, m, from, sender, isSenderAdmin, isBotAdmin);
+    if (flood) return flood;
 
     return null;
 }
