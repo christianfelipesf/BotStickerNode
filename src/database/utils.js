@@ -1134,6 +1134,14 @@ function _isRateLimitError(err) {
     return msg.includes('rate-overlimit') || msg.includes('rate overlimit') || msg.includes('429');
 }
 
+function isConnectionClosedError(err) {
+    if (!err) return false;
+    const code = err?.output?.statusCode || err?.statusCode || err?.data?.statusCode;
+    if (code === 428 || code === 515 || code === 502) return true;
+    const msg = String(err?.message || err || '').toLowerCase();
+    return msg.includes('connection closed') || msg.includes('precondition required') || msg.includes('connection timed out');
+}
+
 async function sendMessageSafe(sock, jid, payload, options = {}) {
     const { maxRetries = 3, baseDelayMs = 15000, onRetry } = options;
     const backoffs = _buildBackoffs(baseDelayMs);
@@ -1212,6 +1220,7 @@ process.on('SIGTERM', () => { flushNow(); process.exit(0); });
 // Exports (barrel — compatível com toda a base de código)
 // ============================================================
 module.exports = {
+    isConnectionClosedError,
     readConfig, writeConfig, readStats, incrementRestart, incrementCommand,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,

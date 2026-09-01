@@ -225,6 +225,20 @@ async function sendMedia(sock, from, m, filePath, title) {
     }
 }
 
+function isConnectionClosedError(err) {
+    if (!err) return false;
+    const code = err?.output?.statusCode || err?.statusCode;
+    if (code === 428 || code === 515 || code === 502) return true;
+    const msg = String(err?.message || err || '').toLowerCase();
+    return msg.includes('connection closed') || msg.includes('precondition required');
+}
+async function safeReact(fn, ...args) {
+    try { return await fn(...args); } catch (e) { if (isConnectionClosedError(e)) { console.warn(`[DL] react falhou (conexão fechada): ${e.message}`); return args[3] || null; } throw e; }
+}
+async function safeSend(sock, from, payload, quoted) {
+    try { return await sock.sendMessage(from, payload, quoted ? { quoted } : {}); } catch (e) { if (isConnectionClosedError(e)) { console.warn(`[DL] sendMessage falhou (conexão fechada, mensagem descartada)`); return null; } throw e; }
+}
+
 module.exports = {
     name: 'download',
     aliases: ['dl', 'baixar', 'media', 'social', 'tiktok', 'ttk', 'fb', 'facebook', 'insta', 'instagram', 'reel', 'shorts', 'youtube', 'yt', 'twitter', 'x', 'playv', 'playvideo', 'dhd', 'downloadhd'],
@@ -232,6 +246,9 @@ module.exports = {
     description: 'Baixa mídia de redes sociais ou busca YouTube por texto (limite configurável de duração e MB)',
     async execute(sock, m, { from, fullArgsText, commandName, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, reactStatus } = utils;
+        const safeReactStatus = async (...a) => {
+            try { return await reactStatus(...a); } catch (e) { if (isConnectionClosedError(e)) return a[5] || null; throw e; }
+        };
         const hd = commandName === 'downloadhd' || commandName === 'dhd';
         let url = extractUrl(fullArgsText);
         let searchResult = null;
@@ -240,7 +257,7 @@ module.exports = {
         if (!url) {
             const queryRaw = String(fullArgsText || '').trim();
             if (queryRaw && queryRaw.length >= 2 && !/^https?:\/\//i.test(queryRaw)) {
-                let currentSearch = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+                let currentSearch = await safeReact(react, sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
                 try {
                     // separa eventual token de idioma no fim da busca (ex: "musica original" → lang null)
                     let searchQuery = queryRaw;
@@ -255,29 +272,29 @@ module.exports = {
                         searchResult = found;
                         isSearch = true;
                     } else {
-                        await react(sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
-                        return await sock.sendMessage(from, {
+                        await safeReact(react, sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
+                        return await safeSend(sock, from, {
                             text: `❌ *Nenhum resultado para:* "${queryRaw.slice(0,80)}"\n\n💡 Tente reformular a busca ou envie um link direto.\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link ou texto>`
-                        }, { quoted: m });
+                        }, m);
                     }
                 } catch (e) {
-                    await react(sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
-                    return await sock.sendMessage(from, { text: `❌ Falha na busca: ${e.message}` }, { quoted: m });
+                    await safeReact(react, sock, m, '❌', currentSearch, GLOBAL_COOLDOWN);
+                    return await safeSend(sock, from, { text: `❌ Falha na busca: ${e.message}` }, m);
                 }
             } else {
-                await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
-                return await sock.sendMessage(from, {
+                await safeReact(react, sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                return await safeSend(sock, from, {
                     text: `❌ *Envie um link ou texto para buscar!*\n\n📌 *Uso:* ${hd ? '!dhd' : '!download'} <link ou nome>\nEx: \`!dl never gonna give you up\` ou \`!dl https://youtu.be/...\`\n\n✅ *Plataformas suportadas:*\n• Instagram, TikTok, YouTube (busca por texto), Facebook, Twitter/X, CapCut, Pinterest, Google Drive, MediaFire, Douyin, Xiaohongshu, Spotify, SoundCloud, Threads, Kuaishou, SnackVideo, Cocofun, Reddit`
-                }, { quoted: m });
+                }, m);
             }
         }
 
         const platform = getPlatform(url);
         if (!platform) {
-            await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
-            return await sock.sendMessage(from, {
+            await safeReact(react, sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            return await safeSend(sock, from, {
                 text: `❌ *Site não suportado!*\n\n🔗 ${url}`
-            }, { quoted: m });
+            }, m);
         }
 
         // lang: youtube default pt (dublagem), override via trailing token (original/en/pt/etc.)
@@ -304,7 +321,7 @@ module.exports = {
         }
         const effectiveLang = platform === 'youtube' ? youtubeLang : null;
 
-        let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await safeReact(react, sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
 
         if (platform === 'youtube') {
             const maxSeconds = getMaxDurationSeconds();
@@ -315,29 +332,29 @@ module.exports = {
                 ytSeconds = info.seconds;
                 ytTitle = info.title || ytTitle;
                 if (Number.isFinite(ytSeconds) && ytSeconds > maxSeconds) {
-                    await sock.sendMessage(from, {
+                    await safeSend(sock, from, {
                         text: buildDurationErrorMessage({ url, seconds: ytSeconds, title: ytTitle, platform, maxSeconds })
-                    }, { quoted: m });
-                    return await react(sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
+                    }, m);
+                    return await safeReact(react, sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
                 }
             } else if (ytSeconds > maxSeconds) {
-                await sock.sendMessage(from, {
+                await safeSend(sock, from, {
                     text: buildDurationErrorMessage({ url, seconds: ytSeconds, title: ytTitle, platform, maxSeconds })
-                }, { quoted: m });
-                return await react(sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
+                }, m);
+                return await safeReact(react, sock, m, '⏱️', currentBotResponse, GLOBAL_COOLDOWN);
             }
         }
 
         const id = crypto.randomBytes(4).toString('hex');
 
         try {
-            currentBotResponse = await react(sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
+            currentBotResponse = await safeReact(react, sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
 
             let allFiles = [];
             const preferYtDlp = platform === 'youtube' && !!effectiveLang;
 
             if (BTCH_PLATFORMS.has(platform) && !preferYtDlp) {
-                currentBotResponse = await react(sock, m, '📥', currentBotResponse, GLOBAL_COOLDOWN);
+                currentBotResponse = await safeReact(react, sock, m, '📥', currentBotResponse, GLOBAL_COOLDOWN);
                 allFiles = await enqueueDownload(() => downloadBtch(platform, url, id, hd));
             }
 
@@ -419,7 +436,7 @@ module.exports = {
                 throw new Error(`Limite de ${maxMB}MB excedido (${(totalSize / 1048576).toFixed(2)}MB). Use \`!set maxDownloadSizeMB <valor>\` ou tente qualidade menor.`);
             }
 
-            currentBotResponse = await react(sock, m, '📤', currentBotResponse, GLOBAL_COOLDOWN);
+            currentBotResponse = await safeReact(react, sock, m, '📤', currentBotResponse, GLOBAL_COOLDOWN);
 
             for (let i = 0; i < allFiles.length; i++) {
                 const filePath = allFiles[i];
@@ -427,24 +444,44 @@ module.exports = {
                 let caption;
                 if (isSearch && searchResult?.title) caption = `🎬 *${searchResult.title.slice(0,60)}* [${ext}]`;
                 else caption = allFiles.length > 1 ? `📎 *Mídia* (${i + 1}/${allFiles.length}) [${ext}]` : 'Mídia';
-                await sendMedia(sock, from, m, filePath, caption);
+                try {
+                    await sendMedia(sock, from, m, filePath, caption);
+                } catch (sendErr) {
+                    if (isConnectionClosedError(sendErr)) {
+                        console.warn(`[DL] sendMedia falhou (conexão fechada) — abortando envio restante`);
+                        try { fs.unlinkSync(filePath); } catch (_) {}
+                        break;
+                    }
+                    throw sendErr;
+                }
                 try { fs.unlinkSync(filePath); } catch (_) {}
                 if (allFiles.length > 1) await new Promise(r => setTimeout(r, 800));
             }
 
-            return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            return await safeReactStatus(reactStatus, sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
 
         } catch (e) {
+            if (isConnectionClosedError(e)) {
+                console.warn(`[DL] operação abortada por conexão fechada (428): ${e.message}`);
+                // Limpa arquivos parciais sem tentar responder no WhatsApp (socket morto)
+                try {
+                    const partial = findDownloadedFiles(id);
+                    for (const f of partial) { try { fs.unlinkSync(f); } catch (_) {} }
+                } catch (_) {}
+                return currentBotResponse;
+            }
             console.error(`\x1b[31m[DOWNLOAD ERROR]\x1b[0m ${e.message}`);
             if (e.stack) console.error(`\x1b[2m${e.stack.split('\n').slice(1, 3).join('\n')}\x1b[0m`);
 
             const partial = findDownloadedFiles(id);
             for (const f of partial) { try { fs.unlinkSync(f); } catch (_) {} }
 
-            currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
-            await sock.sendMessage(from, {
-                text: `❌ *Falha no Download!*\n\n💬 *Motivo:* ${e.message}\n\n💡 Tente novamente ou use um link diferente.`
-            }, { quoted: m });
+            try { await safeReactStatus(reactStatus, sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
+            try {
+                await safeSend(sock, from, {
+                    text: `❌ *Falha no Download!*\n\n💬 *Motivo:* ${e.message}\n\n💡 Tente novamente ou use um link diferente.`
+                }, m);
+            } catch (_) {}
             return currentBotResponse;
         }
     }

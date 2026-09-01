@@ -1,0 +1,48 @@
+# Overlay Docker: Nginx + Certbot para botantigravity.duckdns.org
+# Uso: docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+# Requer que o bot já esteja no docker-compose.yml original (whatsapp-bot:3000)
+# Pré-requisito: portas 80 e 443 liberadas no roteador (em vez de só 3000)
+
+services:
+  whatsapp-bot:
+    # expõe só internamente; nginx faz o proxy
+    expose:
+      - "3000"
+    # não precisa de ports: 3000:3000 quando nginx está no mesmo network
+    networks:
+      - web
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-duckdns
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/botantigravity.duckdns.org.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - whatsapp-bot
+    networks:
+      - web
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot-duckdns
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    # Não roda daemon; execute manualmente para emitir/renovar:
+    # docker compose -f docker-compose.yml -f docker-compose.nginx.yml run --rm certbot certonly --webroot -w /var/www/certbot -d botantigravity.duckdns.org --email seu@email.com --agree-tos --no-eff-email
+    # Renovação: docker compose -f docker-compose.yml -f docker-compose.nginx.yml run --rm certbot renew && docker exec nginx-duckdns nginx -s reload
+    entrypoint: ""
+    command: sleep infinity
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge

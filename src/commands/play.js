@@ -254,14 +254,22 @@ module.exports = {
                 throw new Error('Arquivo não foi gerado');
             }
         } catch (e) {
+            const isConnClosed = e?.output?.statusCode === 428 || String(e?.message || '').includes('Connection Closed') || String(e?.message || '').includes('Precondition Required');
+            if (isConnClosed) {
+                console.warn(`⚠️ [PLAY] conexão fechada (428) — abortando sem responder`);
+                try { if (typeof outPath !== 'undefined' && outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
+                return currentBotResponse;
+            }
             try { if (typeof outPath !== 'undefined' && outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
             console.error('❌ [PLAY] Falha geral:', e);
             const is403 = e.message.includes('403') || e.message.includes('Forbidden');
             const hint = is403
-                ? '\n\n💡 *YouTube bloqueou seu IP (403 Forbidden).* Soluções:\n1. Crie `cookies.txt` na raiz (extensão \"Get cookies.txt\" logado no YouTube)\n2. Ou use `!dl <link>` que já tem fallback automático'
+                ? '\n\n💡 *YouTube bloqueou seu IP (403 Forbidden).* Soluções:\n1. Crie `cookies.txt` na raiz (extensão "Get cookies.txt" logado no YouTube)\n2. Ou use `!dl <link>` que já tem fallback automático'
                 : '';
-            await sock.sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${e.message.slice(0, 200)}\`` }, { quoted: m });
-            currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            try { await sock.sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${e.message.slice(0, 200)}\`` }, { quoted: m }); } catch (sendErr) {
+                if (sendErr?.output?.statusCode !== 428 && !String(sendErr?.message || '').includes('Connection Closed')) throw sendErr;
+            }
+            try { currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
         }
 
         return currentBotResponse;

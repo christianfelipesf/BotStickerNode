@@ -316,10 +316,16 @@ module.exports = {
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
-                console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
-                cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
-                if (botActiveInGroup || !isGroup) {
-                    safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                const isConnClosed = cmdErr?.output?.statusCode === 428 || cmdErr?.output?.statusCode === 515 || String(cmdErr?.message || '').includes('Connection Closed') || String(cmdErr?.message || '').includes('Precondition Required');
+                if (isConnClosed) {
+                    console.warn(`⚠️ [CMD-WARN] ${effectivePrefix}${commandName}: conexão fechada (428) após ${elapsed}ms — ignorado, reconexão automática`);
+                    cmdLog('WARN', `Connection Closed (após ${elapsed}ms) — socket será reconectado`);
+                } else {
+                    console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
+                    cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
+                    if (botActiveInGroup || !isGroup) {
+                        safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                    }
                 }
             }
 

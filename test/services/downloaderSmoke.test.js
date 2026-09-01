@@ -197,6 +197,7 @@ describe('Smoke: /api/download endpoint', () => {
     let server;
     let app;
     let port;
+    let cleanupTimer;
 
     const mockDownloadMedia = mock.fn();
 
@@ -218,12 +219,13 @@ describe('Smoke: /api/download endpoint', () => {
             entry.count++;
             return entry.count <= DL_RATE_MAX;
         }
-        setInterval(() => {
+        cleanupTimer = setInterval(() => {
             const now = Date.now();
             for (const [key, entry] of downloadRateLimitMap) {
                 if ((now - entry.windowStart) > DL_RATE_WINDOW * 2) downloadRateLimitMap.delete(key);
             }
         }, DL_RATE_WINDOW);
+        if (cleanupTimer.unref) cleanupTimer.unref();
 
         app.post('/api/download', (req, res, next) => {
             if (!downloadRateLimit(req)) return res.status(429).json({ ok: false, error: 'Muitos downloads. Aguarde alguns segundos.' });
@@ -252,6 +254,7 @@ describe('Smoke: /api/download endpoint', () => {
 
     after(() => {
         if (server) server.close();
+        if (typeof cleanupTimer !== 'undefined' && cleanupTimer) clearInterval(cleanupTimer);
     });
 
     it('GET sem url retorna 400', async () => {
