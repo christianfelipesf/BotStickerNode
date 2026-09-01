@@ -1,0 +1,140 @@
+﻿========================================
+TUTORIAL - Hospedar Bot no DuckDNS (modo mais facil)
+Dominio: botantigravity.duckdns.org  ->  177.47.48.5
+Data: 01/09/2026 - verificado e corrigido
+Token: f35c8fc7-99cc-46c0-90d0-fdaa6194cd91 (nao compartilhe)
+========================================
+
+[STATUS ATUAL - JA FEITO]
+- DNS DuckDNS corrigido: botantigravity.duckdns.org -> 177.47.48.5  (estava 200.234.207.171)
+  Comando usado: https://www.duckdns.org/update?domains=botantigravity&token=SEU_TOKEN&ip=177.47.48.5  -> OK
+- Dashboard local OK: http://127.0.0.1:3000/api/health -> 200 {"ok":true}  (porta 3000 LISTEN em 0.0.0.0)
+- Updater automatico criado: Tarefa Agendada "DuckDNS-botantigravity" a cada 5 min (Ready)
+  Ela roda: powershell Invoke-RestMethod https://www.duckdns.org/update?domains=botantigravity&token=SEU_TOKEN&ip=
+  Para ver/editar: Task Scheduler -> Biblioteca -> DuckDNS-botantigravity
+- Tailscale Funnel DESATIVADO a pedido (so DuckDNS agora)
+
+[O QUE FALTA - UNICA COISA MANUAL]
+Voce ja fez a parte dificil. So falta liberar a porta 3000 no ROTEADOR + FIREWALL.
+Sem isso, http://botantigravity.duckdns.org:3000 ainda da TIMEOUT (testado agora).
+
+========================================
+PASSO 1 - DESCOBRIR IP LOCAL DO PC (1 min)
+========================================
+No PowerShell:
+  ipconfig
+Procure "Adaptador Wi-Fi" ou "Ethernet" -> Endereco IPv4: ex 192.168.1.2 ou 192.168.0.5
+Anote. Esse PC hoje esta em 10.0.8.4 / 192.168.1.2 (ver tailscale status Addrs).
+
+========================================
+PASSO 2 - LIBERAR FIREWALL WINDOWS (1 min, PowerShell ADMIN)
+========================================
+Abra PowerShell como Administrador e cole:
+
+  New-NetFirewallRule -DisplayName "WhatsApp Dashboard 3000" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+
+Teste na mesma rede (celular no mesmo Wi-Fi):
+  http://192.168.1.2:3000/api/health  (troque pelo IP do ipconfig)
+Tem que dar {"ok":true}. Se nao der, firewall ainda bloqueia.
+
+Para remover depois:
+  Remove-NetFirewallRule -DisplayName "WhatsApp Dashboard 3000"
+
+========================================
+PASSO 3 - PORT FORWARD NO ROTEADOR (3 min)
+========================================
+1. Descubra gateway: ipconfig -> Gateway padrao (ex 192.168.1.1 ou 192.168.0.1)
+2. Abra no navegador: http://192.168.1.1  (login esta na etiqueta do roteador, geralmente admin/admin)
+3. Procure: "Port Forwarding" / "Encaminhamento de Porta" / "NAT" / "Virtual Server"
+4. Crie regra:
+   Nome: bot-dashboard
+   Protocolo: TCP
+   Porta externa: 3000
+   Porta interna: 3000
+   IP interno: 192.168.1.2  (IP do PASSO 1)
+   Ativar: SIM
+
+Dica: alguns roteadores pedem "Origem: Qualquer" e "Destino: 192.168.1.2:3000"
+
+Salve e reinicie roteador se pedir.
+
+Se seu roteador mostra na WAN um IP 100.64.x.x , 10.x.x.x ou 192.168.x.x, voce esta em CGNAT
+e port-forward NAO vai funcionar. Nesse caso unica saida facil sem Tailscale e usar Cloudflare Tunnel
+ou ngrok. Mas seu IP publico 177.47.48.5 parece publico real, entao deve funcionar.
+
+========================================
+PASSO 4 - TESTAR DE FORA (celular no 4G, nao no Wi-Fi)
+========================================
+No celular com dados moveis:
+
+  http://botantigravity.duckdns.org:3000/api/health
+  http://botantigravity.duckdns.org:3000/          (dashboard)
+  http://botantigravity.duckdns.org:3000/dashboard
+
+Tem que abrir. Se der timeout, volte ao PASSO 3 (porta errada ou CGNAT).
+
+Teste rapido no PC tambem (simula externo):
+  Invoke-WebRequest http://botantigravity.duckdns.org:3000/api/health -UseBasicParsing
+
+========================================
+PASSO 5 - HTTPS (opcional, so se quiser https:// sem :3000)
+========================================
+DuckDNS puro e HTTP. Se quiser https://botantigravity.duckdns.org sem porta, instale Caddy:
+
+1. Baixe caddy.exe em https://caddyserver.com/download
+2. Crie Caddyfile na pasta do bot:
+   botantigravity.duckdns.org {
+       reverse_proxy localhost:3000
+   }
+3. Rode:  caddy run
+   Ele pega certificado Let's Encrypt automatico.
+   Ai dashboardUrl no bot pode ser https://botantigravity.duckdns.org (sem :3000)
+
+Se nao precisa de HTTPS, ignore e use http://botantigravity.duckdns.org:3000 mesmo.
+
+========================================
+MANUTENCAO - JA AUTOMATIZADO
+========================================
+- DuckDNS ja atualiza sozinho a cada 5 min via tarefa agendada. Nao precisa fazer nada quando IP mudar.
+- Ver manualmente: nslookup botantigravity.duckdns.org 8.8.8.8  deve dar 177.47.48.5
+- Forcar update manual: https://www.duckdns.org/update?domains=botantigravity&token=f35c8fc7-99cc-46c0-90d0-fdaa6194cd91&ip=
+  Resposta "OK" = sucesso.
+
+Se o bot estiver em VPS/docker, adicione no cron:
+  */5 * * * * curl -s "https://www.duckdns.org/update?domains=botantigravity&token=SEU_TOKEN&ip=" >/dev/null
+
+========================================
+SOBRE MAGICDNS (TAILSCALE)
+========================================
+Voce pediu sem funnel, entao MagicDNS fica so como rede privada, nao como hospedagem publica.
+Seu MagicDNS: desktop-o8tul47.taile39a44.ts.net -> 100.90.25.123  (ativo, mas sem serve/funnel agora)
+Serve para voce acessar o bot de qualquer device logado na sua conta christian.felipe18@gmail.com sem expor na internet.
+Se quiser reativar depois (sem mexer no roteador):
+  tailscale serve --bg http://127.0.0.1:3000
+  # acesso privado: http://100.90.25.123:3000
+
+========================================
+COMANDOS UTEIS
+========================================
+nslookup botantigravity.duckdns.org 8.8.8.8
+Resolve-DnsName botantigravity.duckdns.org
+curl https://api.ipify.org
+Invoke-WebRequest http://127.0.0.1:3000/api/health -UseBasicParsing
+Get-ScheduledTask -TaskName "DuckDNS-botantigravity"
+Get-NetFirewallRule -DisplayName "WhatsApp Dashboard 3000"
+netstat -ano | findstr :3000
+
+Logs bot: logs/terminal_*.log  e  logs/access.log
+Config bot: src/database/utils.js:205 dashboardUrl = "https://botantigravity.duckdns.org"
+
+========================================
+RESUMO - O QUE FAZER AGORA
+========================================
+[OK] DuckDNS apontado para 177.47.48.5
+[OK] Updater a cada 5 min criado
+[OK] Dashboard rodando em 0.0.0.0:3000
+[  ] FALTA: liberar firewall (PASSO 2) + port forward 3000 -> 192.168.1.2 no roteador (PASSO 3)
+Depois disso: http://botantigravity.duckdns.org:3000 funciona de qualquer lugar.
+
+Se travar no roteador, me mande print da tela de Port Forwarding e do ipconfig.
+========================================

@@ -41,6 +41,10 @@ module.exports = {
             `│ 🧹 *${p}limpar* [n] — apaga mensagens\n` +
             `│ 🗑️ *${p}deletarmsg* (responda) — apaga mensagem marcada\n` +
             `╰───────────────\n\n` +
+            `╭─── *FEEDBACK* ───\n` +
+            `│ 📋 *${p}feedbacklog* — TXT único com bugs+sugestões (marca tipo)\n` +
+            `│ 🧹 *${p}limparfeedback* [bug|sugestao|all] — limpa logs\n` +
+            `╰───────────────\n\n` +
             `╭─── *GRUPO* ───\n` +
             `│ 📢 *${p}mencionar* [texto] — marca todos\n` +
             `│ 💬 *${p}cita* (responda mensagem) — reescreve marcando todos\n` +

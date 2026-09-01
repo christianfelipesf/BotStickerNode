@@ -18,7 +18,7 @@ const {
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif, mediaToGifVideo,
     isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
-    getStickerPackForJid, getStickerAuthorForJid
+    getGroupData
 } = require('../database/utils');
 
 async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts = {}) {
@@ -52,7 +52,30 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
         if (!senderName || senderName === 'Usuário') {
             senderName = 'Usuário';
         }
-        let revealCaption = `🔓 *Mídia Revelada!* 🔓\n👤 *De:* ${senderName}${originalCaption ? `\n💬 *Legenda:* ${originalCaption}` : ''}`;
+        // visual igual ao de mídia convertida (╭─── / │ / ╰───────────────)
+        const botNameForReveal = (() => {
+            try {
+                const cfg = explicitOpts.config || require('../database/utils').readConfig();
+                return getBotName(from, cfg);
+            } catch (_) { return 'Bot'; }
+        })();
+        const senderNum = String(sender || '').split('@')[0].split(':')[0] || 'usuário';
+        const captionLegenda = originalCaption ? String(originalCaption).trim().slice(0, 900) : '';
+        let revealCaption;
+        if (captionLegenda) {
+            revealCaption = `╭─── *🔓 MÍDIA REVELADA* ───\n` +
+                `│ 👤 *De:* @${senderNum}\n` +
+                `│ 🤖 *Por:* ${botNameForReveal}\n` +
+                `│ 💬 *Legenda:* ${captionLegenda}\n` +
+                `│ ⚡ *Status:* Concluído\n` +
+                `╰───────────────`;
+        } else {
+            revealCaption = `╭─── *🔓 MÍDIA REVELADA* ───\n` +
+                `│ 👤 *De:* @${senderNum}\n` +
+                `│ 🤖 *Por:* ${botNameForReveal}\n` +
+                `│ ⚡ *Status:* Concluído\n` +
+                `╰───────────────`;
+        }
         const opts = { mentions: [sender], quoted: m };
 
         const dashboardOn = isDashboardEnabled(from);
@@ -140,7 +163,8 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         if (!buffer) throw new Error();
 
         if (action === 'reveal') {
-            return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts);
+            const revealOpts = { ...explicitOpts, config };
+            return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, revealOpts);
         }
 
         // caption padrão para mídias convertidas (estilo menu)
@@ -166,16 +190,23 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 const detectedMime = mediaMessage.videoMessage
                     ? (mediaMessage.videoMessage.mimetype || 'video/mp4')
                     : (mediaMessage.imageMessage?.mimetype || 'image/jpeg');
-                // pack/author: 1) explícito via !s pack/autor, 2) por grupo, 3) fallback requester/bot
+                // pack/author: 1) explícito via !s pack/autor, 2) per-grupo se configurado, 3) fallback requester/bot
+                // Antes buscava getStickerPackForJid que sempre retorna "Antigravity Bot🪐" (global default) e mascarava pushName
                 let pack = explicitOpts.pack || null;
                 let author = explicitOpts.author || null;
                 if (!pack) {
-                    try { pack = getStickerPackForJid(from) || null; } catch (_) {}
+                    try {
+                        const gd = getGroupData(from);
+                        if (gd && gd.stickerPack) pack = String(gd.stickerPack).slice(0, 30) || null;
+                    } catch (_) {}
                 }
                 if (!author) {
-                    try { author = getStickerAuthorForJid(from) || null; } catch (_) {}
+                    try {
+                        const gd = getGroupData(from);
+                        if (gd && gd.stickerAuthor) author = String(gd.stickerAuthor).slice(0, 30) || null;
+                    } catch (_) {}
                 }
-                if (!pack) pack = m.pushName || 'Usuário';
+                if (!pack) pack = (m.pushName || 'Usuário').slice(0, 30) || 'Usuário';
                 if (!author) author = getBotName(from, config);
                 const requesterName = pack;
                 const botName = author;
