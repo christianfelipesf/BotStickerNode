@@ -26,7 +26,7 @@ function _getApi() {
     if (_api) return _api;
     const t = _getToken();
     if (!t) return null;
-    _api = axios.create({ baseURL: `https://api.telegram.org/bot${t}`, timeout: 35000 });
+    _api = axios.create({ baseURL: `https://api.telegram.org/bot${t}`, timeout: 40000 });
     return _api;
 }
 
@@ -208,8 +208,11 @@ async function pollOnce() {
         }
     } catch (e) {
         const msg = e.response?.data?.description || e.message || String(e);
-        // 409 conflict = outro getUpdates ativo (ex: test manual) — espera
-        if (String(msg).includes('409') || String(msg).includes('conflict')) {
+        // timeout de long-poll sem mensagens é normal — não polui log
+        if (e.code === 'ECONNABORTED' || String(msg).toLowerCase().includes('timeout')) {
+            // silêncio: apenas aguarda próximo ciclo
+            await new Promise(r => setTimeout(r, 1000));
+        } else if (String(msg).includes('409') || String(msg).includes('conflict')) {
             console.warn('⚠️ [telegramBot] polling conflito 409 — aguardando 10s');
             await new Promise(r => setTimeout(r, 10000));
         } else {
@@ -227,7 +230,7 @@ function start(opts = {}) {
         return null;
     }
     _token = tok; _allowedChatId = String(chat);
-    _api = axios.create({ baseURL: `https://api.telegram.org/bot${_token}`, timeout: 35000 });
+    _api = axios.create({ baseURL: `https://api.telegram.org/bot${_token}`, timeout: 40000 });
     if (_pollTimer) clearInterval(_pollTimer);
     // polling a cada 3s + long poll 25s
     _pollTimer = setInterval(() => pollOnce().catch(()=>{}), 3000);

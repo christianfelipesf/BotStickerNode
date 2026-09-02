@@ -233,8 +233,26 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 await sock.sendMessage(from, { text: '❌ Marque um vídeo ou sticker animado.' }, { quoted: m });
                 return lastBotResponse;
             }
+            // Detecta sticker animado de verdade (ANIM chunk) — estático falha de forma silenciosa antes
+            let isAnimatedSticker = !!mediaMessage.stickerMessage?.isAnimated;
+            try { if (isSticker && buffer && buffer.includes(Buffer.from('ANIM'))) isAnimatedSticker = true; } catch (_) {}
+            if (isSticker && !isAnimatedSticker) {
+                await sock.sendMessage(from, { text: '❌ Esse sticker é estático. Use *!toimg* para converter estáticos e *!togif* apenas em stickers animados/vídeos.' }, { quoted: m });
+                return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            }
             const mimeType = isSticker ? 'sticker/webp' : (mediaMessage.videoMessage?.mimetype || 'video/mp4');
-            const gifVideo = await mediaToGifVideo(buffer, mimeType);
+            let gifVideo;
+            try {
+                gifVideo = await mediaToGifVideo(buffer, mimeType);
+            } catch (e) {
+                console.error(`❌ [TOGIF] mediaToGifVideo falhou isSticker=${isSticker} mime=${mimeType} bytes=${buffer.length} err=${e.message}`);
+                const msg = String(e.message||'');
+                if (msg.includes('muito grande')) await sock.sendMessage(from, { text: '❌ Mídia muito grande (max 20MB).' }, { quoted: m });
+                else if (msg.includes('timeout')) await sock.sendMessage(from, { text: '❌ Tempo esgotado ao converter. Tente um vídeo mais curto.' }, { quoted: m });
+                else if (msg.includes('sem frames')) await sock.sendMessage(from, { text: '❌ Não consegui ler os frames desse sticker. Tente outro.' }, { quoted: m });
+                else await sock.sendMessage(from, { text: `❌ Falha ao converter para GIF: ${msg.slice(0,120)}` }, { quoted: m });
+                throw e;
+            }
             await sock.sendMessage(from, { video: gifVideo, gifPlayback: true, mimetype: 'video/mp4', caption: captionConvertido }, { quoted: m });
         } else if (action === 'speed') {
             if (!mediaMessage.videoMessage && !mediaMessage.audioMessage) {
@@ -248,6 +266,8 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     } catch (error) {
+        console.error(`❌ [handleMediaCommand:${action}] erro: ${error.message} | stack=${error.stack?.split('\n')[1]?.trim()||''}`);
+        try { require('../dashboard/dashboard').log('error', 'MÍDIA', `❌ ${action} falhou: ${error.message.slice(0,180)}`, 'Sistema', '—'); } catch (_) {}
         return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }
 }

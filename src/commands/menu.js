@@ -47,8 +47,7 @@ module.exports = {
             `│ 🖼️ *${p}s* — cria sticker\n` +
             `│ 🏷️ *${p}rename* pack/autor — pack e autor do sticker\n` +
             `│ 🔓 *${p}revelar* — revela view once\n` +
-            `│ 🔄 *${p}toimg* — sticker → mídia\n` +
-            `│ 🎞️ *${p}togif* — vídeo/sticker → gif\n` +
+            `│ 🔄 *${p}toimg* — sticker → mídia (alias: togif/gif)\n` +
             `│ ✨ *${p}stexto* <texto> — sticker de texto\n` +
             `│ 🎵 *${p}play* <nome> — baixa música\n` +
             `│ 📥 *${p}dl* <link> — download\n` +

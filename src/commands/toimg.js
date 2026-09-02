@@ -1,6 +1,6 @@
 module.exports = {
     name: 'toimg',
-    aliases: ['tovideo', 'pramidia'],
+    aliases: ['tovideo', 'pramidia', 'togif', 'gif'],
     category: 'mídia',
     description: 'Converte sticker para imagem ou vídeo',
     async execute(sock, m, { from, config, mediaHandler, lastBotResponse, GLOBAL_COOLDOWN }) {

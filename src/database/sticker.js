@@ -598,8 +598,10 @@ async function mediaToGifVideo(buffer, mimeType) {
                         .on('error', (e) => { clearTimeout(to); reject(e); })
                         .save(outputPath);
                 });
-            } catch (_) {
+            } catch (firstErr) {
+                console.warn(`⚠️ [TOGIFVIDEO] ffmpeg direto falhou (${firstErr.message}) — fallback stickerToMedia`);
                 const { buffer: mp4Buffer } = await stickerToMedia(buffer, true);
+                if (!mp4Buffer || mp4Buffer.length < 512) throw new Error('Fallback gerou vídeo vazio');
                 fs.writeFileSync(outputPath, mp4Buffer);
             }
         } else {
