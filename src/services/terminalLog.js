@@ -6,10 +6,16 @@ if (!fs.existsSync(logsDir)) {
     try { fs.mkdirSync(logsDir, { recursive: true }); } catch (_) {}
 }
 
-const RING_MAX = 50;
+const RING_MAX = 100;
 const ring = [];
 
 const { isLibsignalNoise: _isLibsignalNoise, pad, tsLabel, fileLabel } = require('./logFilter');
+
+// Diagnóstico de sessão: mesmo que isLibsignalNoise filtre console, terminalLog deve guardar esses sinais
+const _SESSION_DIAG_RE = /(closing session|decrypted message with closed session|bad mac|session error)/i;
+function _isSessionDiag(text) {
+    try { return _SESSION_DIAG_RE.test(String(text||'')); } catch(_) { return false; }
+}
 
 function getSessionLogFile(d) {
     return path.join(logsDir, `terminal_${fileLabel(d)}.log`);
@@ -51,7 +57,7 @@ function _scheduleLogFlush() {
 function push(level, args) {
     const text = serialize(args);
     if (!text) return;
-    if (_isLibsignalNoise(text)) return;
+    if (_isLibsignalNoise(text) && !_isSessionDiag(text)) return;
     const now = new Date();
     const entry = {
         ts: now.getTime(),
@@ -65,8 +71,17 @@ function push(level, args) {
     if (_logBuffer.length >= 20) { _flushLogBuffer(); } else { _scheduleLogFlush(); }
 }
 
-// Flush no exit
-process.on('beforeExit', _flushLogBuffer);
+function flushSync() {
+    try { _flushLogBuffer(); } catch(_) {}
+    // drain any remaining scheduled timer
+    try { if (_logFlushTimer) { clearTimeout(_logFlushTimer); _logFlushTimer = null; _flushLogBuffer(); } } catch(_) {}
+}
+
+// Flush no exit / SIGTERM / SIGINT — garante que close reason não se perca
+process.on('beforeExit', flushSync);
+try { process.on('exit', flushSync); } catch(_) {}
+try { process.on('SIGTERM', () => { flushSync(); }); } catch(_) {}
+try { process.on('SIGINT', () => { flushSync(); }); } catch(_) {}
 
 function getLast(n = 15) {
     const limit = Math.max(1, Math.min(RING_MAX, Number(n) || 15));
@@ -118,5 +133,7 @@ module.exports = {
     getLast,
     getBufferSize,
     getRingMax,
-    getLogsDir
+    getLogsDir,
+    flushSync,
+    _flushLogBuffer
 };

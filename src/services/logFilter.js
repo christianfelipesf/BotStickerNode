@@ -29,7 +29,14 @@ const _LIB_PATTERNS = [
     /Buffer\s+[0-9a-f]{2}\s+[0-9a-f]{2}/i,
 ];
 
-const isLibsignalNoise = (str) => _LIB_PATTERNS.some(re => re.test(String(str || '')));
+const _SESSION_DIAG_RE = /(Decrypted message with closed session|Closing session:|Session error:|Bad MAC)/i;
+const isLibsignalNoise = (str) => {
+    const s = String(str || '');
+    // Sempre preservar diagnóstico de sessão para terminalLog (bypass lá), mas filtrar do console
+    // Se for diag, considerar noise para logger.js wrapStream mas permitir bypass em terminalLog via _SESSION_DIAG_RE check
+    return _LIB_PATTERNS.some(re => re.test(s));
+};
+const isSessionDiag = (str) => _SESSION_DIAG_RE.test(String(str||''));
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -41,4 +48,4 @@ function tsLabel(d = new Date()) { return ts(d); }
 
 function fileLabel(d = new Date()) { return d.toISOString().slice(0, 10); }
 
-module.exports = { _LIB_PATTERNS, isLibsignalNoise, pad, ts, tsLabel, fileLabel };
+module.exports = { _LIB_PATTERNS, isLibsignalNoise, isSessionDiag, pad, ts, tsLabel, fileLabel };

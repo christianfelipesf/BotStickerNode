@@ -97,6 +97,7 @@ let _fatalExiting = false;
 function _fatalExit(label, err) {
     console.error(`💥 [${label}]:`, err);
     try { flushNow(); } catch (_) {}
+    try { terminalLog.flushSync(); } catch (_) {}
     try { dashboard.log('error', 'SISTEMA', `${label}: ${err?.message || err}`); } catch (_) {}
     // Estado do processo é indefinido após erro fatal — sai para o gerenciador reiniciar.
     process.exitCode = 1;
@@ -105,17 +106,29 @@ function _fatalExit(label, err) {
 }
 process.on('uncaughtException', (err) => {
     if (_fatalExiting) return;
-    if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) return;
+    if (err.message?.includes('Bad MAC') || err.stack?.includes('libsignal')) {
+        console.warn(`⚠️ [BAILEYS][suppressed][uncaughtException] Bad MAC/libsignal — ${err.message?.slice(0,120) || ''}`);
+        return;
+    }
     _fatalExit('ERRO FATAL', err);
 });
 process.on('unhandledRejection', (reason) => {
     if (_fatalExiting) return;
-    if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) return;
+    if (reason?.message?.includes('Bad MAC') || reason?.stack?.includes('libsignal')) {
+        console.warn(`⚠️ [BAILEYS][suppressed][unhandledRejection] Bad MAC/libsignal — ${reason.message?.slice(0,120) || ''}`);
+        return;
+    }
     if (reason?.isBoom) {
         const code = reason.output?.statusCode;
-        if (code === 428 || code === 515 || code === 502) return;
+        if (code === 428 || code === 515 || code === 502) {
+            console.warn(`⚠️ [BAILEYS][suppressed][unhandledRejection] Boom ${code} — ${reason.message || ''} | stack0=${(reason.stack||'').split('\n')[1]?.trim()||''}`);
+            return;
+        }
     }
-    if (reason?.message?.includes('Connection Closed') || reason?.message?.includes('Precondition Required')) return;
+    if (reason?.message?.includes('Connection Closed') || reason?.message?.includes('Precondition Required')) {
+        console.warn(`⚠️ [BAILEYS][suppressed][unhandledRejection] Connection Closed/Precondition — ${reason.message?.slice(0,150) || ''}`);
+        return;
+    }
     _fatalExit('REJEIÇÃO NÃO TRATADA', reason);
 });
 
@@ -211,12 +224,16 @@ async function startBot() {
             // news desativado é mostrado no boot summary (não loga aqui)
         } catch (_) {}
 
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', async (...args) => {
+            try { await saveCreds(...args); }
+            catch (e) { console.error(`⚠️ [creds.update] falha ao salvar creds: ${e.message} | stack0=${(e.stack||'').split('\n')[1]?.trim()||''}`); }
+        });
 
+        let _connAttemptId = 0;
         sock.ev.on('connection.update', (u) => {
             if (u.qr) {
                 _qrAttempts++;
-                console.log(`\n⚡ --- QR CODE #${_qrAttempts} --- ⚡`);
+                console.log(`\n⚡ --- QR CODE #${_qrAttempts}/${MAX_QR_ATTEMPTS} (attemptId=${_restartNumber}-${_qrAttempts}) --- ⚡`);
                 qrcode.generate(u.qr, { small: true });
                 try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
                 if (_qrAttempts >= MAX_QR_ATTEMPTS) {
@@ -226,9 +243,14 @@ async function startBot() {
             if (u.connection === 'close') {
                 global.__baileysSock = null;
                 _reconnecting = false;
-                const code = (u.lastDisconnect.error instanceof Boom)
-                    ? u.lastDisconnect.error.output?.statusCode
-                    : u.lastDisconnect.error?.statusCode;
+                const lastErr = u.lastDisconnect?.error;
+                const code = (lastErr instanceof Boom)
+                    ? lastErr.output?.statusCode
+                    : lastErr?.statusCode || lastErr?.output?.statusCode;
+                const reasonName = (() => { try { if (DisconnectReason[code]) return String(DisconnectReason[code]); for (const [k,v] of Object.entries(DisconnectReason)) if (v===code) return k; } catch(_){} return 'unknown'; })();
+                const boomMsg = lastErr?.message || lastErr?.output?.payload?.message || '';
+                const stack0 = (lastErr?.stack||'').split('\n')[1]?.trim()||'';
+                console.warn(`🔌 [CONNECTION] close code=${code ?? '?'} reason=${reasonName} boom=${!!(lastErr instanceof Boom)} msg="${String(boomMsg).slice(0,150)}" stack0="${stack0}" attemptId=${_restartNumber}-${_qrAttempts} isBoom=${!!lastErr?.isBoom}`);
                 try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');
@@ -240,15 +262,18 @@ async function startBot() {
                     return;
                 }
                 if (code !== DisconnectReason.loggedOut) {
-                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
+                    console.log(`🔄 [CONNECTION] reconectando em 5s (code=${code} reason=${reasonName})`);
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, 5000);
                 } else {
+                    console.warn(`🔑 [CONNECTION] loggedOut — limpando session e reconectando`);
                     try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
                     _qrAttempts = 0;
-                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message)); }, 5000);
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, 5000);
                 }
             } else if (u.connection === 'open') {
                 _reconnecting = false;
                 _qrAttempts = 0;
+                _connAttemptId++;
                 global.__baileysEnabled = true;
                 try {
                     const { readConfig, writeConfig } = require('./src/database/utils');
@@ -260,7 +285,7 @@ async function startBot() {
                 const stats = utils.readStats();
                 const ts = new Date().toLocaleString('pt-BR');
                 const phone = sock.user?.id?.split?.(':')?.[0] || null;
-                console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version})\n`);
+                console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version} | attemptId=${_restartNumber}-${_connAttemptId} | phone=${phone || '?'})\n`);
                 try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');
@@ -268,18 +293,29 @@ async function startBot() {
                 } catch (_) {}
                 try {
                     dashboard.log('action', 'SISTEMA',
-                        `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0}`,
+                        `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0} • ${phone||''}`,
                         'Sistema', '—');
                 } catch (_) {}
             }
+            if (u.connection === 'connecting') {
+                console.log(`⏳ [CONNECTION] connecting... attemptId=${_restartNumber}-${_qrAttempts}`);
+            }
         });
 
-    // Evento de erro do socket (evita unhandled rejection com Boom 428 etc)
+    // Evento de erro do socket (evita unhandled rejection com Boom 428 etc) — agora loga WARN antes de suprimir
     sock.ev.on('error', (err) => {
         const code = err?.output?.statusCode;
-        if (code === 428 || code === 515 || code === 502) return;
-        if (err?.message?.includes('Connection Closed') || err?.message?.includes('Precondition Required')) return;
-        console.error('🔌 [SOCKET ERROR]:', err?.message || err);
+        const msg = err?.message || String(err||'');
+        const stack0 = (err?.stack||'').split('\n')[1]?.trim()||'';
+        if (code === 428 || code === 515 || code === 502) {
+            console.warn(`⚠️ [BAILEYS][suppressed][socket.error] Boom ${code} — ${msg.slice(0,150)} | stack0=${stack0}`);
+            return;
+        }
+        if (msg.includes('Connection Closed') || msg.includes('Precondition Required')) {
+            console.warn(`⚠️ [BAILEYS][suppressed][socket.error] Connection Closed/Precondition — ${msg.slice(0,150)} | stack0=${stack0}`);
+            return;
+        }
+        console.error('🔌 [SOCKET ERROR]:', msg, '| stack0=', stack0);
     });
 
     // Evento de Participantes do Grupo (Adição/Remoção/Admin)
@@ -293,9 +329,10 @@ async function startBot() {
     });
     } catch (e) {
         _reconnecting = false;
-        console.error('💥 [startBot] falhou:', e.message);
+        console.error(`💥 [startBot] falhou: ${e.message} | stack0=${(e.stack||'').split('\n')[1]?.trim()||''}`, e.stack || '');
+        try { terminalLog.flushSync(); } catch (_) {}
         if (_qrAttempts < MAX_QR_ATTEMPTS) {
-            setTimeout(() => { startBot().catch(e2 => console.error('reconnect falhou:', e2.message)); }, 5000);
+            setTimeout(() => { startBot().catch(e2 => console.error('reconnect falhou:', e2.message, e2.stack?.split('\n')[1]?.trim()||'')); }, 5000);
         }
     }
 }
