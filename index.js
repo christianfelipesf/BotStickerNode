@@ -44,6 +44,9 @@ const dashboard = require('./src/dashboard/dashboard');
 const news = require('./src/services/news');
 const subSessions = require('./src/services/subSessions');
 const { startTempCleanup } = require('./src/services/tempCleanup');
+const watchdog = require('./src/services/watchdog');
+const telegram = require('./src/services/telegramAlerts');
+const telegramBot = require('./src/services/telegramBot');
 
 // Inicializar Filtro de Logs
 initLogger();
@@ -57,8 +60,16 @@ terminalLog.init();
 // --- Configuração Global ---
 const config = readConfig();
 
+// Configura Telegram se env estiver presente
+try {
+    const tok = (process.env.TELEGRAM_BOT_TOKEN || config.telegramBotToken || '').trim();
+    const chat = (process.env.TELEGRAM_CHAT_ID || config.telegramChatId || '').trim();
+    if (tok && chat) telegram.configure({ token: tok, chatId: chat });
+} catch (_) {}
+
 // Expõe serviços para que comandos (ex: set.js) possam controlá-los em runtime.
-global.__botServices = { news, dashboard };
+global.__botServices = { news, dashboard, watchdog, telegram, telegramBot };
+global.__startTime = Date.now();
 
 // Iniciar Dashboard (Modular) - totalmente isolado
 try {
@@ -99,6 +110,7 @@ function _fatalExit(label, err) {
     try { flushNow(); } catch (_) {}
     try { terminalLog.flushSync(); } catch (_) {}
     try { dashboard.log('error', 'SISTEMA', `${label}: ${err?.message || err}`); } catch (_) {}
+    try { telegram.notifyError({ botName: config.botName, error: `${label}: ${err?.message || err}` }).catch(()=>{}); } catch (_) {}
     // Estado do processo é indefinido após erro fatal — sai para o gerenciador reiniciar.
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 500).unref();
@@ -173,6 +185,8 @@ console.log('═'.repeat(60));
 let _qrAttempts = 0;
 const MAX_QR_ATTEMPTS = 3;
 let _reconnecting = false;
+let _reconnectBackoffMs = 5000;
+const RECONNECT_BACKOFF_MAX = 60000;
 global.__qrControl = {
     getAttempts: () => _qrAttempts,
     getMaxAttempts: () => MAX_QR_ATTEMPTS,
@@ -208,10 +222,28 @@ async function startBot() {
             logger: pino({ level: 'fatal' }),
             printQRInTerminal: false,
             auth: state,
-            browser: [config.botName, 'Chrome', '120.0.0.0']
+            browser: [config.botName, 'Chrome', '120.0.0.0'],
+            keepAliveIntervalMs: 25000,
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            retryRequestDelayMs: 2000,
+            markOnlineOnConnect: true
         });
 
         global.__baileysSock = sock;
+
+        // Inicia bot Telegram de controle (polling)
+        try { telegramBot.start(); } catch (_) {}
+
+        // Inicia watchdog anti-zumbi
+        try {
+            watchdog.start({
+                getSock: () => global.__baileysSock,
+                onZombie: async ({ idleMs, wsState, reason, zombieCount }) => {
+                    try { await telegram.notifyZombie({ botName: config.botName, idleMs, wsState, reason: `${reason} #${zombieCount}` }); } catch (_) {}
+                }
+            });
+        } catch (_) {}
 
         try { dashboard.attachSock(sock); } catch (_) {}
         try { dashboard.pushGroupsSnapshot(); } catch (_) {}
@@ -230,12 +262,17 @@ async function startBot() {
         });
 
         let _connAttemptId = 0;
+        // safety: garante que _reconnecting não fique preso em half-open
+        let _reconnectSafetyTimer = setTimeout(() => { if (_reconnecting) { console.warn('⚠️ [watchdog] _reconnecting travado >30s — liberando'); _reconnecting = false; } }, 30000);
+        if (_reconnectSafetyTimer.unref) _reconnectSafetyTimer.unref();
+
         sock.ev.on('connection.update', (u) => {
             if (u.qr) {
                 _qrAttempts++;
                 console.log(`\n⚡ --- QR CODE #${_qrAttempts}/${MAX_QR_ATTEMPTS} (attemptId=${_restartNumber}-${_qrAttempts}) --- ⚡`);
                 qrcode.generate(u.qr, { small: true });
                 try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
+                try { telegram.notifyQr({ botName: config.botName, attempt: _qrAttempts }).catch(()=>{}); } catch (_) {}
                 if (_qrAttempts >= MAX_QR_ATTEMPTS) {
                     console.log(`⛔ Limite de ${MAX_QR_ATTEMPTS} QR codes atingido. Pare o bot e apague a pasta session/ manualmente ou use o painel admin.`);
                 }
@@ -243,6 +280,7 @@ async function startBot() {
             if (u.connection === 'close') {
                 global.__baileysSock = null;
                 _reconnecting = false;
+                try { clearTimeout(_reconnectSafetyTimer); } catch (_) {}
                 const lastErr = u.lastDisconnect?.error;
                 const code = (lastErr instanceof Boom)
                     ? lastErr.output?.statusCode
@@ -256,22 +294,28 @@ async function startBot() {
                     const principalState = require('./src/services/principalState');
                     principalState.setDisconnected();
                 } catch (_) {}
+                try { telegram.notifyDisconnect({ botName: config.botName, code: code ?? '?', reasonName, phone: null }).catch(()=>{}); } catch (_) {}
                 if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
                     if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
                     else console.log(`⏸️ QR limit reached (${MAX_QR_ATTEMPTS}). Auto-retry stopped.`);
                     return;
                 }
                 if (code !== DisconnectReason.loggedOut) {
-                    console.log(`🔄 [CONNECTION] reconectando em 5s (code=${code} reason=${reasonName})`);
-                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, 5000);
+                    const wait = _reconnectBackoffMs;
+                    _reconnectBackoffMs = Math.min(RECONNECT_BACKOFF_MAX, _reconnectBackoffMs * 2);
+                    console.log(`🔄 [CONNECTION] reconectando em ${Math.round(wait/1000)}s (code=${code} reason=${reasonName} backoff=${wait}ms)`);
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, wait);
                 } else {
                     console.warn(`🔑 [CONNECTION] loggedOut — limpando session e reconectando`);
                     try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
                     _qrAttempts = 0;
+                    _reconnectBackoffMs = 5000;
                     setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, 5000);
                 }
             } else if (u.connection === 'open') {
                 _reconnecting = false;
+                _reconnectBackoffMs = 5000;
+                try { clearTimeout(_reconnectSafetyTimer); } catch (_) {}
                 _qrAttempts = 0;
                 _connAttemptId++;
                 global.__baileysEnabled = true;
@@ -291,6 +335,8 @@ async function startBot() {
                     const principalState = require('./src/services/principalState');
                     principalState.setConnected({ version, phone });
                 } catch (_) {}
+                try { watchdog.touchConnection(); } catch (_) {}
+                try { telegram.notifyConnected({ botName: config.botName, phone, version }).catch(()=>{}); } catch (_) {}
                 try {
                     dashboard.log('action', 'SISTEMA',
                         `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0} • ${phone||''}`,
@@ -323,16 +369,29 @@ async function startBot() {
         handleGroupParticipantsUpdate(sock, anu);
     });
 
-    // Evento de Recebimento de Mensagens
+    // Evento de Recebimento de Mensagens — touch watchdog em todo upsert
     sock.ev.on('messages.upsert', (upsert) => {
+        try { watchdog.touchInbound(); } catch (_) {}
         handleMessageUpsert(sock, upsert, { commands, config, startTime });
     });
+
+    // Listener direto no websocket para half-open (adicional ao connection.update)
+    try {
+        if (sock.ws) {
+            sock.ws.on('close', () => console.warn('🔌 [WS] close direto'));
+            sock.ws.on('error', (e) => console.warn(`🔌 [WS] error direto: ${e?.message?.slice(0,120)||e}`));
+        }
+    } catch (_) {}
     } catch (e) {
         _reconnecting = false;
+        try { clearTimeout(_reconnectSafetyTimer); } catch (_) {}
         console.error(`💥 [startBot] falhou: ${e.message} | stack0=${(e.stack||'').split('\n')[1]?.trim()||''}`, e.stack || '');
         try { terminalLog.flushSync(); } catch (_) {}
+        try { telegram.notifyError({ botName: config.botName, error: e.message }).catch(()=>{}); } catch (_) {}
         if (_qrAttempts < MAX_QR_ATTEMPTS) {
-            setTimeout(() => { startBot().catch(e2 => console.error('reconnect falhou:', e2.message, e2.stack?.split('\n')[1]?.trim()||'')); }, 5000);
+            const wait = _reconnectBackoffMs;
+            _reconnectBackoffMs = Math.min(RECONNECT_BACKOFF_MAX, _reconnectBackoffMs * 2);
+            setTimeout(() => { startBot().catch(e2 => console.error('reconnect falhou:', e2.message, e2.stack?.split('\n')[1]?.trim()||'')); }, wait);
         }
     }
 }

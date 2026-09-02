@@ -282,6 +282,22 @@ module.exports = {
 
             console.log(`🤖 [INTERAÇÃO] Comando ${effectivePrefix}${commandName} por ${senderName} em ${from}`);
             incrementCommand();
+            // Log básico no Telegram (sem toggle — envia sempre que configurado)
+            try {
+                const tg = require('../services/telegramAlerts');
+                if (tg.isConfigured()) {
+                    tg.notifyCommand({
+                        botName: config.botName,
+                        commandName,
+                        prefix: effectivePrefix,
+                        senderName,
+                        sender,
+                        group: isGroup ? (groupMetadata.subject || from) : 'privado',
+                        args: fullArgsText || '',
+                        elapsed: null
+                    }).catch(()=>{});
+                }
+            } catch (_) {}
 
             const context = {
                 from, isGroup, sender, senderName, fullArgsText, args, commandName,
@@ -304,10 +320,14 @@ module.exports = {
             };
             cmdLog('início', `${senderName} → ${effectivePrefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
-            // === Command execution ===
+            // === Command execution (com timeout anti-zumbi) ===
+            const CMD_TIMEOUT_MS = Number(process.env.CMD_TIMEOUT_MS) || 45000;
             try {
                 context.log = cmdLog;
-                const result = await cmd.execute(sock, m, context);
+                const execPromise = cmd.execute(sock, m, context);
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)), CMD_TIMEOUT_MS));
+                timeoutPromise.catch(()=>{}); // evita unhandled
+                const result = await Promise.race([execPromise, timeoutPromise]);
                 if (result !== undefined) lastBotResponse = result;
                 const elapsed = Date.now() - t0;
                 cmdLog('fim', `ok em ${elapsed}ms`);
@@ -316,15 +336,23 @@ module.exports = {
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
-                const isConnClosed = cmdErr?.output?.statusCode === 428 || cmdErr?.output?.statusCode === 515 || String(cmdErr?.message || '').includes('Connection Closed') || String(cmdErr?.message || '').includes('Precondition Required');
-                if (isConnClosed) {
-                    console.warn(`⚠️ [CMD-WARN] ${effectivePrefix}${commandName}: conexão fechada (428) após ${elapsed}ms — ignorado, reconexão automática`);
-                    cmdLog('WARN', `Connection Closed (após ${elapsed}ms) — socket será reconectado`);
+                const isTimeout = String(cmdErr?.message || '').includes('timeout');
+                if (isTimeout) {
+                    console.warn(`⏱️ [CMD-TIMEOUT] ${effectivePrefix}${commandName} travou após ${elapsed}ms — liberando handler (anti-zumbi)`);
+                    cmdLog('TIMEOUT', `travou após ${elapsed}ms`);
+                    try { await sock.sendMessage(from, { text: `⏱️ *${effectivePrefix}${commandName}* demorou demais e foi interrompido. Tente novamente.` }, { quoted: m }); } catch (_) {}
+                    safeDashboardLog('error', groupMetadata.subject, `⏱️ Timeout em !${commandName} após ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 } else {
-                    console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
-                    cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
-                    if (botActiveInGroup || !isGroup) {
-                        safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                    const isConnClosed = cmdErr?.output?.statusCode === 428 || cmdErr?.output?.statusCode === 515 || String(cmdErr?.message || '').includes('Connection Closed') || String(cmdErr?.message || '').includes('Precondition Required');
+                    if (isConnClosed) {
+                        console.warn(`⚠️ [CMD-WARN] ${effectivePrefix}${commandName}: conexão fechada (428) após ${elapsed}ms — ignorado, reconexão automática`);
+                        cmdLog('WARN', `Connection Closed (após ${elapsed}ms) — socket será reconectado`);
+                    } else {
+                        console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
+                        cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
+                        if (botActiveInGroup || !isGroup) {
+                            safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
+                        }
                     }
                 }
             }

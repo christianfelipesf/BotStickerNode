@@ -557,7 +557,57 @@ function init(config) {
             res.status(500).json({ ok: false, error: 'Erro interno' });
         }
     });
-    app.get('/api/health', (req, res) => res.json({ ok: !!sockRef }));
+    app.get('/api/health', (req, res) => {
+        try {
+            const wd = require('../services/watchdog');
+            const st = wd.getState();
+            const wsOk = st.wsReadyState === 1;
+            const alive = !!sockRef && wsOk && !st.isZombie;
+            // legado: ok true apenas se realmente vivo; se isZombie, 503
+            if (!alive) {
+                return res.status(503).json({
+                    ok: false,
+                    connected: !!sockRef,
+                    wsState: st.wsState,
+                    wsReadyState: st.wsReadyState,
+                    isZombie: st.isZombie,
+                    idleMs: st.idleMs,
+                    idleMin: Math.round(st.idleMs/60000),
+                    thresholdMs: st.threshold,
+                    lastUpsertAt: st.lastUpsertAt,
+                    queue: st.queue
+                });
+            }
+            return res.json({
+                ok: true,
+                connected: true,
+                wsState: st.wsState,
+                isZombie: false,
+                idleMs: st.idleMs,
+                lastUpsertAt: st.lastUpsertAt,
+                queue: st.queue
+            });
+        } catch (_) {
+            return res.json({ ok: !!sockRef, fallback: true });
+        }
+    });
+
+    // Endpoint simples para uptime externo que só checa sock (legado)
+    app.get('/api/health/simple', (req, res) => res.json({ ok: !!sockRef }));
+
+    // Teste telegram (admin only)
+    app.post('/api/admin/telegram-test', (req, res) => {
+        if (!isAdmin(req)) return res.status(401).json({ ok: false, error: 'Não autenticado' });
+        const tg = require('../services/telegramAlerts');
+        tg.test().then(r => res.json(r)).catch(e => res.status(500).json({ ok:false, error: e.message }));
+    });
+    app.get('/api/admin/watchdog', (req, res) => {
+        if (!isAdmin(req)) return res.status(401).json({ ok: false, error: 'Não autenticado' });
+        try {
+            const wd = require('../services/watchdog');
+            return res.json({ ok:true, ...wd.getState() });
+        } catch (e) { return res.status(500).json({ ok:false, error: e.message }); }
+    });
 
     const FILES_DIRS = [
         { root: path.join(process.cwd(), 'logs'), label: 'logs', includeExts: /\.(log|txt|json|csv)$/i },
@@ -667,6 +717,10 @@ function init(config) {
                 totalGroups = ag + pg;
             } catch (_) {}
 
+            let watchdogState = null;
+            try { watchdogState = require('../services/watchdog').getState(); } catch (_) {}
+            let queueState = null;
+            try { queueState = require('../services/queue').queueSize(); } catch (_) {}
             res.json({
                 ok: true,
                 host: os.hostname(),
@@ -681,8 +735,14 @@ function init(config) {
                 cpu,
                 memory: mem,
                 process: proc,
+                watchdog: watchdogState,
+                queue: queueState,
                 bot: {
                     connected: !!sockRef,
+                    wsState: watchdogState?.wsState || null,
+                    isZombie: !!watchdogState?.isZombie,
+                    idleMs: watchdogState?.idleMs || 0,
+                    lastUpsertAt: watchdogState?.lastUpsertAt || null,
                     totalGroups,
                     activeGroups,
                     partialGroups,
