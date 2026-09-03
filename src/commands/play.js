@@ -71,16 +71,12 @@ async function getPlayThumbBuffer(video) {
     try {
         const resp = await axios.get(thumbUrl, { responseType: 'arraybuffer', timeout: 8000 });
         if (!resp.data) return null;
-        const { Jimp } = require('jimp');
-        const img = await Jimp.read(Buffer.from(resp.data));
-        try { img.resize({ w: 300, h: 300 }); } catch (_) { try { img.resize(300, 300); } catch (_) {} }
-        const buf = await img.getBuffer('image/jpeg', { quality: 80 });
+        const sharp = require('sharp');
+        let buf = await sharp(Buffer.from(resp.data), { failOn: 'none' }).rotate().resize({ width: 300, height: 300, fit: 'cover', kernel: sharp.kernel.lanczos3 }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
         if (buf.length > 100 * 1024) {
             try {
-                const small = await Jimp.read(buf);
-                try { small.resize({ w: 200, h: 200 }); } catch (_) { try { small.resize(200, 200); } catch (_) {} }
-                return await small.getBuffer('image/jpeg', { quality: 70 });
-            } catch (_) { return buf; }
+                buf = await sharp(buf, { failOn: 'none' }).resize({ width: 200, height: 200, fit: 'cover' }).jpeg({ quality: 70, mozjpeg: true }).toBuffer();
+            } catch (_) {}
         }
         return buf;
     } catch (_) { return null; }

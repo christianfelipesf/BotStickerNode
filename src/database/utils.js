@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const crypto = require('crypto');
-const { Jimp } = require('jimp');
+const sharp = require('sharp');
 
 const { db, tempDir, checkpointWal } = require('./db');
 const { migrateLegacyUnifiedDB, migrateLegacyMessagesJson, migrateLegacyActiveGroups, migrateJsonToSqlite } = require('./migrate');
@@ -822,10 +822,9 @@ async function saveGroupMenuImage(jid, buffer) {
     const uploadsDir = path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, fileName);
-    const image = await Jimp.read(buffer);
-    if (image.bitmap.width > 3000 || image.bitmap.height > 3000) throw new Error('Imagem muito grande (max 3000x3000)');
-    image.resize({ w: 512, h: 512 });
-    await image.write(filePath);
+    const meta = await sharp(buffer, { failOn: 'none' }).metadata();
+    if ((meta.width || 0) > 3000 || (meta.height || 0) > 3000) throw new Error('Imagem muito grande (max 3000x3000)');
+    await sharp(buffer, { failOn: 'none' }).rotate().resize({ width: 512, height: 512, fit: 'fill', kernel: sharp.kernel.lanczos3 }).png().toFile(filePath);
     const relativePath = `uploads/${fileName}`;
     setGroupData(jid, { menuImage: relativePath });
     return filePath;

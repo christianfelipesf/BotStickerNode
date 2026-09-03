@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { Jimp } = require('jimp');
+const sharp = require('sharp');
 
 const MENUS_DIR = path.join(process.cwd(), 'src', 'media', 'menus');
 const VALID_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
@@ -22,10 +22,10 @@ function pickRandomMenuImage() {
 }
 
 async function cropTo16x9(buffer) {
-    const image = await Jimp.read(buffer);
-    const w = image.bitmap.width;
-    const h = image.bitmap.height;
-    if (!w || !h) return await image.getBuffer('image/jpeg', { quality: 90 });
+    const meta = await sharp(buffer, { failOn: 'none' }).metadata();
+    const w = meta.width || 0;
+    const h = meta.height || 0;
+    if (!w || !h) return await sharp(buffer, { failOn: 'none' }).rotate().jpeg({ quality: 90, mozjpeg: true }).toBuffer();
     const target = 16 / 9;
     const current = w / h;
     let cropW, cropH, x, y;
@@ -40,9 +40,7 @@ async function cropTo16x9(buffer) {
         x = 0;
         y = Math.round((h - cropH) / 2);
     }
-    // Jimp 1.6 usa objeto {x,y,w,h} / fallback posicional
-    try { image.crop({ x, y, w: cropW, h: cropH }); } catch (_) { try { image.crop(x, y, cropW, cropH); } catch (_) {} }
-    return await image.getBuffer('image/jpeg', { quality: 90 });
+    return await sharp(buffer, { failOn: 'none' }).rotate().extract({ left: x, top: y, width: cropW, height: cropH }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
 }
 
 async function getRawGroupBuffer(sock, jid) {
@@ -142,11 +140,10 @@ module.exports = {
                 try { thumb = await cropTo16x9(raw); } catch (_) { thumb = null; }
                 if (thumb) {
                     try {
-                        const tImg = await Jimp.read(thumb);
-                        if (tImg.bitmap.width > 720) {
+                        const tMeta = await sharp(thumb, { failOn: 'none' }).metadata().catch(()=>null);
+                        if (tMeta && (tMeta.width || 0) > 720) {
                             const h = Math.round(720 * 9 / 16);
-                            tImg.resize({ w: 720, h });
-                            thumb = await tImg.getBuffer('image/jpeg', { quality: 85 });
+                            thumb = await sharp(thumb, { failOn: 'none' }).resize({ width: 720, height: h, fit: 'fill', kernel: sharp.kernel.lanczos3 }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
                         }
                     } catch (_) {}
                 }

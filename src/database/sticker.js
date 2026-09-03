@@ -2,27 +2,49 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
-const { Jimp } = require('jimp');
+const sharp = require('sharp');
 const { Image } = require('node-webpmux');
-const webp = require('webp-converter');
 const { tempDir } = require('./db');
 
-async function addMetadata(buffer, pack, author) {
+async function addMetadata(buffer, pack, author, originalBuffer = null) {
     try {
         const img = new Image();
         await img.load(buffer);
+        const payload = {
+            "sticker-pack-id": `bot-${crypto.randomBytes(4).toString('hex')}`,
+            "sticker-pack-name": pack,
+            "sticker-pack-publisher": author,
+            "emojis": ["✅"]
+        };
+        // embedding opcional do original para !toimg perfeito (se couber em <1MB) — até 500KB para fotos
+        if (originalBuffer && Buffer.isBuffer(originalBuffer) && originalBuffer.length > 64 && originalBuffer.length < 500 * 1024) {
+            try {
+                // só embutir se não estourar 950KB (webp + exif)
+                const b64 = originalBuffer.toString('base64');
+                const testPayload = { ...payload, data: b64 };
+                const testLen = Buffer.byteLength(JSON.stringify(testPayload), 'utf-8') + 22 + buffer.length;
+                if (testLen < 950 * 1024) {
+                    payload.data = b64;
+                    // guardar mime para decodificação fiel (opcional)
+                    try {
+                        const meta = await sharp(originalBuffer, { failOn: 'none' }).metadata().catch(()=>null);
+                        if (meta && meta.format) payload.dataMime = `image/${meta.format}`;
+                    } catch(_) {}
+                    console.log(`[STICKER-LOG] addMetadata: embutindo original ${originalBuffer.length}B base64=${b64.length} testLen=${testLen}B`);
+                } else {
+                    console.log(`[STICKER-LOG] addMetadata: original ${originalBuffer.length}B não embutido (testLen ${testLen}B >950KB)`);
+                }
+            } catch(e) { console.warn(`⚠️ [METADATA] falha ao preparar embedding: ${e.message}`); }
+        }
         const exif = Buffer.concat([
             Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]),
-            Buffer.from(JSON.stringify({
-                "sticker-pack-id": `bot-${crypto.randomBytes(4).toString('hex')}`,
-                "sticker-pack-name": pack,
-                "sticker-pack-publisher": author,
-                "emojis": ["✅"]
-            }), 'utf-8')
+            Buffer.from(JSON.stringify(payload), 'utf-8')
         ]);
         exif.writeUInt32LE(exif.length - 22, 14);
         img.exif = exif;
-        return await img.save(null);
+        const out = await img.save(null);
+        if (payload.data) console.log(`[STICKER-LOG] addMetadata: final com original ${out.length}B (webp ${buffer.length}B + exif ${exif.length}B)`);
+        return out;
     } catch (e) {
         console.error('❌ [METADATA] Falha:', e.message);
         return buffer;
@@ -37,26 +59,40 @@ function _killFfmpeg(cmd) {
 }
 
 async function shrinkImageBuffer(buffer, tempId) {
-    const inputPath = path.join(tempDir, `stk_shrink_in_${tempId}.bin`);
-    const outputPath = path.join(tempDir, `stk_shrink_out_${tempId}.jpg`);
-    fs.writeFileSync(inputPath, buffer);
+    // sharp path: sem ffmpeg, muito mais rápido e sem disco extra
     try {
-        await new Promise((resolve, reject) => {
-            let cmd = null;
-            const to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg timeout 60s')); }, 60000);
-            cmd = ffmpeg(inputPath)
-                .outputOptions(['-vf', "scale='min(1600,iw)':-2", '-q:v', '5'])
-                .toFormat('mjpeg')
-                .on('end', () => { clearTimeout(to); resolve(); })
-                .on('error', (e) => { clearTimeout(to); reject(e); })
-                .save(outputPath);
-        });
-        const out = fs.readFileSync(outputPath);
+        const out = await sharp(buffer, { failOn: 'none' })
+            .rotate()
+            .resize({ width: 1600, withoutEnlargement: true, fit: 'inside', kernel: sharp.kernel.lanczos3 })
+            .jpeg({ quality: 80, mozjpeg: true })
+            .toBuffer();
         if (out.length < 1024) throw new Error('compressão gerou arquivo vazio');
+        console.log(`[STICKER-LOG] shrinkImageBuffer sharp ${buffer.length} -> ${out.length} bytes`);
         return out;
-    } finally {
-        try { fs.unlinkSync(inputPath); } catch (_) {}
-        try { fs.unlinkSync(outputPath); } catch (_) {}
+    } catch (e) {
+        // fallback ffmpeg legado se sharp falhar (ex: formato exótico)
+        console.warn(`⚠️ [STICKER] shrink sharp falhou (${e.message}) — fallback ffmpeg`);
+        const inputPath = path.join(tempDir, `stk_shrink_in_${tempId}.bin`);
+        const outputPath = path.join(tempDir, `stk_shrink_out_${tempId}.jpg`);
+        fs.writeFileSync(inputPath, buffer);
+        try {
+            await new Promise((resolve, reject) => {
+                let cmd = null;
+                const to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg timeout 60s')); }, 60000);
+                cmd = ffmpeg(inputPath)
+                    .outputOptions(['-vf', "scale='min(1600,iw)':-2", '-q:v', '5'])
+                    .toFormat('mjpeg')
+                    .on('end', () => { clearTimeout(to); resolve(); })
+                    .on('error', (err) => { clearTimeout(to); reject(err); })
+                    .save(outputPath);
+            });
+            const out = fs.readFileSync(outputPath);
+            if (out.length < 1024) throw new Error('compressão gerou arquivo vazio');
+            return out;
+        } finally {
+            try { fs.unlinkSync(inputPath); } catch (_) {}
+            try { fs.unlinkSync(outputPath); } catch (_) {}
+        }
     }
 }
 
@@ -66,10 +102,10 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
     const mime = (mimeType || '').toLowerCase();
     const isVideo = mime.includes('video');
     console.log(`\n[STICKER-LOG] ===== !s INICIO ===== tempId pending mime=${mime} isVideo=${isVideo} inputBytes=${buffer.length} (${(buffer.length/1024).toFixed(1)}KB)`);
-    // tenta detectar dimensões originais sem Jimp para log rápido
+    // probe rápido via sharp
     try {
-        const probe = await Jimp.read(buffer).catch(()=>null);
-        if (probe) console.log(`[STICKER-LOG] probe original ${probe.bitmap.width}x${probe.bitmap.height} mime=${mime}`);
+        const probe = await sharp(buffer, { failOn: 'none' }).metadata().catch(()=>null);
+        if (probe) console.log(`[STICKER-LOG] probe original ${probe.width}x${probe.height} mime=${mime} hasAlpha=${probe.hasAlpha}`);
     } catch(_) {}
     if (isVideo && buffer.length > STICKER_VIDEO_MAX) throw new Error('Mídia muito grande (max 50MB)');
     const tempId = crypto.randomBytes(4).toString('hex');
@@ -84,100 +120,135 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
         }
         if (buffer.length > STICKER_IMG_MAX) throw new Error('Mídia muito grande (max 10MB)');
     }
-    const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.png'}`);
+
+    // vídeo ainda usa arquivos temporários + ffmpeg
+    const inputPath = path.join(tempDir, `stk_in_${tempId}${isVideo ? '.mp4' : '.bin'}`);
     const outputPath = path.join(tempDir, `stk_out_${tempId}.webp`);
     const cleanup = [inputPath, outputPath];
 
     try {
         if (!isVideo) {
-            const image = await Jimp.read(buffer);
-            const origW = image.bitmap.width, origH = image.bitmap.height;
-            console.log(`[STICKER-LOG] Jimp original ${origW}x${origH} aspect=${(origW/origH).toFixed(3)} mime=${mime} input=${buffer.length}B`);
+            // --- fluxo imagem via sharp (sem cwebp, sem PNG temp) ---
+            let metadata;
+            try {
+                metadata = await sharp(buffer, { failOn: 'none' }).metadata();
+            } catch (e) {
+                throw new Error(`Imagem inválida: ${e.message}`);
+            }
+            const origW = metadata.width || 0;
+            const origH = metadata.height || 0;
+            const hasAlpha = !!metadata.hasAlpha;
+            console.log(`[STICKER-LOG] sharp original ${origW}x${origH} aspect=${origW && origH ? (origW/origH).toFixed(3) : 'n/a'} mime=${mime} input=${buffer.length}B hasAlpha=${hasAlpha} channels=${metadata.channels} origPixels=${origW*origH}`);
+
             if (origW > 3000 || origH > 3000) {
                 console.error(`❌ [STICKER-IMG] Rejeitado: dimensões ${origW}x${origH} excedem limite 3000`);
                 throw new Error('Imagem muito grande');
             }
-            // Detecta alfa real (varre bitmap) — se não tem transparência, pode usar cwebp mais simples
-            let hasAlpha = false;
-            try {
-                const data = image.bitmap.data;
-                for (let i = 3; i < data.length; i += 4) { if (data[i] < 255) { hasAlpha = true; break; } }
-            } catch (_) {}
-            console.log(`[STICKER-LOG] Jimp hasAlpha=${hasAlpha} origPixels=${origW*origH}`);
 
-            // Preserva aspect ratio: só escala se lado maior > 512, sem esticar, sem upscale
+            // Se imagem já é webp pequena e dentro de 512, ainda re-encoda para garantir limite 1MB e normalizar
             const MAX_SIDE = 512;
-            if (origW > MAX_SIDE || origH > MAX_SIDE) {
-                image.scaleToFit({ w: MAX_SIDE, h: MAX_SIDE });
-                console.log(`[STICKER-LOG] Jimp após scaleToFit ${image.bitmap.width}x${image.bitmap.height} (aspect preservado, MAX=${MAX_SIDE})`);
+            const needResize = origW > MAX_SIDE || origH > MAX_SIDE;
+            if (needResize) {
+                console.log(`[STICKER-LOG] sharp vai redimensionar para caber em ${MAX_SIDE}x${MAX_SIDE} (aspect preservado)`);
             } else {
-                console.log(`[STICKER-LOG] Jimp mantém original ${image.bitmap.width}x${image.bitmap.height} (abaixo de MAX, sem redimensionar)`);
+                console.log(`[STICKER-LOG] sharp mantém original ${origW}x${origH} (abaixo de MAX, sem redimensionar)`);
             }
-            // Garantir que imagem tenha alfa correto (RGBA) — evita granulado em bordas quando hasAlpha
-            if (hasAlpha) image.rgba(true);
-            const pngBuffer = await image.getBuffer('image/png');
-            console.log(`[STICKER-LOG] PNG temporario ${pngBuffer.length} bytes (${(pngBuffer.length/1024).toFixed(1)}KB) hasAlpha=${hasAlpha} -> cwebp q85`);
-            fs.writeFileSync(inputPath, pngBuffer);
 
-            // Inteligente: escolhe sequência baseada no tamanho/complexidade
-            // - PNG pequeno (<150KB) e sem alfa → tenta q85 direto (qualidade máxima)
-            // - PNG grande ou com alfa → começa com q85 mas se estourar 950KB cai progressivamente
-            // - Se Jimp gerou PNG >800KB (imagem detalhada), já pula primeiro alpha lossless pesado
+            // Estratégia de tentativas — sharp webp com alta nitidez (effort 6, smartSubsample false preserva texto)
+            // Usa buffer.length como proxy de complexidade e hasAlpha
             let imgAttempts;
-            if (!hasAlpha && pngBuffer.length < 300 * 1024) {
+            if (!hasAlpha && buffer.length < 300 * 1024) {
                 imgAttempts = [
-                    "-q 85 -m 4 -mt -sharp_yuv",
-                    "-q 80 -m 4 -mt",
-                    "-q 75 -m 4 -mt",
-                    "-q 70"
+                    { quality: 92, effort: 6, smartSubsample: false },
+                    { quality: 88, effort: 6, smartSubsample: false },
+                    { quality: 82, effort: 6 },
+                    { quality: 75, effort: 4 }
                 ];
-                console.log(`[STICKER-LOG] Estratégia: sem alfa e PNG leve → q85 simples`);
-            } else if (pngBuffer.length > 600 * 1024) {
+                console.log(`[STICKER-LOG] Estratégia sharp: sem alfa e input leve → q92 effort6`);
+            } else if (buffer.length > 600 * 1024) {
                 imgAttempts = [
-                    "-q 80 -alpha_q 90 -m 4 -mt",
-                    "-q 75 -m 4 -mt",
-                    "-q 70",
-                    "-q 60"
+                    { quality: 88, alphaQuality: 95, effort: 6, smartSubsample: false },
+                    { quality: 82, alphaQuality: 90, effort: 6 },
+                    { quality: 75, effort: 4 },
+                    { quality: 65, effort: 4 }
                 ];
-                console.log(`[STICKER-LOG] Estratégia: PNG pesado ${pngBuffer.length}B → começa em q80 para evitar estouro`);
+                console.log(`[STICKER-LOG] Estratégia sharp: input pesado ${buffer.length}B → começa em q88`);
             } else {
+                // caso padrão: imagens médias com/sem alfa — prioriza nitidez de texto/borda
                 imgAttempts = [
-                    "-q 85 -alpha_q 100 -m 4 -mt -sharp_yuv -alpha_filter best",
-                    "-q 85 -alpha_q 100 -m 4 -mt",
-                    "-q 80 -alpha_q 90 -m 4 -mt",
-                    "-q 75 -m 4 -mt",
-                    "-q 70"
+                    { quality: 90, alphaQuality: 100, effort: 6, smartSubsample: false },
+                    { quality: 88, alphaQuality: 100, effort: 6, smartSubsample: false },
+                    { quality: 85, alphaQuality: 95, effort: 6 },
+                    { quality: 80, effort: 4 },
+                    { quality: 72, effort: 4 }
                 ];
-                console.log(`[STICKER-LOG] Estratégia: padrão q85 alfa100`);
+                console.log(`[STICKER-LOG] Estratégia sharp: padrão q90 alfa100 effort6`);
             }
 
-            let imgOk = false;
+            let rawWebp = null;
             let lastImgErr = null;
+            let chosenAttempt = null;
+
             for (let i = 0; i < imgAttempts.length; i++) {
-                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (_) {}
-                console.log(`[STICKER-LOG] tentativa imagem ${i+1}/${imgAttempts.length}: ${imgAttempts[i]} | png=${pngBuffer.length}B orig=${origW}x${origH} hasAlpha=${hasAlpha}`);
+                const opts = imgAttempts[i];
+                console.log(`[STICKER-LOG] tentativa imagem sharp ${i+1}/${imgAttempts.length}: q=${opts.quality} alpha_q=${opts.alphaQuality ?? 'auto'} effort=${opts.effort} | orig=${origW}x${origH} hasAlpha=${hasAlpha} input=${buffer.length}B`);
                 try {
-                    await webp.cwebp(inputPath, outputPath, imgAttempts[i]);
-                    const s = fs.statSync(outputPath);
-                    console.log(`[STICKER-LOG] tentativa ${i+1} gerou ${s.size}B header=${fs.readFileSync(outputPath).slice(0,4).toString()} hex=${fs.readFileSync(outputPath).slice(0,16).toString('hex').slice(0,32)}`);
-                    if (s.size < 64) throw new Error('WebP vazio (<64B)');
-                    if (s.size > 950 * 1024 && i < imgAttempts.length - 1) {
-                        console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} ficou ${s.size}B >950KB (limite 1MB) — causa: PNG ${pngBuffer.length}B + q alto — reduzindo qualidade`);
+                    let pipeline = sharp(buffer, { failOn: 'none' }).rotate();
+                    if (needResize) {
+                        pipeline = pipeline.resize({ width: MAX_SIDE, height: MAX_SIDE, fit: 'inside', withoutEnlargement: true, kernel: sharp.kernel.lanczos3 });
+                    }
+                    if (hasAlpha) pipeline = pipeline.ensureAlpha();
+                    // sharp webp: quality, alphaQuality, effort (0-6), smartSubsample
+                    const webpOpts = {
+                        quality: opts.quality,
+                        effort: opts.effort ?? 4,
+                        smartSubsample: !!opts.smartSubsample,
+                    };
+                    if (opts.alphaQuality != null) webpOpts.alphaQuality = opts.alphaQuality;
+                    // lossless false por padrão
+                    rawWebp = await pipeline.webp(webpOpts).toBuffer();
+                    console.log(`[STICKER-LOG] tentativa ${i+1} gerou ${rawWebp.length}B header=${rawWebp.slice(0,4).toString()} hex=${rawWebp.slice(0,16).toString('hex').slice(0,32)}`);
+                    if (rawWebp.length < 64) throw new Error('WebP vazio (<64B)');
+                    if (rawWebp.length > 950 * 1024 && i < imgAttempts.length - 1) {
+                        console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} ficou ${rawWebp.length}B >950KB — reduzindo qualidade`);
                         continue;
                     }
-                    console.log(`[STICKER-LOG] tentativa imagem ${i+1} OK ${s.size}B (${(s.size/1024).toFixed(1)}KB)`);
-                    imgOk = true;
+                    console.log(`[STICKER-LOG] tentativa imagem ${i+1} OK ${rawWebp.length}B (${(rawWebp.length/1024).toFixed(1)}KB)`);
+                    chosenAttempt = i+1;
                     break;
                 } catch (e) {
                     lastImgErr = e;
-                    console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} FALHOU | cmd="${imgAttempts[i]}" | motivo="${e.message}" | stack="${e.stack?.split('\n')[1]?.trim() || ''}" | png=${pngBuffer.length} orig=${origW}x${origH}`);
+                    console.warn(`⚠️ [STICKER-IMG] tentativa ${i+1} FALHOU | q=${opts.quality} | motivo="${e.message}" | stack="${e.stack?.split('\n')[1]?.trim() || ''}" | orig=${origW}x${origH}`);
                 }
             }
-            if (!imgOk) {
-                console.error(`❌ [STICKER-IMG] Todas ${imgAttempts.length} tentativas falharam | tempId=${tempId} | orig=${origW}x${origH} hasAlpha=${hasAlpha} png=${pngBuffer.length} mime=${mime} | último erro="${lastImgErr?.message}"`);
-                throw lastImgErr || new Error('Falha cwebp após todas tentativas');
+            if (!rawWebp) {
+                console.error(`❌ [STICKER-IMG] Todas ${imgAttempts.length} tentativas falharam | tempId=${tempId} | orig=${origW}x${origH} hasAlpha=${hasAlpha} mime=${mime} | último erro="${lastImgErr?.message}"`);
+                throw lastImgErr || new Error('Falha sharp após todas tentativas');
             }
-            try { const s = fs.statSync(outputPath); console.log(`[STICKER-LOG] WebP gerado ${s.size} bytes (${(s.size/1024).toFixed(1)}KB) header=${fs.readFileSync(outputPath).slice(0,4).toString()} `); } catch(_){}
+            try { console.log(`[STICKER-LOG] WebP sharp gerado ${rawWebp.length} bytes (${(rawWebp.length/1024).toFixed(1)}KB) header=${rawWebp.slice(0,4).toString()} tentativa=${chosenAttempt}`); } catch(_){}
+
+            console.log(`[STICKER-LOG] raw WebP antes de addMetadata ${rawWebp.length} bytes`);
+            try {
+                const chk = rawWebp.slice(0, 100).toString('hex').slice(0,80);
+                console.log(`[STICKER-LOG] raw WebP head hex=${chk}...`);
+            } catch(_){}
+            // tenta embutir original para !toimg perfeito se couber em 1MB (só <300KB)
+            const originalForEmbedding = buffer;
+            const result = await addMetadata(rawWebp, pack, author, originalForEmbedding);
+            if (!result || result.length < 64) {
+                throw new Error('Falha ao injetar metadados do sticker');
+            }
+            // imagem pequena (ex: 100x100 cor sólida) pode gerar <512B válido — não rejeitar
+            try {
+                const imgProbe = new Image(); await imgProbe.load(result);
+                const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
+                const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
+                console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
+                console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | sharp q${imgAttempts[chosenAttempt-1].quality} alfa${imgAttempts[chosenAttempt-1].alphaQuality ?? 'auto'}, original ${rawWebp.length} -> final ${result.length}`);
+            } catch(e) {
+                console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
+            }
+            return result;
         } else {
             fs.writeFileSync(inputPath, buffer);
             let stats; try { stats = fs.statSync(inputPath); } catch (_) { throw new Error('Vídeo vazio'); }
@@ -235,30 +306,29 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                 }
             }
             if (!attemptOk) throw lastVidErr || new Error('Vídeo gerou WebP vazio/inválido após todas tentativas');
+
+            const rawWebp = fs.readFileSync(outputPath);
+            console.log(`[STICKER-LOG] raw WebP antes de addMetadata ${rawWebp.length} bytes`);
+            try {
+                const chk = rawWebp.slice(0, 100).toString('hex').slice(0,80);
+                console.log(`[STICKER-LOG] raw WebP head hex=${chk}...`);
+            } catch(_){}
+            const result = await addMetadata(rawWebp, pack, author);
+            if (!result || result.length < 512) {
+                throw new Error('Falha ao injetar metadados do sticker');
+            }
+            try {
+                const imgProbe = new Image(); await imgProbe.load(result);
+                const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
+                const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
+                console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
+                console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | aspect preservado, sharp+ffmpeg, original ${rawWebp.length} -> final ${result.length}`);
+            } catch(e) {
+                console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
+            }
+            return result;
         }
 
-        const rawWebp = fs.readFileSync(outputPath);
-        console.log(`[STICKER-LOG] raw WebP antes de addMetadata ${rawWebp.length} bytes`);
-        // inspeciona chunks RIFF para ver se já tem EXIF
-        try {
-            const chk = rawWebp.slice(0, 100).toString('hex').slice(0,80);
-            console.log(`[STICKER-LOG] raw WebP head hex=${chk}...`);
-        } catch(_){}
-        const result = await addMetadata(rawWebp, pack, author);
-        if (!result || result.length < 512) {
-            throw new Error('Falha ao injetar metadados do sticker');
-        }
-        // log detalhado do resultado
-        try {
-            const imgProbe = new Image(); await imgProbe.load(result);
-            const exifLen = imgProbe.exif ? imgProbe.exif.length : 0;
-            const exifPreview = imgProbe.exif ? imgProbe.exif.slice(0,120).toString('utf-8').replace(/\0/g,'.') : 'sem exif';
-            console.log(`[STICKER-LOG] ===== !s FIM ===== tempId=${tempId} final ${result.length} bytes (${(result.length/1024).toFixed(1)}KB) exifLen=${exifLen} exifPreview="${exifPreview.slice(0,100)}" dur=${Date.now()-startTs}ms`);
-            console.log(`[STICKER-LOG] Header final RIFF=${result.slice(0,4).toString()} WEBP=${result.slice(8,12).toString()} | aspect preservado, q85 alfa100, original ${rawWebp.length} -> final ${result.length}`);
-        } catch(e) {
-            console.log(`[STICKER-LOG] ===== !s FIM (probe falhou) ===== final ${result.length} bytes dur=${Date.now()-startTs}ms err=${e.message}`);
-        }
-        return result;
     } catch (error) {
         console.error(`❌ [CONVERSÃO] Falha geral tempId=${tempId} isVideo=${isVideo} mime=${mime} input=${buffer?.length || 0}B | motivo="${error.message}" | stack="${error.stack?.split('\n')[1]?.trim() || ''}"`);
         if (isVideo && fs.existsSync(inputPath)) {
@@ -362,23 +432,49 @@ async function stickerToMedia(buffer, isAnimated = false) {
     }
     console.log(`\n[STICKER-LOG] ===== !toimg INICIO ===== isAnimated=${isAnimated} (orig=${!!effectiveAnimated}) inputBytes=${buffer?.length || 0} (${buffer? (buffer.length/1024).toFixed(1)+'KB':''}) header=${buffer?.slice(0,4).toString() || ''} WEBP=${buffer?.slice(8,12).toString() || ''}`);
     // tenta inspecionar EXIF/WebP chunks para ver se tem original embutido (como outros bots fazem)
+    let _exifJson = null;
     try {
         const probeImg = new Image(); await probeImg.load(buffer);
         const exifLen = probeImg.exif ? probeImg.exif.length : 0;
         const hasExif = !!probeImg.exif;
-        let exifJson = null; let exifPreview='';
+        let exifPreview='';
         if (hasExif) {
             try { exifPreview = probeImg.exif.slice(0,300).toString('utf-8').replace(/\0/g,'.').slice(0,200); } catch(_){}
-            try { const raw = probeImg.exif.slice(22).toString('utf-8'); exifJson = JSON.parse(raw); } catch(_){ }
+            try { const raw = probeImg.exif.slice(22).toString('utf-8'); _exifJson = JSON.parse(raw); } catch(_){ }
         }
-        console.log(`[STICKER-LOG] probe WebP exifLen=${exifLen} hasExif=${hasExif} preview="${exifPreview}" jsonKeys=${exifJson? Object.keys(exifJson).join(','): 'n/a'}`);
-        if (exifJson && exifJson.data) console.log(`[STICKER-LOG] ATENCAO: sticker contém data embutida len=${String(exifJson.data).length} (original embutido detectado!)`);
+        console.log(`[STICKER-LOG] probe WebP exifLen=${exifLen} hasExif=${hasExif} preview="${exifPreview}" jsonKeys=${_exifJson? Object.keys(_exifJson).join(','): 'n/a'}`);
+        if (_exifJson && _exifJson.data) console.log(`[STICKER-LOG] ATENCAO: sticker contém data embutida len=${String(_exifJson.data).length} (original embutido detectado!)`);
         // também loga RIFF chunks
         let off=12; let chunks=[];
         while(off+8 < buffer.length && chunks.length<6){ const id=buffer.slice(off,off+4).toString(); const sz=buffer.readUInt32LE(off+4); chunks.push(`${id}:${sz}`); off+=8+sz + (sz%2); }
         console.log(`[STICKER-LOG] RIFF chunks: ${chunks.join(' | ')}`);
-        console.log(`[STICKER-LOG] Se for sticker do seu bot: exifLen deve ser ~150-200 bytes (só pack/author). Se for de outro bot com restauração perfeita, exifLen será >10KB e conterá JPEG base64.`);
+        console.log(`[STICKER-LOG] Se for sticker do seu bot: exifLen deve ser ~150-200 bytes (só pack/author) ou >10KB se com original embutido.`);
     } catch(e){ console.log(`[STICKER-LOG] probe WebP falhou: ${e.message}`); }
+    // restauração perfeita: se sticker tem original embutido em exif.data, devolver sem recompressão
+    if (_exifJson && _exifJson.data) {
+        try {
+            const embedded = Buffer.from(String(_exifJson.data), 'base64');
+            if (embedded && embedded.length > 64 && embedded.length < 10 * 1024 * 1024) {
+                // tenta inferir mime via header/sharp
+                let mime = 'image/jpeg';
+                let ext = 'jpg';
+                try {
+                    const m = await sharp(embedded, { failOn: 'none' }).metadata().catch(()=>null);
+                    if (m && m.format) {
+                        if (m.format === 'png') { mime = 'image/png'; ext = 'png'; }
+                        else if (m.format === 'webp') { mime = 'image/webp'; ext = 'webp'; }
+                        else if (m.format === 'jpeg' || m.format === 'jpg') { mime = 'image/jpeg'; ext = 'jpg'; }
+                    } else {
+                        // fallback header
+                        if (embedded[0]===0x89 && embedded[1]===0x50) { mime='image/png'; ext='png'; }
+                        else if (embedded[0]===0xFF && embedded[1]===0xD8) { mime='image/jpeg'; ext='jpg'; }
+                    }
+                } catch(_) {}
+                console.log(`[STICKER-LOG] ===== !toimg FIM (restauração perfeita) ===== original embutido ${embedded.length} bytes mime=${mime} dur=${Date.now()-startTs2}ms`);
+                return { buffer: embedded, mime, ext };
+            }
+        } catch(e) { console.warn(`⚠️ [TOIMG] falha ao extrair original embutido: ${e.message}`); }
+    }
     if (!buffer || buffer.length > 10 * 1024 * 1024) throw new Error('Sticker muito grande');
     const tempId = crypto.randomBytes(4).toString('hex');
     const inputPath = path.join(tempDir, `stk_in_${tempId}.webp`);
@@ -392,23 +488,35 @@ async function stickerToMedia(buffer, isAnimated = false) {
                 await convertAnimatedWebpFrames(buffer, outputPath);
             }
         } else {
-            // NÃO aplicar filtros de escala — extrai dimensões nativas do VP8/WebP sem esticar para 512x512
-            await new Promise((resolve, reject) => {
-                let cmd = null;
-                let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg stickerToMedia timeout 30s')); }, 30000);
-                cmd = ffmpeg(inputPath)
-                    .outputOptions(['-vcodec png', '-compression_level 0', '-f image2'])
-                    .on('end', () => { clearTimeout(to); resolve(); })
-                    .on('error', (e) => { clearTimeout(to); reject(e); })
-                    .save(outputPath);
-            });
+            // estático: preferir sharp (libwebp direto, sem subsampling yuv420 do ffmpeg) para maior nitidez
+            let sharpOk = false;
+            try {
+                const pngBuf = await sharp(buffer, { failOn: 'none' }).png({ compressionLevel: 9, palette: false }).toBuffer();
+                if (pngBuf && pngBuf.length > 64) {
+                    fs.writeFileSync(outputPath, pngBuf);
+                    sharpOk = true;
+                    console.log(`[STICKER-LOG] sharp decode WEBP->PNG ${pngBuf.length} bytes (sem ffmpeg)`);
+                }
+            } catch (e) { console.warn(`⚠️ [TOIMG] sharp decode falhou (${e.message}) — fallback ffmpeg`); }
+            if (!sharpOk) {
+                // fallback ffmpeg legado
+                await new Promise((resolve, reject) => {
+                    let cmd = null;
+                    let to = setTimeout(() => { _killFfmpeg(cmd); reject(new Error('ffmpeg stickerToMedia timeout 30s')); }, 30000);
+                    cmd = ffmpeg(inputPath)
+                        .outputOptions(['-vcodec png', '-compression_level 0', '-f image2'])
+                        .on('end', () => { clearTimeout(to); resolve(); })
+                        .on('error', (err) => { clearTimeout(to); reject(err); })
+                        .save(outputPath);
+                });
+            }
         }
         let outBuf; try { outBuf = fs.readFileSync(outputPath); } catch (_) { throw new Error('Falha conversão sticker'); }
-        // log do resultado e tentativa de detectar dimensões reais
+        // log do resultado e tentativa de detectar dimensões reais via sharp
         try {
             if (!isAnimated) {
-                const outImg = await Jimp.read(outBuf).catch(()=>null);
-                if (outImg) console.log(`[STICKER-LOG] out PNG ${outImg.bitmap.width}x${outImg.bitmap.height} ${outBuf.length} bytes (${(outBuf.length/1024).toFixed(1)}KB)`);
+                const meta = await sharp(outBuf, { failOn: 'none' }).metadata().catch(()=>null);
+                if (meta) console.log(`[STICKER-LOG] out PNG ${meta.width}x${meta.height} ${outBuf.length} bytes (${(outBuf.length/1024).toFixed(1)}KB)`);
                 else console.log(`[STICKER-LOG] out PNG ${outBuf.length} bytes header=${outBuf.slice(0,8).toString('hex')}`);
             } else {
                 console.log(`[STICKER-LOG] out MP4 ${outBuf.length} bytes header=${outBuf.slice(0,4).toString('hex')}`);

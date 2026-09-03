@@ -1418,10 +1418,8 @@ async function buildContextExtras(toJid, ctxInfo) {
             try {
                 const resp = await axios.get(ctxInfo.cardThumb, { responseType: 'arraybuffer', timeout: 10000 });
                 if (resp.status === 200 && resp.data) {
-                    const { Jimp } = require('jimp');
-                    const img = await Jimp.read(Buffer.from(resp.data));
-                    img.resize({ w: 300, h: 300, fit: 'fill' });
-                    card.thumbnail = await img.getBuffer('image/jpeg', { quality: 80 });
+                    const sharp = require('sharp');
+                    card.thumbnail = await sharp(Buffer.from(resp.data), { failOn: 'none' }).rotate().resize({ width: 300, height: 300, fit: 'cover', kernel: sharp.kernel.lanczos3 }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
                 }
             } catch (_) {}
         }
