@@ -196,7 +196,15 @@ async function notifyError({ botName, error }) {
 // Log de interação/comando (básico, sem toggle)
 async function notifyCommand({ botName, commandName, prefix, senderName, sender, group, args, elapsed }) {
     const cmd = `${prefix || '!'}${commandName || '?'}`;
-    const who = senderName ? `${senderName} (${(sender||'').split('@')[0]})` : (sender||'').split('@')[0];
+    const isLid = typeof sender === 'string' && sender.endsWith('@lid');
+    const rawNum = !isLid && sender ? String(sender).split('@')[0].split(':')[0] : null;
+    const validPhone = rawNum && /^\d{8,15}$/.test(rawNum) ? rawNum : null;
+    let who;
+    if (senderName && String(senderName).trim() && !['usuario','usuário'].includes(String(senderName).trim().toLowerCase())) {
+        who = validPhone ? `${senderName} (@${validPhone})` : String(senderName).trim();
+    } else {
+        who = validPhone ? `@${validPhone}` : 'Usuário';
+    }
     const where = group || 'privado';
     const extra = args ? `Args: ${String(args).slice(0,200)}` : null;
     const lines = [

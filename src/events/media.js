@@ -21,6 +21,21 @@ const {
     getGroupData
 } = require('../database/utils');
 
+function isLidJid(jid) { return typeof jid === 'string' && jid.endsWith('@lid'); }
+function resolveDisplayNum(jid, fallbackPn) {
+    if (!jid) return null;
+    if (isLidJid(jid)) {
+        if (fallbackPn && String(fallbackPn).endsWith('@s.whatsapp.net')) {
+            const p = String(fallbackPn).split('@')[0].split(':')[0];
+            if (/^\d{8,15}$/.test(p)) return p;
+        }
+        return null;
+    }
+    const p = String(jid).split('@')[0].split(':')[0];
+    if (/^\d{8,15}$/.test(p)) return p;
+    return null;
+}
+
 async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, explicitOpts = {}) {
     const sender = m.key.participant || m.key.remoteJid;
     const explicitName = explicitOpts.senderName || null;
@@ -59,19 +74,23 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
                 return getBotName(from, cfg);
             } catch (_) { return 'Bot'; }
         })();
-        const senderNum = String(sender || '').split('@')[0].split(':')[0] || 'usuário';
+        const fallbackPnReveal = m.key?.participantPn || m.key?.senderPn || null;
+        const resolvedNumReveal = resolveDisplayNum(sender, fallbackPnReveal);
+        const displayReveal = (senderName && !['usuario','usuário'].includes(String(senderName).trim().toLowerCase()))
+            ? String(senderName).trim().slice(0,30)
+            : (resolvedNumReveal ? `@${resolvedNumReveal}` : 'Usuário');
         const captionLegenda = originalCaption ? String(originalCaption).trim().slice(0, 900) : '';
         let revealCaption;
         if (captionLegenda) {
             revealCaption = `╭─── *🔓 MÍDIA REVELADA* ───\n` +
-                `│ 👤 *De:* @${senderNum}\n` +
+                `│ 👤 *De:* ${displayReveal}\n` +
                 `│ 🤖 *Por:* ${botNameForReveal}\n` +
                 `│ 💬 *Legenda:* ${captionLegenda}\n` +
                 `│ ⚡ *Status:* Concluído\n` +
                 `╰───────────────`;
         } else {
             revealCaption = `╭─── *🔓 MÍDIA REVELADA* ───\n` +
-                `│ 👤 *De:* @${senderNum}\n` +
+                `│ 👤 *De:* ${displayReveal}\n` +
                 `│ 🤖 *Por:* ${botNameForReveal}\n` +
                 `│ ⚡ *Status:* Concluído\n` +
                 `╰───────────────`;
@@ -95,7 +114,8 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
                 mediaInfo = { type: mediaType, url: `data:${mime};base64,${dataBase64}` };
             }
 
-            require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, sender.split('@')[0], mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
+            const phoneReveal = resolveDisplayNum(sender, fallbackPnReveal) || null;
+            require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, phoneReveal, mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
         }
 
         if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
@@ -108,11 +128,21 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
     }
 }
 
-function buildConvertedCaption(senderJid, botName) {
-    const num = String(senderJid || '').split('@')[0].split(':')[0] || 'usuário';
+function buildConvertedCaption(senderJid, botName, senderName, fallbackPn) {
     const bot = botName || 'Bot';
-    // Copia exata da aparência do menu (mesmos ╭/│/╰ e ─, sem dependência de fonte monoespaçada)
-    return `╭─── *📱 MÍDIA CONVERTIDA* ───\n│ 👤 *Solicitado por:* @${num}\n│ 🤖 *Por:* ${bot}\n│ ⚡ *Status:* Concluído\n╰───────────────`;
+    const isGeneric = (n) => !n || ['usuario','usuário'].includes(String(n).trim().toLowerCase());
+    let display = null;
+    if (senderName && !isGeneric(senderName)) display = String(senderName).trim().slice(0,30);
+    if (!display) {
+        const num = resolveDisplayNum(senderJid, fallbackPn);
+        display = num ? `@${num}` : 'Usuário';
+    } else {
+        // nome já resolve — sem @, evita número aleatório de LID
+        display = display;
+    }
+    // Se display é @numero, mantém @; se é nome, sem @
+    const line = display.startsWith('@') ? `│ 👤 *Solicitado por:* ${display}` : `│ 👤 *Solicitado por:* ${display}`;
+    return `╭─── *📱 MÍDIA CONVERTIDA* ───\n${line}\n│ 🤖 *Por:* ${bot}\n│ ⚡ *Status:* Concluído\n╰───────────────`;
 }
 
 async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
@@ -167,10 +197,12 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, revealOpts);
         }
 
-        // caption padrão para mídias convertidas (estilo menu)
+        // caption padrão para mídias convertidas (estilo menu) — usa nome, evita LID aleatório
         const senderJid = m.key.participant || m.key.remoteJid || from;
+        const fallbackPn = m.key?.participantPn || m.key?.senderPn || null;
+        const senderNameForCaption = m.pushName || null;
         const botNameForCaption = getBotName(from, config);
-        const captionConvertido = buildConvertedCaption(senderJid, botNameForCaption);
+        const captionConvertido = buildConvertedCaption(senderJid, botNameForCaption, senderNameForCaption, fallbackPn);
 
         if (action === 'toimg') {
 

@@ -249,7 +249,8 @@ module.exports = {
                     console.log(`🤐 [PARCIAL] comando ${effectivePrefix}${commandName} bloqueado em ${from}`);
                     try {
                         const gm = await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }));
-                        safeDashboardLog('action', gm.subject, `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+                        const phoneParcial = (()=>{ if(!sender) return null; if(String(sender).endsWith('@lid')){ const pn=m.key?.participantPn||m.key?.senderPn||null; if(pn&&pn.endsWith('@s.whatsapp.net')){const ph=pn.split('@')[0].split(':')[0]; if(/^\d{8,15}$/.test(ph)) return ph;} return null;} const ph=String(sender).split('@')[0].split(':')[0]; return /^\d{8,15}$/.test(ph)?ph:null; })();
+                        safeDashboardLog('action', gm.subject, `🤐 [PARCIAL] !${commandName} bloqueado`, senderName, phoneParcial, null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
                     } catch (_) {}
                     return;
                 } else {
@@ -277,7 +278,8 @@ module.exports = {
 
             const botActiveInGroup = botActive || isPartActive;
             if (botActiveInGroup || !isGroup) {
-                safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${effectivePrefix}${commandName}`, senderName, sender.split('@')[0], null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
+                const phoneExec = (()=>{ if(!sender) return null; if(String(sender).endsWith('@lid')){ const pn=m.key?.participantPn||m.key?.senderPn||null; if(pn&&pn.endsWith('@s.whatsapp.net')){const ph=pn.split('@')[0].split(':')[0]; if(/^\d{8,15}$/.test(ph)) return ph;} return null;} const ph=String(sender).split('@')[0].split(':')[0]; return /^\d{8,15}$/.test(ph)?ph:null; })();
+                safeDashboardLog('action', groupMetadata.subject, `Comando executado: ${effectivePrefix}${commandName}`, senderName, phoneExec, null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe });
             }
 
             console.log(`🤖 [INTERAÇÃO] Comando ${effectivePrefix}${commandName} por ${senderName} em ${from}`);

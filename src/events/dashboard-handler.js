@@ -79,16 +79,36 @@ async function handleDashboardLog(sock, m, from, sender, senderName, text, group
             || qi.quotedMessage.documentMessage?.caption
             || '';
         const qSender = qi.participant || null;
+        const isLidQ = typeof qSender === 'string' && qSender.endsWith('@lid');
         const qSenderName = (() => {
-            try { const p = groupMetadata.participants?.find(pp => pp.id === qSender); return p?.name || p?.notify || (qSender ? '@' + qSender.split('@')[0] : null); } catch (_) { return qSender ? '@' + qSender.split('@')[0] : null; }
+            try { const p = groupMetadata.participants?.find(pp => pp.id === qSender); return p?.name || p?.notify || (!isLidQ && qSender ? '@' + qSender.split('@')[0].split(':')[0] : null) || null; } catch (_) { return !isLidQ && qSender ? '@' + qSender.split('@')[0].split(':')[0] : null; }
         })();
-        quotedInfo = { text: qText || null, hasMedia: !!(qi.quotedMessage.imageMessage || qi.quotedMessage.videoMessage || qi.quotedMessage.audioMessage || qi.quotedMessage.stickerMessage || qi.quotedMessage.documentMessage), senderJid: qSender, phone: qSender ? qSender.split('@')[0] : null, name: qSenderName };
+        const qPhone = (() => {
+            if (!qSender) return null;
+            if (qSender.endsWith('@lid')) return null;
+            const ph = qSender.split('@')[0].split(':')[0];
+            return /^\d{8,15}$/.test(ph) ? ph : null;
+        })();
+        quotedInfo = { text: qText || null, hasMedia: !!(qi.quotedMessage.imageMessage || qi.quotedMessage.videoMessage || qi.quotedMessage.audioMessage || qi.quotedMessage.stickerMessage || qi.quotedMessage.documentMessage), senderJid: qSender, phone: qPhone, name: qSenderName };
     }
 
     const logType = hidden ? 'viewonce' : 'chat';
+    const phoneForLog = (() => {
+        if (!sender) return null;
+        if (String(sender).endsWith('@lid')) {
+            const pn = m.key?.participantPn || m.key?.senderPn || null;
+            if (pn && pn.endsWith('@s.whatsapp.net')) {
+                const ph = pn.split('@')[0].split(':')[0];
+                if (/^\d{8,15}$/.test(ph)) return ph;
+            }
+            return null;
+        }
+        const ph = String(sender).split('@')[0].split(':')[0];
+        return /^\d{8,15}$/.test(ph) ? ph : null;
+    })();
     safeDashboardLog(logType, groupMetadata.subject,
         text || (mediaInfo ? `[${mediaInfo.type}${hidden ? ' • viewOnce' : ''}]` : ''),
-        senderName, sender.split('@')[0], mediaInfo,
+        senderName, phoneForLog, mediaInfo,
         { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe, quoted: quotedInfo, hidden, ephemeral }
     );
 }
@@ -107,7 +127,8 @@ async function handleProtocolMessage(sock, m, from, sender, senderName) {
             ownerJid: groupMetadata.owner || groupMetadata.subjectOwner || null
         });
     }
-    safeDashboardLog('chat', groupMetadata.subject, '📑 [Apagou uma mensagem]', senderName, sender.split('@')[0], null,
+    const phoneDel = (()=>{ if(!sender) return null; if(String(sender).endsWith('@lid')){ const pn=m.key?.participantPn||m.key?.senderPn||null; if(pn&&pn.endsWith('@s.whatsapp.net')){const ph=pn.split('@')[0].split(':')[0]; if(/^\d{8,15}$/.test(ph)) return ph;} return null;} const ph=String(sender).split('@')[0].split(':')[0]; return /^\d{8,15}$/.test(ph)?ph:null; })();
+    safeDashboardLog('chat', groupMetadata.subject, '📑 [Apagou uma mensagem]', senderName, phoneDel, null,
         { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: !!m.key.fromMe, ephemeral: !!m.message?.ephemeralMessage }
     );
     return true;

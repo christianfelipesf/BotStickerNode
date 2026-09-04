@@ -27,7 +27,15 @@ function createInteractionCommand({ name, aliases, category = 'interação', des
                 }
                 let buffer = null;
                 try { buffer = await fetchInteractionImage(key); } catch (e) { console.error(`❌ [${cmdName}] fetch falhou:`, e.message); }
-                const caption = `${emoji} *@${sender.split('@')[0]}* ${captionVerb} *@${targetJid.split('@')[0]}*`;
+                const isLid = (jid)=> typeof jid==='string' && jid.endsWith('@lid');
+                const disp = (jid, fallbackName)=>{
+                    if(isLid(jid)) return fallbackName && !['usuario','usuário'].includes(String(fallbackName).trim().toLowerCase()) ? `*${String(fallbackName).trim().slice(0,30)}*` : `*Usuário*`;
+                    const ph=String(jid||'').split('@')[0].split(':')[0];
+                    return /^\d{8,15}$/.test(ph) ? `*@${ph}*` : (fallbackName ? `*${String(fallbackName).trim().slice(0,30)}*` : `*Usuário*`);
+                };
+                const senderNameDisp = m.pushName || null;
+                const targetNameDisp = ctx?.pushName || null;
+                const caption = `${emoji} ${disp(sender, senderNameDisp)} ${captionVerb} ${disp(targetJid, targetNameDisp)}`;
                 const mentions = [sender, targetJid];
                 if (buffer) await sock.sendMessage(from, { image: buffer, caption, mentions }, { quoted: m });
                 else await sock.sendMessage(from, { text: caption, mentions }, { quoted: m });
