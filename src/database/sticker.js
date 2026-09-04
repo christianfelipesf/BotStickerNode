@@ -274,7 +274,7 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                         cmd = ffmpeg(inputPath)
                             .inputOptions([`-t ${a.t}`])
                             .outputOptions([
-                                '-vf', `scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=${a.fps},setsar=1`,
+                                '-vf', `scale=512:512:flags=lanczos,fps=${a.fps},setsar=1`,
                                 '-c:v', 'libwebp',
                                 '-lossless', '0',
                                 '-q:v', String(a.q),
@@ -341,7 +341,7 @@ async function mediaToSticker(buffer, mimeType, pack, author) {
                     cmd = ffmpeg(inputPath)
                         .outputOptions([
                             '-vframes', '1',
-                            '-vf', 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1',
+                            '-vf', 'scale=512:512:flags=lanczos,setsar=1',
                             '-c:v', 'libwebp',
                             '-lossless', '0',
                             '-q:v', '75',
