@@ -98,6 +98,12 @@ async function downloadBtch(platform, url, id, hd) {
             if (!vidUrl) throw new Error('sem mídia');
             const item = dl(vidUrl, 0);
             item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
+            try { item.dest = correctFileExtension(item.dest, null); } catch (_) {}
+            const ef = path.extname(item.dest).toLowerCase();
+            if (['.mp3', '.m4a', '.ogg', '.opus', '.wav'].includes(ef)) {
+                try { fs.unlinkSync(item.dest); } catch (_) {}
+                throw new Error('btch retornou apenas áudio para youtube');
+            }
             results.push(item.dest);
         } else if (platform === 'capcut') {
             if (!data?.originalVideoUrl) throw new Error('sem mídia');

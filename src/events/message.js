@@ -320,8 +320,8 @@ module.exports = {
             };
             cmdLog('início', `${senderName} → ${effectivePrefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
-            // === Command execution (com timeout anti-zumbi) ===
-            const CMD_TIMEOUT_MS = Number(process.env.CMD_TIMEOUT_MS) || 45000;
+            // === Command execution (com timeout anti-zumbi) === 120s p/ mídia (yt-dlp sem cookies leva 22-35s + fallback BTCH 10-15s), 45s matava !play antes do fallback terminar
+            const CMD_TIMEOUT_MS = Number(process.env.CMD_TIMEOUT_MS) || 90000;
             try {
                 context.log = cmdLog;
                 const execPromise = cmd.execute(sock, m, context);

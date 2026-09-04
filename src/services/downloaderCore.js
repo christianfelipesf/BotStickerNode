@@ -71,14 +71,37 @@ function correctFileExtension(filePath, contentType) {
         if (currentExt === correctExt) return filePath;
         const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(correctExt);
         const isVideoExt = ['.mp4', '.webm', '.mkv', '.mov'].includes(currentExt);
+        const isAudioExt = ['.mp3', '.m4a', '.ogg', '.wav', '.opus'].includes(correctExt);
+        const isAudioCurrentExt = ['.mp3', '.m4a', '.ogg', '.wav', '.opus'].includes(currentExt);
+        // vídeo salvo como .mp4 mas conteúdo é imagem → corrige (caso comum instagram)
         if (isVideoExt && isImageExt) {
             const newPath = filePath.replace(/\.[^.]+$/, '') + correctExt;
             if (filePath !== newPath) { try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; } return newPath; }
+        }
+        // vídeo salvo como .mp4 mas conteúdo é áudio (btch youtube mp3 → vídeo cinza só com áudio)
+        if (isVideoExt && isAudioExt) {
+            const newPath = filePath.replace(/\.[^.]+$/, '') + correctExt;
+            if (filePath !== newPath) { try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; } return newPath; }
+        }
+        // áudio salvo como vídeo ou vice-versa
+        if (isAudioCurrentExt && ['.mp4', '.webm', '.mkv', '.mov'].includes(correctExt)) {
+            const sniff = sniffExtFromFile(filePath);
+            if (sniff && sniff !== currentExt) {
+                const newPath = filePath.replace(/\.[^.]+$/, '') + sniff;
+                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
+                return newPath;
+            }
         }
         if (correctExt && currentExt !== correctExt) {
             const sniff = sniffExtFromFile(filePath);
             if (sniff && sniff !== currentExt) {
                 const newPath = filePath.replace(/\.[^.]+$/, '') + sniff;
+                try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
+                return newPath;
+            }
+            // fallback por content-type quando sniff não detecta áudio (ex: mp3 sem cabeçalho ftyp)
+            if (isAudioExt || isImageExt) {
+                const newPath = filePath.replace(/\.[^.]+$/, '') + correctExt;
                 try { fs.renameSync(filePath, newPath); } catch (_) { return filePath; }
                 return newPath;
             }

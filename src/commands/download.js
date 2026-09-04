@@ -51,7 +51,7 @@ async function downloadBtch(platform, url, id, hd) {
         } else if (platform === 'tiktok') {
             const videos = hd ? (data?.video || []) : (data?.video?.length ? [data.video[data.video.length - 1]] : []);
             if (!videos.length && data?.video?.length) throw new Error('sem mídia');
-            const arr = data?.video || [];
+            const arr = videos?.length ? videos : (data?.video || []);
             for (let i = 0; i < arr.length; i++) {
                 const item = dl(arr[i], i);
                 if (!item) continue;
@@ -70,10 +70,18 @@ async function downloadBtch(platform, url, id, hd) {
             item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
             results.push(item.dest);
         } else if (platform === 'youtube') {
-            const vidUrl = hd ? (data?.mp4 || data?.mp3) : (data?.mp3 || data?.mp4);
+            const vidUrl = data?.mp4 || data?.mp3;
             if (!vidUrl) throw new Error('sem mídia');
             const item = dl(vidUrl, 0);
             item.dest = await downloadFromUrl(item.url, item.dest) || item.dest;
+            // corrige nome se BTCH retornou áudio mas salvou como .mp4 (causa vídeo cinza só com áudio no WhatsApp)
+            try { item.dest = correctFileExtension(item.dest, null); } catch (_) {}
+            const extFixed = path.extname(item.dest).toLowerCase();
+            if (['.mp3', '.m4a', '.ogg', '.wav', '.opus'].includes(extFixed)) {
+                // BTCH retornou só áudio mas comando pediu vídeo → descarta para forçar erro/retentativa com yt-dlp
+                try { fs.unlinkSync(item.dest); } catch (_) {}
+                throw new Error('btch retornou apenas áudio para youtube (mp4 indisponível)');
+            }
             results.push(item.dest);
         } else if (platform === 'capcut') {
             if (!data?.originalVideoUrl) throw new Error('sem mídia');
@@ -385,6 +393,17 @@ module.exports = {
                     let files = [];
                     let r = await runYtDlp(buildYtDlpArgs(url, platform, hd, template, effectiveLang));
                     files = findDownloadedFiles(id);
+                    if (files.length === 0 && r && r.stderr) console.log(`[YT-DLP] stderr: ${String(r.stderr).slice(0,500)}`);
+
+                    // retry youtube sem filtro de idioma (ex: pt falhou mas original funciona) antes de cair no btch que vira cinza
+                    if (files.length === 0 && platform === 'youtube' && effectiveLang) {
+                        console.log(`[RETRY] youtube sem lang (original) após falha com lang=${effectiveLang}...`);
+                        const retryArgsNoLang = buildYtDlpArgs(url, platform, hd, template, null);
+                        const r2 = await runYtDlp(retryArgsNoLang);
+                        files = findDownloadedFiles(id);
+                        if (files.length === 0 && r2 && r2.stderr) console.log(`[YT-DLP] retry sem lang stderr: ${String(r2.stderr).slice(0,500)}`);
+                        r = r2;
+                    }
 
                     if (files.length === 0 && platform === 'instagram' && !hasCookies()) {
                         for (const browser of ['chrome', 'brave', 'firefox', 'edge']) {
@@ -411,10 +430,22 @@ module.exports = {
                     return files;
                 });
                 allFiles = allFiles.length ? allFiles : result;
-                // fallback btch para youtube com dublagem quando yt-dlp falhou
+                // fallback btch para youtube quando yt-dlp falhou (btch perde dublagem mas evita falha total)
                 if (allFiles.length === 0 && preferYtDlp && BTCH_PLATFORMS.has(platform)) {
                     console.log(`[YT-DLP] ${platform} yt-dlp falhou, tentando btch fallback...`);
-                    allFiles = await enqueueDownload(() => downloadBtch(platform, url, id, hd));
+                    const btchFiles = await enqueueDownload(() => downloadBtch(platform, url, id, hd));
+                    // filtra btch que retornou só áudio (ext .mp3/.m4a) — isso causa vídeo cinza no WhatsApp
+                    const filtered = btchFiles.filter(f => {
+                        const e = path.extname(f).toLowerCase();
+                        return !['.mp3', '.m4a', '.ogg', '.opus', '.wav'].includes(e);
+                    });
+                    if (filtered.length === 0 && btchFiles.length > 0) {
+                        console.log(`[YT-DLP] btch retornou apenas áudio, descartando fallback (evita vídeo cinza)`);
+                        for (const f of btchFiles) { try { fs.unlinkSync(f); } catch (_) {} }
+                        allFiles = [];
+                    } else {
+                        allFiles = filtered.length ? filtered : btchFiles;
+                    }
                 }
             }
 
@@ -426,6 +457,49 @@ module.exports = {
             if (allFiles.length === 0) {
                 throw new Error('Não foi possível baixar a mídia. O link pode ser inválido ou estar protegido.');
             }
+
+            // garante compatibilidade WhatsApp para fallback BTCH (evita vídeo cinza 16:9): re-encoda se não for h264 yuv420p com áudio aac
+            try {
+                const { execFileSync } = require('child_process');
+                for (let i = 0; i < allFiles.length; i++) {
+                    const fp = allFiles[i];
+                    const ext = path.extname(fp).toLowerCase();
+                    if (!['.mp4', '.webm', '.mkv', '.mov'].includes(ext)) continue;
+                    let needsTranscode = false;
+                    let probeInfo = '';
+                    try {
+                        probeInfo = execFileSync('ffprobe', ['-v','error','-select_streams','v:0','-show_entries','stream=codec_name,pix_fmt,width,height,avg_frame_rate','-of','default=noprint_wrappers=1', fp], { encoding:'utf8', windowsHide:true });
+                    } catch (_) { needsTranscode = true; }
+                    if (!needsTranscode) {
+                        const hasVideo = /codec_name=/i.test(probeInfo);
+                        const isH264 = /codec_name=h264/i.test(probeInfo);
+                        const isYuv420p = /pix_fmt=yuv420p/i.test(probeInfo);
+                        if (!hasVideo || !isH264 || !isYuv420p) needsTranscode = true;
+                        // vídeo vertical IA upscaled estranho (ex: 1428x1080) ou sem áudio também causa cinza; garante remux
+                        try {
+                            const aProbe = execFileSync('ffprobe', ['-v','error','-select_streams','a:0','-show_entries','stream=codec_name','-of','default=noprint_wrappers=1', fp], { encoding:'utf8', windowsHide:true });
+                            if (!/codec_name=/i.test(aProbe)) needsTranscode = true;
+                            else if (!/codec_name=(aac|mp3|opus)/i.test(aProbe)) needsTranscode = true;
+                        } catch (_) { /* sem áudio é ok, mas vídeo cinza geralmente é só áudio */ }
+                    }
+                    if (needsTranscode) {
+                        console.log(`[TRANSCODE] ${path.basename(fp)} não é h264 yuv420p/aac → re-encodando para WhatsApp...`);
+                        const out = fp.replace(/(\.[^.]+)$/, '_wa$1');
+                        const outMp4 = out.endsWith('.mp4') ? out : out.replace(/\.[^.]+$/, '.mp4');
+                        try {
+                            execFileSync('ffmpeg', ['-y','-i', fp, '-c:v','libx264','-pix_fmt','yuv420p','-profile:v','baseline','-level','3.1','-crf','23','-preset','veryfast','-c:a','aac','-b:a','128k','-movflags','+faststart', outMp4], { windowsHide:true, timeout:120000 });
+                            try { fs.unlinkSync(fp); } catch (_) {}
+                            // se extensão mudou, fs.rename já dentro do ffmpeg
+                            allFiles[i] = fs.existsSync(outMp4) ? outMp4 : fp;
+                            if (fs.existsSync(out) && out !== outMp4) { try { fs.unlinkSync(out); } catch (_) {} }
+                        } catch (e) {
+                            console.log(`[TRANSCODE] falhou: ${e.message} — enviando original`);
+                            try { if (fs.existsSync(outMp4)) fs.unlinkSync(outMp4); } catch (_) {}
+                            try { if (fs.existsSync(out)) fs.unlinkSync(out); } catch (_) {}
+                        }
+                    }
+                }
+            } catch (_) {}
 
             let totalSize = 0;
             const maxBytes = getMaxDownloadBytes();
