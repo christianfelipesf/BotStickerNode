@@ -7,23 +7,27 @@ const { Image } = require('node-webpmux');
 const { tempDir } = require('./db');
 
 async function addMetadata(buffer, pack, author, originalBuffer = null) {
+    // garante pack/author nunca vazios (evita sticker sem info - bug imagem vs vídeo)
+    const safePack = (pack && String(pack).trim()) ? String(pack).trim().slice(0,30) : 'Usuário';
+    const safeAuthor = (author && String(author).trim()) ? String(author).trim().slice(0,30) : 'Bot';
     try {
         const img = new Image();
         await img.load(buffer);
         const payload = {
             "sticker-pack-id": `bot-${crypto.randomBytes(4).toString('hex')}`,
-            "sticker-pack-name": pack,
-            "sticker-pack-publisher": author,
+            "sticker-pack-name": safePack,
+            "sticker-pack-publisher": safeAuthor,
             "emojis": ["✅"]
         };
-        // embedding opcional do original para !toimg perfeito (se couber em <1MB) — até 500KB para fotos
-        if (originalBuffer && Buffer.isBuffer(originalBuffer) && originalBuffer.length > 64 && originalBuffer.length < 500 * 1024) {
+        // embedding opcional do original para !toimg perfeito - limitado para não estourar exif e não quebrar pack/author no WhatsApp
+        // Antes: até 500KB / 950KB gerava exif 100KB+ e alguns clientes mostravam pack vazio. Agora só até 80KB / 150KB total.
+        if (originalBuffer && Buffer.isBuffer(originalBuffer) && originalBuffer.length > 64 && originalBuffer.length < 80 * 1024) {
             try {
-                // só embutir se não estourar 950KB (webp + exif)
+                // só embutir se não estourar 150KB total (webp + exif) - mantém exif pequeno para WhatsApp exibir pack/author
                 const b64 = originalBuffer.toString('base64');
                 const testPayload = { ...payload, data: b64 };
                 const testLen = Buffer.byteLength(JSON.stringify(testPayload), 'utf-8') + 22 + buffer.length;
-                if (testLen < 950 * 1024) {
+                if (testLen < 150 * 1024) {
                     payload.data = b64;
                     // guardar mime para decodificação fiel (opcional)
                     try {
@@ -32,7 +36,7 @@ async function addMetadata(buffer, pack, author, originalBuffer = null) {
                     } catch(_) {}
                     console.log(`[STICKER-LOG] addMetadata: embutindo original ${originalBuffer.length}B base64=${b64.length} testLen=${testLen}B`);
                 } else {
-                    console.log(`[STICKER-LOG] addMetadata: original ${originalBuffer.length}B não embutido (testLen ${testLen}B >950KB)`);
+                    console.log(`[STICKER-LOG] addMetadata: original ${originalBuffer.length}B não embutido (testLen ${testLen}B >150KB)`);
                 }
             } catch(e) { console.warn(`⚠️ [METADATA] falha ao preparar embedding: ${e.message}`); }
         }

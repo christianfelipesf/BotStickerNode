@@ -20,6 +20,7 @@ const {
     isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
     getGroupData
 } = require('../database/utils');
+const stickerLog = (()=>{ try{ return require('../services/stickerLog'); }catch(_){ return null; } })();
 
 function isLidJid(jid) { return typeof jid === 'string' && jid.endsWith('@lid'); }
 function resolveDisplayNum(jid, fallbackPn) {
@@ -226,26 +227,56 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 // Antes buscava getStickerPackForJid que sempre retorna "Antigravity Bot🪐" (global default) e mascarava pushName
                 let pack = explicitOpts.pack || null;
                 let author = explicitOpts.author || null;
+                let packSource = explicitOpts.pack ? 'explicit' : null;
+                let authorSource = explicitOpts.author ? 'explicit' : null;
                 if (!pack) {
                     try {
                         const gd = getGroupData(from);
-                        if (gd && gd.stickerPack) pack = String(gd.stickerPack).slice(0, 30) || null;
+                        if (gd && gd.stickerPack) { pack = String(gd.stickerPack).slice(0, 30) || null; packSource = 'group'; }
                     } catch (_) {}
                 }
                 if (!author) {
                     try {
                         const gd = getGroupData(from);
-                        if (gd && gd.stickerAuthor) author = String(gd.stickerAuthor).slice(0, 30) || null;
+                        if (gd && gd.stickerAuthor) { author = String(gd.stickerAuthor).slice(0, 30) || null; authorSource = 'group'; }
                     } catch (_) {}
                 }
-                if (!pack) pack = (m.pushName || 'Usuário').slice(0, 30) || 'Usuário';
-                if (!author) author = getBotName(from, config);
+                if (!pack) { pack = (m.pushName || 'Usuário').slice(0, 30) || 'Usuário'; packSource = m.pushName ? 'fallback:pushName' : 'fallback:Usuário'; }
+                if (!author) { author = getBotName(from, config); authorSource = 'fallback:botName'; }
                 const requesterName = pack;
                 const botName = author;
+                const _stickerStart = Date.now();
+                let _stickerSuccess = false;
+                let _stickerError = null;
+                let _stickerOutputBytes = 0;
+                let _stickerExifLen = 0;
+                const _quotedSender = quotedInfo?.participant || null;
+                const _mediaType = mediaMessage.videoMessage ? 'video' : (mediaMessage.imageMessage ? 'image' : 'unknown');
+                // pega nome do grupo para log
+                let _groupName = null;
+                try { const gm = await groupMetadataCached(sock, from).catch(()=>null); _groupName = gm?.subject || null; } catch(_){}
                 try {
                     console.log(`[STICKER-LOG] handleMediaCommand sticker input mime=${detectedMime} bytes=${buffer.length} from=${from} by=${requesterName} pack="${pack}" author="${author}" explicit=${JSON.stringify(explicitOpts)}`); 
                     const stickerBuffer = await mediaToSticker(buffer, detectedMime, pack, author);
                     console.log(`[STICKER-LOG] handleMediaCommand sticker gerado ${stickerBuffer.length} bytes header=${stickerBuffer.slice(0,4).toString()} WEBP=${stickerBuffer.slice(8,12).toString()}`);
+                    try { const { Image } = require('node-webpmux'); const im = new Image(); await im.load(stickerBuffer); _stickerExifLen = im.exif ? im.exif.length : 0; } catch(_){}
+                    _stickerSuccess = true;
+                    _stickerOutputBytes = stickerBuffer.length;
+                    // log dedicado para diagnóstico de pack vazio (imagem vs vídeo)
+                    try {
+                        const emptyPack = !pack || !String(pack).trim();
+                        const emptyAuthor = !author || !String(author).trim();
+                        if (emptyPack || emptyAuthor) console.warn(`⚠️ [STICKER-HISTORY] pack/author vazio detectado! pack="${pack}" author="${author}" mediaType=${_mediaType} mime=${detectedMime} explicit=${JSON.stringify(explicitOpts)} pushName="${m.pushName}" groupPack="${(() => { try{ return getGroupData(from).stickerPack||'' }catch{return ''}})()}"`);
+                    } catch(_){}
+                    try {
+                        if (stickerLog) stickerLog.logSticker({
+                            from, groupName: _groupName, senderJid: m.key.participant || m.key.remoteJid, senderName: m.pushName || null, quotedSender: _quotedSender,
+                            mediaType: _mediaType, mime: detectedMime, detectedMime,
+                            pack, author, packSource, authorSource, explicitOpts,
+                            inputBytes: buffer.length, outputBytes: _stickerOutputBytes, exifLen: _stickerExifLen,
+                            success: true, tempId: null, durationMs: Date.now()-_stickerStart
+                        });
+                    } catch(_){}
                     if (!stickerBuffer || stickerBuffer.length < 64) throw new Error('Sticker gerado vazio');
                     if (stickerBuffer.length > 1024 * 1024) throw new Error('Sticker muito grande (>1MB)');
                     const header = Buffer.isBuffer(stickerBuffer) ? stickerBuffer.slice(0, 12) : null;
@@ -253,7 +284,19 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                         throw new Error('Sticker gerado inválido');
                     }
                     await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: m });
+                    return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
                 } catch (stickerErr) {
+                    _stickerError = stickerErr.message;
+                    _stickerSuccess = false;
+                    try {
+                        if (stickerLog) stickerLog.logSticker({
+                            from, groupName: _groupName, senderJid: m.key.participant || m.key.remoteJid, senderName: m.pushName || null, quotedSender: _quotedSender,
+                            mediaType: _mediaType, mime: detectedMime, detectedMime,
+                            pack, author, packSource, authorSource, explicitOpts,
+                            inputBytes: buffer.length, outputBytes: _stickerOutputBytes, exifLen: _stickerExifLen,
+                            success: false, error: _stickerError, durationMs: Date.now()-_stickerStart
+                        });
+                    } catch(_){}
                     console.error('❌ [STICKER] Falha ao gerar:', stickerErr.message);
                     await sock.sendMessage(from, { text: '❌ Não foi possível gerar o sticker desse vídeo. Tente outro ou envie uma imagem.' }, { quoted: m });
                     throw stickerErr;
