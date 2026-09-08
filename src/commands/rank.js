@@ -36,32 +36,84 @@ module.exports = {
 
         const ranking = getMonthlyRank(from, 10);
 
-        // Busca fotos de perfil para os top 10 (se disponível)
+        // Busca fotos de perfil para os top 10 (resolve @lid -> @s.whatsapp.net quando necessário)
         let rankingWithAvatar = ranking;
         if (ranking.length > 0) {
+            let groupMetaForAvatars = null;
+            try { groupMetaForAvatars = await groupMetadataCached(sock, from); } catch(_) {}
+            const participants = Array.isArray(groupMetaForAvatars?.participants) ? groupMetaForAvatars.participants : [];
+
+            function findPhoneForJid(jid){
+                if (!jid) return null;
+                const norm = String(jid).split('@')[0].split(':')[0];
+                for (const p of participants){
+                    const cands = [p.id, p.jid, p.lid, p.phoneNumber].filter(Boolean);
+                    for (const c of cands){
+                        const cn = String(c).split('@')[0].split(':')[0];
+                        if (cn === norm){
+                            // retorna o id @s.whatsapp.net se existir
+                            if (p.id && p.id.endsWith('@s.whatsapp.net')) return p.id;
+                            if (p.jid && p.jid.endsWith('@s.whatsapp.net')) return p.jid;
+                            if (p.phoneNumber && String(p.phoneNumber).includes('@')) return String(p.phoneNumber);
+                            // se só tem lid, retorna o próprio lid
+                            return p.id || p.jid || p.lid || null;
+                        }
+                    }
+                    // comparação direta lid
+                    if (p.lid === jid || p.id === jid) {
+                        if (p.id && p.id.endsWith('@s.whatsapp.net')) return p.id;
+                        if (p.phoneNumber) return String(p.phoneNumber);
+                    }
+                }
+                return null;
+            }
+
+            async function fetchAvatarBuffer(jid){
+                // tenta jid original + jid resolvido
+                const tries = [];
+                if (jid) tries.push(jid);
+                const phone = findPhoneForJid(jid);
+                if (phone && phone !== jid) tries.push(phone);
+                // também tenta lid -> phone inverso
+                if (jid && jid.endsWith('@lid') && phone) {
+                    // já tem
+                } else if (jid && jid.endsWith('@s.whatsapp.net')) {
+                    // tenta achar lid correspondente e usar? profilePictureUrl aceita ambos, mas tenta lid também
+                    const lidCand = participants.find(pp => (pp.id===jid || pp.jid===jid))?.lid;
+                    if (lidCand) tries.push(lidCand);
+                }
+                for (const t of tries){
+                    try{
+                        const url = await sock.profilePictureUrl(t, 'image').catch(()=>null);
+                        if (!url) continue;
+                        const res = await axios.get(url, {
+                            responseType: 'arraybuffer',
+                            timeout: 5000,
+                            maxContentLength: 2 * 1024 * 1024,
+                            headers: { 'User-Agent': 'Mozilla/5.0' }
+                        }).catch(()=>null);
+                        if (!res || !res.data) continue;
+                        const buf = Buffer.from(res.data);
+                        if (buf.length < 100 || buf.length > 2*1024*1024) continue;
+                        return buf;
+                    }catch(_){ continue; }
+                }
+                return null;
+            }
+
             try {
                 const avatarResults = await Promise.all(ranking.map(async (u) => {
                     const jid = u.jid;
-                    // @lid não tem foto direta — usa placeholder (evita rate-limit)
-                    if (!jid || jid.endsWith('@lid')) return { ...u, avatar: null };
-                    try {
-                        const url = await sock.profilePictureUrl(jid, 'image').catch(() => null);
-                        if (!url) return { ...u, avatar: null };
-                        const res = await axios.get(url, {
-                            responseType: 'arraybuffer',
-                            timeout: 4000,
-                            maxContentLength: 2 * 1024 * 1024,
-                            headers: { 'User-Agent': 'Mozilla/5.0' }
-                        }).catch(() => null);
-                        if (!res || !res.data) return { ...u, avatar: null };
-                        const buf = Buffer.from(res.data);
-                        if (buf.length > 2 * 1024 * 1024) return { ...u, avatar: null };
-                        return { ...u, avatar: buf };
-                    } catch (_) {
-                        return { ...u, avatar: null };
-                    }
+                    if (!jid) return { ...u, avatar: null };
+                    const buf = await fetchAvatarBuffer(jid);
+                    return { ...u, avatar: buf };
                 }));
                 rankingWithAvatar = avatarResults;
+                // log para debug de quantos avatares reais pegou
+                try{
+                    const ok = rankingWithAvatar.filter(x=>x.avatar).length;
+                    console.log(`[RANK] avatares ${ok}/${ranking.length} obtidos (lid resolvido via groupMetadata ${participants.length} participants)`);
+                }catch(_){}
             } catch (_) {
                 rankingWithAvatar = ranking;
             }
