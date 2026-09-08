@@ -1,3 +1,4 @@
+const axios = require('axios');
 const { generateRankImage } = require('../services/rankImage');
 
 module.exports = {
@@ -35,6 +36,37 @@ module.exports = {
 
         const ranking = getMonthlyRank(from, 10);
 
+        // Busca fotos de perfil para os top 10 (se disponível)
+        let rankingWithAvatar = ranking;
+        if (ranking.length > 0) {
+            try {
+                const avatarResults = await Promise.all(ranking.map(async (u) => {
+                    const jid = u.jid;
+                    // @lid não tem foto direta — usa placeholder (evita rate-limit)
+                    if (!jid || jid.endsWith('@lid')) return { ...u, avatar: null };
+                    try {
+                        const url = await sock.profilePictureUrl(jid, 'image').catch(() => null);
+                        if (!url) return { ...u, avatar: null };
+                        const res = await axios.get(url, {
+                            responseType: 'arraybuffer',
+                            timeout: 4000,
+                            maxContentLength: 2 * 1024 * 1024,
+                            headers: { 'User-Agent': 'Mozilla/5.0' }
+                        }).catch(() => null);
+                        if (!res || !res.data) return { ...u, avatar: null };
+                        const buf = Buffer.from(res.data);
+                        if (buf.length > 2 * 1024 * 1024) return { ...u, avatar: null };
+                        return { ...u, avatar: buf };
+                    } catch (_) {
+                        return { ...u, avatar: null };
+                    }
+                }));
+                rankingWithAvatar = avatarResults;
+            } catch (_) {
+                rankingWithAvatar = ranking;
+            }
+        }
+
         // Texto fallback curto para caption
         let caption = `*${botName} — Rank Mensal* 🏆\n_top 10 mais ativos_\n\n`;
         caption += `📅 *Mês:* ${monthLabel} (${monthKey})\n`;
@@ -55,13 +87,13 @@ module.exports = {
         }
         caption += `\n_Use ${config.prefix}rank ou ${config.prefix}rankativos para ver a imagem._`;
 
-        // Gera imagem
+        // Gera imagem (com avatares se tiver)
         try {
             const imgBuffer = await generateRankImage({
                 groupName,
                 botName,
                 monthLabel,
-                ranking,
+                ranking: rankingWithAvatar,
                 monthKey
             });
             await sock.sendMessage(from, { image: imgBuffer, caption }, { quoted: m });
