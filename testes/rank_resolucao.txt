@@ -1,0 +1,55 @@
+RANK - RESOLUÇÃO ORIGINAL E MUDANÇA
+
+1) RESOLUÇÃO ORIGINAL
+--------------------
+Arquivo: src/services/rankImage.js:69,152-159
+- W lógico = 1080px
+- H lógico Top10 = HEADER_H(210) + 10*ROW_H(72) + FOOTER_H(70) + PAD(32) = 1032px
+- H lógico vazio/Top1 = 384px
+- density = 220 (sharp SVG via librsvg, default 72 DPI)
+- scale = 220/72 = 3.0555x
+- W efetivo = 1080 * 3.055 = ~3300px
+- H efetivo Top10 = 1032 * 3.055 = ~3153px (10.4 MPixels, ~41.6MB RAM só do bitmap + composite ~80-100MB pico)
+- Formato: PNG 32-bit, 900KB-1.8MB no disco/rede (com avatares JPEG reais)
+
+Comando: src/commands/rank.js:151 envia como { image: imgBuffer } — WhatsApp converte image para JPEG opaco de qualquer forma.
+
+2) POR QUE MUDOU
+----------------
+- WhatsApp reescala qualquer imagem com lado maior >1600px para 1600px com JPEG q~70 e >2048px com downscale bilinear — enviar 3300px faz o servidor descartar 75% dos pixels e recomprimir com borrão duplo + artefato.
+- Preview na conversa é 90-120px thumb; ao abrir, largura útil é 360-412dp (Android). >1080px já é >2-3x retina, olho não distingue.
+- PNG com rx:24/gradient vira fundo sólido no JPEG do WA; enviar JPEG direto economiza ~40% e evita flatten.
+- Custo anterior: ~42MB + composite ~85MB por !rank, 900KB-1.8MB upload para ser jogado fora. Comp. PNG de 10MP leva ~600ms extra.
+- Legibilidade: em 3300px, fontes 38pt→116px / 26pt→79px — oversampling inútil. Em 1080px nativo (1x) já é perfeitamente nítido.
+
+3) RESOLUÇÃO ATUAL (FIX RÁPIDO APLICADO)
+---------------------------------------
+Arquivo: src/services/rankImage.js:152-187
+- density: 220 → 144 (2x supersampling, anti-alias perfeito)
+- Conversão final: sharp(buf).resize({ width: 1080 }).jpeg({ quality:85, mozjpeg:true }).toBuffer()
+- Cálculo: SVG 1080px * 144/72 = 2160px render → resize Lanczos para 1080px (2x → 1x)
+- Resultado Top10: 1080 x 1032px, ~87KB JPEG
+- Resultado vazio: 1080 x 384px, ~26KB JPEG
+- Antes intermediário testado 800px: 800x764 ~62KB — usuário pediu manter 1080px, mantido no máximo útil.
+
+4) GANHOS
+---------
+- -67% largura (3300→1080), -67% altura, -75% pixels, -90% bytes (1.8MB→87KB)
+- Pico RAM: 41.6MB→ ~18MB render + ~7MB final
+- Sem perda perceptível: texto nome 26px (era 79px), avatar 56px (era 171px), barra 220px — tudo 1x nativo, nítido no celular.
+- Evita reescala destrutiva do servidor WA.
+- scale = meta.width/W recalculado dinamicamente em :154-159, então composite de avatares (avatarSizeScaled, left, top) continua alinhado.
+
+5) ALTERNATIVAS CONSIDERADAS (não aplicadas)
+-------------------------------------------
+- 720px compacto (2x→720, JPEG82, ~110KB, avatar 37px) — para VPS 512MB / net fraca.
+- 800px equilibrado (2x→800, JPEG85, ~150KB, avatar 41px) — sweet-spot 2x tela 400dp.
+- Mantido 1080px a pedido do usuário.
+
+6) COMO REVERTER / ALTERAR
+--------------------------
+Em src/services/rankImage.js:152 trocar density (72=1x, 96=1.33x, 144=2x)
+Em :187 trocar resize width (720, 800, 1080) e jpeg quality (82-88).
+
+Data: 2026-09-08
+Autor: Muse Spark (fix rápido Opção A, depois ajuste para 1080px a pedido)

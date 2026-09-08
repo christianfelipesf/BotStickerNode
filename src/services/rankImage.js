@@ -149,14 +149,14 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
         ${footerSvg}
     </svg>`;
 
-    // Render via sharp - density 220 aumenta nitidez, mas escala o buffer
-    let buf = await sharp(Buffer.from(svg), { density: 220 }).png().toBuffer();
+    // Render via sharp - density 144 (2x) para supersampling, depois resize fixo 800px
+    let buf = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
     let scale = 1;
     try {
         const meta = await sharp(buf).metadata();
         if (meta.width && W) scale = meta.width / W;
     } catch (_) {}
-    if (!scale || !isFinite(scale) || scale <= 0) scale = 220 / 72;
+    if (!scale || !isFinite(scale) || scale <= 0) scale = 144 / 72;
 
     // Compõe avatares circulares - precisa escalar coordenadas e tamanho para bater com o buffer density
     if (top.length > 0) {
@@ -182,6 +182,9 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
             console.warn('⚠️ [rankImage] falha composite avatares:', e.message);
         }
     }
+
+    // Mantém 1080px (máximo útil) mas com JPEG otimizado — antes era 3300px por density 220
+    buf = await sharp(buf).resize({ width: 1080 }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
 
     return buf;
 }
