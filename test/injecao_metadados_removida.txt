@@ -1,0 +1,178 @@
+================================================================================
+ INJECAO DE METADADOS EM STICKER — O QUE FOI REMOVIDO / ALTERADO
+ BotStickerNode — src/database/sticker.js :: addMetadata() e src/events/media.js
+ Data: 2026-09-08
+ Autor: Muse Spark (fix pack/author vazio em imagem)
+================================================================================
+
+1. O QUE ERA A INJECAO DE METADADOS
+----------------------------------
+Funçao: addMetadata(buffer, pack, author, originalBuffer) em src/database/sticker.js:9
+cria o EXIF do WebP que o WhatsApp lê como pack/author.
+
+Payload original:
+{
+  "sticker-pack-id": "bot-<hex>",
+  "sticker-pack-name": "<pack>",
+  "sticker-pack-publisher": "<author>",
+  "emojis": ["✅"],
+  "data": "<base64 do JPEG/PNG original>",   // <— INJECAO
+  "dataMime": "image/jpeg"                  // <— INJECAO
+}
+
+O campo "data" guardava o arquivo original inteiro em base64 dentro do JSON do
+EXIF, para que !toimg pudesse restaurar a imagem SEM recompressao.
+
+Exemplo de EXIF com injecao (log real 2026-09-08 10:09:07):
+  tempId=3c76fa40 pack="Gravity 🪐" author="Antigravity Bot🪐"
+  original 66736B base64=88984 testLen=107237
+  exifLen=89173
+  exifPreview="{"sticker-pack-id":"bot-80ff8359","sticker-pack-name":"Gravity 🪐", ... ,"data":"/9j/4AAQ..."
+
+Sem injecao, EXIF tem ~130-160 bytes:
+  exifLen=155
+  exifPreview="{"sticker-pack-id":"bot-3fd5a68e","sticker-pack-name":"Gravity 🪐","sticker-pack-publisher":"Antigravity Bot🪐","emojis":["✅"]}"
+
+2. COMO FUNCIONAVA — CODIGO ANTIGO
+---------------------------------
+src/database/sticker.js:20-30 (antes de 2026-09-08 12:00):
+  if (originalBuffer && originalBuffer.length >64 && originalBuffer.length <500*1024) {
+      const b64 = originalBuffer.toString('base64');
+      const testPayload = { ...payload, data: b64 };
+      const testLen = Buffer.byteLength(JSON.stringify(testPayload),'utf8') +22 + buffer.length;
+      if (testLen <950*1024) {
+          payload.data = b64;
+          payload.dataMime = "image/...";
+      }
+  }
+
+Depois:
+  const exif = Buffer.concat([
+      Buffer.from([0x49,0x49,0x2A,0x00,0x08,0x00,0x00,0x00,0x01,0x00,0x41,0x57,0x07,0x00,0x00,0x00,0x00,0x00,0x16,0x00,0x00,0x00]),
+      Buffer.from(JSON.stringify(payload),'utf8')
+  ]);
+  exif.writeUInt32LE(exif.length-22,14);
+  img.exif = exif;
+
+ Fluxo imagem: src/database/sticker.js:230-251
+   sharp -> webp 512 (18088B) -> addMetadata(webp, pack, author, originalBuffer)
+ Fluxo video:  ffmpeg -> webp -> addMetadata(webp, pack, author) // sem original
+
+ Fluxo reverso: src/database/sticker.js:454-477 stickerToMedia()
+   probe = new Image(); await probe.load(buffer);
+   _exifJson = JSON.parse(probe.exif.slice(22).toString('utf8'));
+   if (_exifJson.data) {
+       embedded = Buffer.from(_exifJson.data,'base64');
+       return { buffer: embedded, mime, ext }; // restauracao perfeita, sem sharp/ffmpeg
+   }
+   // fallback: sharp/ffmpeg decode webp->png/mp4 (com perda)
+
+3. POR QUE FOI ALTERADO / REMOVIDO EM PARTE
+------------------------------------------
+Problema reportado: "!s em imagem gera sem author/pack, em video gera certo"
+Log do caso real:
+  [10:09:07] handleMediaCommand sticker input mime=image/jpeg bytes=66736 from=... by=Gravity 🪐 pack="Gravity 🪐" author="Antigravity Bot🪐" explicit={}
+  [STICKER-LOG] addMetadata: embutindo original 66736B base64=88984 testLen=107237
+  [STICKER-LOG] addMetadata: final 107288B (webp 18088 + exif 89173) exifLen=89173
+
+O handleMediaCommand gerou pack/author CORRETOS, o log confirma, e o EXIF também
+continha "sticker-pack-name":"Gravity 🪐" no preview. Porém no WhatsApp o sticker
+apareceu sem pack/author.
+
+Causa raiz: exif 89KB é gigante. WhatsApp espera exif ~150-200 bytes. Clientes
+truncam/ignoram exif muito grande e exibem pack vazio. Vídeo (exif 137-155 bytes,
+sem data) exibia normal, mascarando o bug.
+
+Histórico de limites:
+  - Original: <500KB original, <950KB total -> exif 100KB+ frequente (ex: 96KB imagem -> 128KB exif)
+  - Primeira correcao (2026-09-08 12:00): <80KB / <150KB -> ainda permitia 66KB -> 89KB exif, bug persistiu
+  - Correcao atual: <25KB / <50KB total
+
+4. O QUE MUDOU — CODIGO NOVO
+----------------------------
+src/database/sticker.js:9-42 (atual):
+  const safePack = (pack && String(pack).trim()) ? String(pack).trim().slice(0,30) : 'Usuário';
+  const safeAuthor = (author && String(author).trim()) ? String(author).trim().slice(0,30) : 'Bot';
+  // garante nunca vazio (evita sticker sem info - bug @lid vs pushName)
+
+  if (originalBuffer && ... && originalBuffer.length <25*1024) {
+      if (testLen <50*1024) { payload.data = b64; }
+
+Comentario no codigo:
+  // embedding opcional - limitado para não estourar exif e não quebrar pack/author no WhatsApp
+  // 66KB original gerava exif 89KB e WhatsApp não exibia pack/author. Agora só até 25KB/50KB.
+
+Resultado:
+  - Imagem 66KB (caso Gravity) -> 66KB >25KB => NÃO embute -> exifLen ~155 bytes -> pack exibe.
+  - Imagem 53KB (teste 3000x3000) antes embutia 71KB, agora não embute -> exif 155
+  - Imagem 6KB (512x512 dummy) -> 6KB <25KB e testLen 9010 <50KB -> AINDA embute -> exif 8476, pack ok (cliente aguenta)
+  - Random 607KB -> não embute -> exif 144
+  - Vídeo nunca embute -> comportamento inalterado
+
+5. COMO FUNCIONA AGORA (POS-CORRECAO)
+------------------------------------
+Cenário A - Imagem pequena (<25KB, ex: ícone 6KB):
+  mediaToSticker -> sharp webp 558B -> addMetadata com data -> webp 9060B exif 8476 (data presente)
+  stickerToMedia -> detecta _exifJson.data -> retorna original 6223B idêntico, mime image/jpeg, sem recompressao
+  !toimg devolve JPEG original perfeito.
+
+Cenário B - Imagem média/grande (>25KB, maioria dos casos reais: 66KB, 90KB, 300KB):
+  mediaToSticker -> sharp webp -> addMetadata SEM data (testLen >50KB ou original >25KB) -> webp ~18-65KB exif ~150B
+  stickerToMedia -> não encontra data -> fallback sharp: sharp(buffer).png() -> PNG sem perda adicional além do webp inicial
+  !toimg devolve PNG decodificado do webp (leve perda vs original, mas pack/author sempre visível)
+
+Cenário C - Vídeo:
+  Inalterado: ffmpeg webp -> addMetadata sem data -> exif 140B
+
+6. LOGS PARA FUTUROS ESTUDOS
+---------------------------
+Novo serviço: src/services/stickerLog.js:1
+  logs/sticker_YYYY-MM-DD.log linha:
+  [ISO] !s pack="..." author="..." packSource=explicit/group/fallback:pushName authorSource=... explicit={} mediaType=image mime=image/jpeg input=66736 output=107288 exifLen=89173 from=jid group=... sender=... quoted=... success=true dur=96ms
+
+Também console [STICKER-HISTORY] capturado por terminalLog em logs/terminal_*.log
+e warning quando pack/author vazio:
+  ⚠️ [STICKER-HISTORY] pack/author vazio detectado! ...
+
+Para reativar injecao total (estudo):
+  Em src/database/sticker.js:24 troque 25*1024 -> 500*1024 e 50*1024 -> 950*1024
+  e reinicie. Compare exifLen e visualização no WhatsApp.
+
+Para desativar completamente (exif sempre mínimo):
+  Comente o bloco if (originalBuffer ...) inteiro, deixe apenas pack/author.
+
+7. TRADE-OFFS
+------------
+Pró de remover/limitar: pack/author sempre visível, sticker <1MB garantido, compatível com todos clientes.
+Contra: !toimg perde restauração perfeita para imagens >25KB (volta a ser decode do webp, não original idêntico). Para uso normal imperceptível; para arquivamento, prefira !revelar.
+
+8. ARQUIVOS ENVOLVIDOS
+---------------------
+  src/database/sticker.js:9      addMetadata() — onde injecao acontece
+  src/database/sticker.js:99     mediaToSticker() — chama addMetadata com/sem originalBuffer
+  src/database/sticker.js:422    stickerToMedia() — lê _exifJson.data
+  src/events/media.js:226        handleMediaCommand — decide pack/author (explicit/group/fallback) e loga via stickerLog
+  src/services/stickerLog.js     novo log dedicado
+  logs/sticker_*.log             histórico por dia
+  logs/terminal_*.log            STICKER-LOG detalhado
+
+9. TESTES REALIZADOS
+-------------------
+  - dummy 2405B png + pack="" -> fallback pack=Usuário author=Bot exif 3376 com data (ok, <25KB)
+  - 6223B jpeg -> 6223 <25KB? não, 6223 <25KB (6KB) -> embutiu exif 8476
+  - 37243B jpeg 2500x2500 -> 37KB >25KB -> não embutiu (correto)
+  - random 704x1504 607KB -> exif 155 sem data, pack Gravity 🪐 ok
+  - random 600x600 317KB -> exif 138 sem data
+
+10. REFERENCIA PARA REVERTER
+--------------------------
+git diff src/database/sticker.js mostra:
+- const safePack/safeAuthor adicionados
+- if (originalBuffer.length <25*1024) e testLen <50*1024 (antes 80/150, antes disso 500/950)
+- logs mantidos
+
+Para estudo futuro: meça exifLen vs exibição de pack em diferentes aparelhos (Android/iOS/Web) e ajuste limites.
+
+================================================================================
+ FIM
+================================================================================
