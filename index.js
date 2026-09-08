@@ -330,6 +330,7 @@ async function startBot() {
                 const ts = new Date().toLocaleString('pt-BR');
                 const phone = sock.user?.id?.split?.(':')?.[0] || null;
                 console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version} | attemptId=${_restartNumber}-${_connAttemptId} | phone=${phone || '?'})\n`);
+                try { if (utils.checkMonthlyReset) utils.checkMonthlyReset(); } catch (_) {}
                 try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');

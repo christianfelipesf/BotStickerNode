@@ -895,6 +895,140 @@ function getTopMember(jid) {
     } catch (_) { return 'Nenhum registro hoje'; }
 }
 
+// ============================================================
+// Rank mensal — Top 10 ativos (reseta dia 1)
+// ============================================================
+function _getCurrentMonthKey() {
+    // Usa America/Sao_Paulo para bater com dia 1 BRT
+    try {
+        const d = new Date();
+        const parts = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(d);
+        const y = parts.find(p => p.type === 'year')?.value;
+        const m = parts.find(p => p.type === 'month')?.value;
+        if (y && m) return `${y}-${m}`;
+    } catch (_) {}
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function _getMonthLabelBr(monthKey) {
+    // monthKey "YYYY-MM" -> "setembro de 2026"
+    try {
+        const [y, m] = String(monthKey).split('-').map(Number);
+        const d = new Date(y, (m || 1) - 1, 1);
+        return d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    } catch (_) { return String(monthKey); }
+}
+
+function _isFirstDayBrt() {
+    try {
+        const d = new Date();
+        const day = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit' }).format(d);
+        return Number(day) === 1;
+    } catch (_) { return new Date().getDate() === 1; }
+}
+
+function getMonthlyRank(jid, limit = 10) {
+    if (!jid) return [];
+    if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+    _flushActivity();
+    try {
+        const row = _gsGet.get(jid);
+        if (!row) return [];
+        const act = safeJson(row.activity, {});
+        const groupActivity = act[jid];
+        if (!groupActivity || typeof groupActivity !== 'object') return [];
+        // merge buffer pendente (caso flush acima nao pegou devido a timing)
+        const buf = _activityBuffer.get(jid);
+        const merged = { ...groupActivity };
+        if (buf) {
+            for (const [sender, info] of buf.entries()) {
+                if (!merged[sender]) merged[sender] = { name: info.name, count: 0 };
+                merged[sender] = { name: merged[sender].name || info.name, count: (Number(merged[sender].count) || 0) + (Number(info.count) || 0) };
+            }
+        }
+        const list = Object.entries(merged).map(([senderJid, v]) => ({
+            jid: senderJid,
+            name: String(v.name || 'Usuário').trim().slice(0, 30) || 'Usuário',
+            count: Number(v.count) || 0
+        })).filter(x => x.count > 0);
+        list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'));
+        const lim = Math.max(1, Math.min(50, Number(limit) || 10));
+        return list.slice(0, lim);
+    } catch (_) { return []; }
+}
+
+function clearMonthlyRank(jid) {
+    if (!jid) return false;
+    try {
+        if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+        _flushActivity();
+        const row = _gsGet.get(jid);
+        if (!row) return false;
+        const act = safeJson(row.activity, {});
+        if (act[jid]) {
+            delete act[jid];
+            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null, row.sticker_pack ?? null, row.sticker_author ?? null);
+        }
+        try { _activityBuffer.delete(jid); } catch (_) {}
+        return true;
+    } catch (_) { return false; }
+}
+
+function clearAllMonthlyRanks() {
+    try {
+        if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+        _flushActivity();
+        _activityBuffer.clear();
+        const rows = _gsAll.all();
+        const tx = db.transaction((rs) => {
+            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
+        });
+        tx(rows);
+        return rows.length;
+    } catch (e) {
+        console.error('❌ Falha ao resetar rank mensal:', e.message);
+        return 0;
+    }
+}
+
+function checkMonthlyReset({ force = false } = {}) {
+    try {
+        const currentKey = _getCurrentMonthKey();
+        const lastKey = (() => { try { const r = _statsGet.get('_activityMonth'); return r ? String(r.value) : null; } catch { return null; } })();
+        // Se nunca teve chave, inicializa sem resetar
+        if (!lastKey) {
+            _statsSet.run('_activityMonth', currentKey);
+            // compat: mantém _activityDate antigo mas migra
+            try { _statsSet.run('_activityDate', currentKey); } catch (_) {}
+            return { reset: false, reason: 'init', currentKey };
+        }
+        if (lastKey === currentKey && !force) return { reset: false, reason: 'same-month', currentKey };
+        // Só reseta automaticamente se for dia 1 (ou force/manual)
+        if (!force && !_isFirstDayBrt()) {
+            // Mês virou mas ainda não é dia 1 em BRT? Não reseta até dia 1.
+            // Porém se já estamos no mês novo (ex: 02/10 e lastKey=09), significa que perdemos a janela do dia 1 — força reset.
+            // Detecta divergência de mês real
+            const lastMonthNum = Number(String(lastKey).split('-')[1]) || 0;
+            const curMonthNum = Number(currentKey.split('-')[1]) || 0;
+            if (curMonthNum !== lastMonthNum) {
+                // Se já passou do dia 1, reset atrasado é melhor que nunca
+                // Só adia se ainda estamos no mesmo mês calendário? Na prática currentKey != lastKey já é mês novo -> reset.
+            } else {
+                return { reset: false, reason: 'waiting-day1', currentKey };
+            }
+        }
+        const n = clearAllMonthlyRanks();
+        _statsSet.run('_activityMonth', currentKey);
+        try { _statsSet.run('_activityDate', currentKey); } catch (_) {}
+        console.log(`📅 [rank mensal] Resetado para ${currentKey} (${_getMonthLabelBr(currentKey)}) — ${n} grupo(s) zerados`);
+        return { reset: true, currentKey, count: n };
+    } catch (e) {
+        console.error('❌ [rank mensal] checkMonthlyReset falhou:', e.message);
+        return { reset: false, error: e.message };
+    }
+}
+
 function getCachedParticipantName(jid, participantJid) {
     if (!jid || !participantJid) return null;
     try {
@@ -1170,19 +1304,12 @@ migrateJsonToSqlite();
 
 // Background init — não bloqueia startup
 setTimeout(() => {
+    // Rank mensal: reseta todo dia 1 (BRT)
+    try { checkMonthlyReset(); } catch (e) { console.error('❌ Falha ao checar rank mensal:', e.message); }
+    // Agenda verificação horária para garantir reset no dia 1 mesmo com bot ligado
     try {
-        const today = new Date().toLocaleDateString();
-        const rows = _gsAll.all();
-        const tx = db.transaction((rs) => {
-            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
-        });
-        const lastReset = (() => { try { const r = _statsGet.get('_activityDate'); return r ? r.value : 0; } catch { return 0; } })();
-        if (lastReset !== today) {
-            tx(rows);
-            _statsSet.run('_activityDate', today);
-            console.log(`📅 Activity diária resetada para ${today}`);
-        }
-    } catch (e) { console.error('❌ Falha ao resetar activity:', e.message); }
+        setInterval(() => { try { checkMonthlyReset(); } catch (_) {} }, 60 * 60 * 1000).unref();
+    } catch (_) {}
 
     try {
         const rows = _gsAll.all();
@@ -1230,7 +1357,8 @@ module.exports = {
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
-    updateMemberActivity, getTopMember, getCachedParticipantName, getGroupParticipantName,
+    updateMemberActivity, getTopMember, getMonthlyRank, clearMonthlyRank, clearAllMonthlyRanks, checkMonthlyReset, _getCurrentMonthKey, _getMonthLabelBr,
+    getCachedParticipantName, getGroupParticipantName,
     getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,

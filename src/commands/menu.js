@@ -34,6 +34,7 @@ module.exports = {
         const p = config.prefix;
         const menuText = `*${currentBotName} — Menu Principal* 📖\n_comandos principais_\n\n` +
             `╭─── *GERAL* ───\n` +
+            `│ 🏆 *${p}rank* — top 10 ativos do mês (alias ${p}rankativos)\n` +
             `│ 👤 *${p}perfil* — foto do perfil\n` +
             `│ 📊 *${p}status* — info do bot\n` +
             `│ 🤖 *${p}ai* <texto> — conversa com IA\n` +
