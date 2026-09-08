@@ -20,14 +20,14 @@ async function addMetadata(buffer, pack, author, originalBuffer = null) {
             "emojis": ["✅"]
         };
         // embedding opcional do original para !toimg perfeito - limitado para não estourar exif e não quebrar pack/author no WhatsApp
-        // Antes: até 500KB / 950KB gerava exif 100KB+ e alguns clientes mostravam pack vazio. Agora só até 80KB / 150KB total.
-        if (originalBuffer && Buffer.isBuffer(originalBuffer) && originalBuffer.length > 64 && originalBuffer.length < 80 * 1024) {
+        // 66KB original gerava exif 89KB e WhatsApp não exibia pack/author. Agora só até 25KB / 50KB total.
+        if (originalBuffer && Buffer.isBuffer(originalBuffer) && originalBuffer.length > 64 && originalBuffer.length < 25 * 1024) {
             try {
-                // só embutir se não estourar 150KB total (webp + exif) - mantém exif pequeno para WhatsApp exibir pack/author
+                // só embutir se não estourar 50KB total (webp + exif) - mantém exif pequeno para WhatsApp exibir pack/author
                 const b64 = originalBuffer.toString('base64');
                 const testPayload = { ...payload, data: b64 };
                 const testLen = Buffer.byteLength(JSON.stringify(testPayload), 'utf-8') + 22 + buffer.length;
-                if (testLen < 150 * 1024) {
+                if (testLen < 50 * 1024) {
                     payload.data = b64;
                     // guardar mime para decodificação fiel (opcional)
                     try {
@@ -36,7 +36,7 @@ async function addMetadata(buffer, pack, author, originalBuffer = null) {
                     } catch(_) {}
                     console.log(`[STICKER-LOG] addMetadata: embutindo original ${originalBuffer.length}B base64=${b64.length} testLen=${testLen}B`);
                 } else {
-                    console.log(`[STICKER-LOG] addMetadata: original ${originalBuffer.length}B não embutido (testLen ${testLen}B >150KB)`);
+                    console.log(`[STICKER-LOG] addMetadata: original ${originalBuffer.length}B não embutido (testLen ${testLen}B >50KB)`);
                 }
             } catch(e) { console.warn(`⚠️ [METADATA] falha ao preparar embedding: ${e.message}`); }
         }
