@@ -33,6 +33,7 @@ module.exports = {
         
         groupData.warnings[participant] = (groupData.warnings[participant] || 0) + 1;
         const count = groupData.warnings[participant];
+        try { utils.recordModEvent(from, 'warn'); } catch (_) {}
 
         if (count >= 3) {
             const isBotAdmin = utils.isUserAdmin(sock.user.id, admins);
@@ -40,6 +41,7 @@ module.exports = {
                 await sock.groupParticipantsUpdate(from, [participant], 'remove');
                 delete groupData.warnings[participant];
                 utils.setGroupData(from, groupData);
+                try { utils.recordModEvent(from, 'ban'); } catch (_) {}
                 return await sock.sendMessage(from, { text: `🚫 @${participant.split('@')[0]} atingiu 3 advertências e foi banido.`, mentions: [participant] });
             } else {
                 return await sock.sendMessage(from, { text: `⚠️ @${participant.split('@')[0]} atingiu 3 advertências, mas não sou admin para banir.`, mentions: [participant] });

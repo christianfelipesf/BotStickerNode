@@ -1,4 +1,4 @@
-const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo, groupMetadataCached, clearGroupMetadataCache, isBlacklisted, botIsAdmin } = require('../database/utils');
+const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo, groupMetadataCached, clearGroupMetadataCache, isBlacklisted, botIsAdmin, recordModEvent } = require('../database/utils');
 const dashboard = require('../dashboard/dashboard');
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
@@ -9,6 +9,15 @@ module.exports = {
         // Invalida cache ANTES de qualquer early-return: mudança de participantes
         // afeta getAdmins/enforcement, não só o dashboard.
         try { clearGroupMetadataCache(anu.id); } catch (_) {}
+
+        // === Analytics !infogrupo: entradas/saídas (últimos 90 dias) ===
+        try {
+            if (anu.action === 'add' && Array.isArray(anu.participants)) {
+                for (const _p of anu.participants) { try { recordModEvent(anu.id, 'join'); } catch (_) {} }
+            } else if (anu.action === 'remove' && Array.isArray(anu.participants)) {
+                for (const _p of anu.participants) { try { recordModEvent(anu.id, 'leave'); } catch (_) {} }
+            }
+        } catch (_) {}
 
         // === Lista negra: auto-ban ao tentar voltar ao grupo ===
         if (anu.action === 'add' && Array.isArray(anu.participants) && anu.participants.length > 0) {

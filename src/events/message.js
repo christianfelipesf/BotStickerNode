@@ -10,7 +10,7 @@ const {
     incrementCommand, formatUptime,
     readConfig, saveMessage,
     getBotName, react, getMessageText,
-    isDashboardEnabled, groupMetadataCached, updateMemberActivity,
+    isDashboardEnabled, groupMetadataCached, updateMemberActivity, recordGroupMessage,
     readStats, getPrefixForJid
 } = require('../database/utils');
 
@@ -52,7 +52,7 @@ const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia']);
 const PARTIAL_BLOCKED_COMMANDS = new Set([
     'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
     'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
-    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome',
+    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome', 'tema', 'theme',
     'log', 'logs', 'logsterminal', 'terminallog',
     'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai'
 ]);
@@ -159,6 +159,16 @@ module.exports = {
             const sender = m.key.fromMe
                 ? (sock.user?.id || m.key.participant || m.key.remoteJid)
                 : (m.key.participant || m.key.remoteJid);
+            // Sender canônico p/ contagem: prefere o nº real (@s.whatsapp.net) quando o
+            // sender vier como @lid — senão a mesma pessoa gera 2 linhas no rank e os
+            // totais de cada linha ficam menores que o real.
+            let activitySender = sender;
+            try {
+                const pn = m.key?.participantPn || m.key?.senderPn;
+                if (pn && String(pn).endsWith('@s.whatsapp.net') && !String(sender).endsWith('@s.whatsapp.net')) {
+                    activitySender = pn;
+                }
+            } catch (_) {}
             const text = (getMessageText(m.message) || '').trim();
             const senderName = m.key.fromMe ? config.botName : (m.pushName || 'Usuário');
 
@@ -197,8 +207,14 @@ module.exports = {
             }
 
             // === Activity tracking (bufferizado em memória, flush periódico) ===
-            if (botActive && isGroup) {
-                updateMemberActivity(from, sender, senderName);
+            // Comandos (prefixo) NÃO contam como atividade — senão o próprio !rank
+            // somaria +1 a quem chamou e o resultado mudaria a cada chamada.
+            // Mensagens do próprio bot (fromMe) também NÃO contam — senão o bot
+            // apareceria no próprio rank e inflaria os totais.
+            const isCommandMsg = !!text && text.startsWith(effectivePrefix);
+            if (botActive && isGroup && !isCommandMsg && !m.key.fromMe) {
+                updateMemberActivity(from, activitySender, senderName);
+                try { recordGroupMessage(from, Date.now()); } catch (_) {}
             }
 
             // === Prefix query ===

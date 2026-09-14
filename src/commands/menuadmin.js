@@ -46,9 +46,11 @@ module.exports = {
             `│ 🧹 *${p}limparfeedback* [bug|sugestao|all] — limpa logs\n` +
             `╰───────────────\n\n` +
             `╭─── *GRUPO* ───\n` +
+            `│ 📊 *${p}infogrupo* — análise do grupo (alias ${p}analise, ${p}grupo)\n` +
             `│ 📢 *${p}mencionar* [texto] — marca todos\n` +
             `│ 💬 *${p}cita* (responda mensagem) — reescreve marcando todos\n` +
             `│ 🏷️ *${p}nome* <nome> — nome do bot no grupo\n` +
+            `│ 🎨 *${p}tema* <hell\|natal\|festa\|fofo\|reset> — tema do grupo\n` +
             `│ 🖼️ *${p}imagem* (responda imagem) — imagem do menu\n` +
             `│ 🔗 *${p}linkgp* — pega link do grupo (bot precisa ser admin)\n` +
             `│ 🔗 *${p}setlink* <link> — define link p/ !divulgar\n` +

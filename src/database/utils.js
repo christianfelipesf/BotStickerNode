@@ -13,10 +13,10 @@ const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require(
 // ============================================================
 // Prepared statements (group_state)
 // ============================================================
-const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author FROM group_state WHERE jid = ?');
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme FROM group_state WHERE jid = ?');
 const _gsUpsert = db.prepare(`
-    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET
         muted = excluded.muted,
         warnings = excluded.warnings,
@@ -26,10 +26,11 @@ const _gsUpsert = db.prepare(`
         menu_image = excluded.menu_image,
         prefix = excluded.prefix,
         sticker_pack = excluded.sticker_pack,
-        sticker_author = excluded.sticker_author
+        sticker_author = excluded.sticker_author,
+        theme = excluded.theme
 `);
 const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
-const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author FROM group_state');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme FROM group_state');
 
 // ============================================================
 // Prepared statements (config + stats)
@@ -49,8 +50,13 @@ const { createMuteHelpers } = require('./mute');
 const muteApi = createMuteHelpers({
     getGroupState: (jid) => _gsGet.get(jid),
     upsertGroupState: (jid, muted, warnings, antilink, activity) => {
-        const cur = _gsGet.get(jid) || { warnings: '{}', antilink: 0, activity: '{}', bot_name: null, menu_image: null, prefix: null, sticker_pack: null, sticker_author: null };
-        _gsUpsert.run(jid, muted ?? cur.muted, warnings ?? cur.warnings, antilink ?? cur.antilink, activity ?? cur.activity, cur.bot_name, cur.menu_image, cur.prefix ?? null, cur.sticker_pack ?? null, cur.sticker_author ?? null);
+        const cur = _gsGet.get(jid) || {};
+        writeGroupState(jid, {
+            muted: muted ?? cur.muted,
+            warnings: warnings ?? cur.warnings,
+            antilink: antilink ?? cur.antilink,
+            activity: activity ?? cur.activity
+        });
     }
 });
 
@@ -138,6 +144,119 @@ function parseNumberToJid(raw) {
     const digits = String(raw).replace(/\D/g, '');
     if (digits.length < 8 || digits.length > 15) return null;
     return `${digits}@s.whatsapp.net`;
+}
+
+// ============================================================
+// Login permitido (!addlogin / !login) — números autorizados pelo dono
+// ============================================================
+function normalizeLoginPhone(raw) {
+    if (raw == null) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) return null;
+    return digits;
+}
+
+function _loginAllowedStmts() {
+    try {
+        return {
+            get: db.prepare('SELECT phone, added_by, added_at FROM login_allowed WHERE phone = ?'),
+            all: db.prepare('SELECT phone, added_by, added_at FROM login_allowed ORDER BY added_at ASC'),
+            ins: db.prepare('INSERT OR IGNORE INTO login_allowed (phone, added_by, added_at) VALUES (?, ?, ?)'),
+            del: db.prepare('DELETE FROM login_allowed WHERE phone = ?'),
+            clear: db.prepare('DELETE FROM login_allowed')
+        };
+    } catch (_) { return null; }
+}
+
+function isLoginAllowed(phoneOrJid) {
+    const phone = normalizeLoginPhone(String(phoneOrJid || '').split('@')[0]);
+    if (!phone) return false;
+    try {
+        const s = _loginAllowedStmts();
+        if (!s) return false;
+        return !!s.get.get(phone);
+    } catch (_) { return false; }
+}
+
+function listLoginAllowed() {
+    try {
+        const s = _loginAllowedStmts();
+        if (!s) return [];
+        return s.all.all() || [];
+    } catch (_) { return []; }
+}
+
+function addLoginAllowed(phoneOrJid, addedBy) {
+    const phone = normalizeLoginPhone(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return { ok: false, error: 'Número inválido. Use: !addlogin 5511999999999' };
+    try {
+        const s = _loginAllowedStmts();
+        if (!s) return { ok: false, error: 'Banco indisponível' };
+        const r = s.ins.run(phone, addedBy || null, Date.now());
+        if (r.changes === 0) return { ok: false, error: 'duplicado', phone };
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function removeLoginAllowed(phoneOrJid) {
+    const phone = normalizeLoginPhone(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return { ok: false, error: 'Número inválido. Use: !removerlogin 5511999999999' };
+    try {
+        const s = _loginAllowedStmts();
+        if (!s) return { ok: false, error: 'Banco indisponível' };
+        const r = s.del.run(phone);
+        if (r.changes === 0) return { ok: false, error: 'não encontrado', phone };
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function clearLoginAllowed() {
+    try {
+        const s = _loginAllowedStmts();
+        if (!s) return 0;
+        return s.clear.run().changes || 0;
+    } catch (_) { return 0; }
+}
+
+// Extrai dígitos de telefone candidatos do remetente (lida com @lid + senderPn).
+function getSenderLoginPhones(m, sender, from) {
+    const out = [];
+    const push = (v) => {
+        const d = normalizeLoginPhone(String(v || '').split('@')[0]);
+        if (d && !out.includes(d)) out.push(d);
+    };
+    try {
+        push(m?.key?.participantPn);
+        push(m?.key?.senderPn);
+        const ctx = m?.message?.extendedTextMessage?.contextInfo
+            || m?.message?.imageMessage?.contextInfo
+            || m?.message?.videoMessage?.contextInfo;
+        push(ctx?.senderPn);
+        push(ctx?.participantPn);
+    } catch (_) {}
+    // sender/from só valem se forem número (não @lid sem Pn resolvido)
+    try {
+        if (sender && !String(sender).endsWith('@lid')) push(sender);
+        if (from && !String(from).endsWith('@g.us') && !String(from).endsWith('@lid')) push(from);
+    } catch (_) {}
+    return out;
+}
+
+function isBotOwner(sock, m, sender) {
+    try {
+        const meId = normalizeJid(sock?.user?.id || sock?.user?.jid || '');
+        const senderNorm = normalizeJid(sender || '');
+        return m?.key?.fromMe === true || (sender && sender === meId) || (senderNorm && meId && senderNorm === meId);
+    } catch (_) { return false; }
+}
+
+function canUseLogin(sock, m, sender, from) {
+    if (isBotOwner(sock, m, sender)) return { ok: true, owner: true };
+    const phones = getSenderLoginPhones(m, sender, from);
+    for (const p of phones) {
+        if (isLoginAllowed(p)) return { ok: true, owner: false, phone: p };
+    }
+    return { ok: false, owner: false };
 }
 
 // ============================================================
@@ -316,7 +435,7 @@ function safeJson(s, fallback) {
 function ensureGroupState(jid) {
     let row = _gsGet.get(jid);
     if (!row) {
-        _gsUpsert.run(jid, '[]', '{}', 0, '{}', null, null, null, null, null);
+        writeGroupState(jid, {});
         row = _gsGet.get(jid);
     }
     return row;
@@ -331,6 +450,33 @@ function parseGroupState(row) {
         antilink: !!row.antilink,
         activity: safeJson(row.activity, {})
     };
+}
+
+// ============================================================
+// ESCRITA ÚNICA do group_state — TODO o código DEVE usar esta função.
+// Ela sempre grava as 11 colunas, então é impossível repetir o bug de
+// "Too few parameter values" (que fez o flush do rank nunca persistir).
+// Chaves do patch usam os nomes das COLUNAS (muted, warnings, antilink,
+// activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme).
+// ============================================================
+function writeGroupState(jid, patch = {}) {
+    if (!jid) throw new Error('writeGroupState: jid obrigatório');
+    const cur = _gsGet.get(jid) || {};
+    const pick = (col, fb) => (patch[col] !== undefined ? patch[col] : (cur[col] !== undefined ? cur[col] : fb));
+    const antilink = patch.antilink !== undefined ? (patch.antilink ? 1 : 0) : (cur.antilink ?? 0);
+    _gsUpsert.run(
+        jid,
+        pick('muted', '[]'),
+        pick('warnings', '{}'),
+        antilink,
+        pick('activity', '{}'),
+        pick('bot_name', null),
+        pick('menu_image', null),
+        pick('prefix', null),
+        pick('sticker_pack', null),
+        pick('sticker_author', null),
+        pick('theme', null)
+    );
 }
 
 // ============================================================
@@ -362,7 +508,22 @@ function deactivateGroup(jid) {
             if (fullPath.startsWith(uploadsDir + path.sep) && fs.existsSync(fullPath)) { try { fs.unlinkSync(fullPath); } catch (_) {} }
         }
     } catch (_) {}
+    // A contagem do rank NUNCA pode ser perdida: guarda a activity (banco + buffer)
+    // ANTES do delete e restaura logo depois.
+    let savedActivity = '{}';
+    try {
+        if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+        _flushActivity();
+        const row = _gsGet.get(jid);
+        if (row && row.activity) savedActivity = row.activity;
+    } catch (_) {}
     try { _gsDelete.run(jid); } catch (e) { console.error('❌ Falha ao limpar group_state:', e.message); }
+    try {
+        if (savedActivity && savedActivity !== '{}') {
+            writeGroupState(jid, { activity: savedActivity });
+        }
+    } catch (e) { console.error('❌ Falha ao preservar rank:', e.message); }
+    try { _activityBuffer.delete(jid); } catch (_) {}
     try { _agpDelete.run(jid); } catch (_) {}
     try { _afDelete.run(jid); } catch (_) {}
     clearChatHistory(jid);
@@ -732,7 +893,7 @@ function clearFeedback(kind) {
 function getGroupData(jid) {
     try {
         const row = _gsGet.get(jid);
-        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, ...parseGroupState(row) };
+        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, theme: row.theme || undefined, ...parseGroupState(row) };
     } catch (_) {}
     return {};
 }
@@ -746,12 +907,14 @@ function setGroupData(jid, data) {
     let prefix = cur.prefix ?? null;
     let stickerPack = cur.sticker_pack ?? null;
     let stickerAuthor = cur.sticker_author ?? null;
+    let theme = cur.theme ?? null;
     for (const [k, v] of Object.entries(data)) {
         if (k === 'botName') botName = v;
         else if (k === 'menuImage') menuImage = v;
         else if (k === 'prefix') prefix = v == null ? null : String(v).slice(0, 3) || null;
         else if (k === 'stickerPack') stickerPack = v == null ? null : String(v).slice(0, 30) || null;
         else if (k === 'stickerAuthor') stickerAuthor = v == null ? null : String(v).slice(0, 30) || null;
+        else if (k === 'theme') theme = v == null ? null : String(v).trim().toLowerCase().slice(0, 20) || null;
         else merged[k] = v;
     }
     let mutedObj = merged.muted;
@@ -761,7 +924,46 @@ function setGroupData(jid, data) {
         for (const p of mutedObj) if (p) converted[p] = ts;
         mutedObj = converted;
     } else if (!mutedObj || typeof mutedObj !== 'object') { mutedObj = {}; }
-    _gsUpsert.run(jid, JSON.stringify(mutedObj), JSON.stringify(merged.warnings || {}), merged.antilink ? 1 : 0, JSON.stringify(merged.activity || {}), botName || null, menuImage || null, prefix, stickerPack, stickerAuthor);
+    writeGroupState(jid, {
+        muted: JSON.stringify(mutedObj),
+        warnings: JSON.stringify(merged.warnings || {}),
+        antilink: merged.antilink ? 1 : 0,
+        activity: JSON.stringify(merged.activity || {}),
+        bot_name: botName || null,
+        menu_image: menuImage || null,
+        prefix,
+        sticker_pack: stickerPack,
+        sticker_author: stickerAuthor,
+        theme
+    });
+}
+
+// ============================================================
+// Theme helpers (por grupo)
+// ============================================================
+function getThemeForJid(jid) {
+    if (jid && jid.endsWith('@g.us')) {
+        try {
+            const gd = getGroupData(jid);
+            const t = String(gd.theme || 'default').trim().toLowerCase();
+            if (t && t !== 'default') return t;
+        } catch (_) {}
+    }
+    return 'default';
+}
+
+function setGroupTheme(jid, themeId) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    const t = String(themeId || '').trim().toLowerCase().slice(0, 20) || null;
+    if (!t) return false;
+    setGroupData(jid, { theme: t === 'default' ? null : t });
+    return true;
+}
+
+function clearGroupTheme(jid) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    setGroupData(jid, { theme: null });
+    return true;
 }
 
 function _getGroupField(jid, field, cfgKey, defaultVal) {
@@ -846,9 +1048,12 @@ function _flushActivity() {
             if (!act[jid]) act[jid] = {};
             for (const [sender, info] of members) {
                 if (!act[jid][sender]) act[jid][sender] = { name: info.name, count: 0 };
+                else if (info.name && !['usuario', 'usuário'].includes(String(info.name).trim().toLowerCase())) {
+                    act[jid][sender].name = info.name;
+                }
                 act[jid][sender].count += info.count;
             }
-            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null, row.sticker_pack ?? null, row.sticker_author ?? null);
+            writeGroupState(jid, { activity: JSON.stringify(act) });
         }
     });
     try {
@@ -872,7 +1077,14 @@ function updateMemberActivity(jid, sender, senderName) {
     if (!jid || !sender) return;
     if (!_activityBuffer.has(jid)) _activityBuffer.set(jid, new Map());
     const members = _activityBuffer.get(jid);
-    if (!members.has(sender)) members.set(sender, { name: senderName || 'Usuário', count: 0 });
+    const cleanName = String(senderName || 'Usuário').trim().slice(0, 30) || 'Usuário';
+    const isGeneric = ['usuario', 'usuário'].includes(cleanName.toLowerCase());
+    if (!members.has(sender)) {
+        members.set(sender, { name: cleanName, count: 0 });
+    } else if (!isGeneric) {
+        // mantém o nome sempre atualizado (apelidos novos refletem no rank)
+        members.get(sender).name = cleanName;
+    }
     members.get(sender).count += 1;
     _scheduleActivityFlush();
 }
@@ -968,11 +1180,46 @@ function clearMonthlyRank(jid) {
         const act = safeJson(row.activity, {});
         if (act[jid]) {
             delete act[jid];
-            _gsUpsert.run(jid, row.muted, row.warnings, row.antilink, JSON.stringify(act), row.bot_name, row.menu_image, row.prefix ?? null, row.sticker_pack ?? null, row.sticker_author ?? null);
+            writeGroupState(jid, { activity: JSON.stringify(act) });
         }
         try { _activityBuffer.delete(jid); } catch (_) {}
         return true;
     } catch (_) { return false; }
+}
+
+// Salva foto do mês que está encerrando antes de zerar — a contagem nunca se perde,
+// mesmo após o reset do dia 1º é possível consultar o histórico.
+function snapshotMonthlyRanks(monthKey) {
+    if (!monthKey) return 0;
+    try {
+        const rows = _gsAll.all();
+        const ins = db.prepare('INSERT OR REPLACE INTO rank_monthly_history (jid, month, total, data, created_at) VALUES (?, ?, ?, ?, ?)');
+        let saved = 0;
+        const tx = db.transaction((rs) => {
+            for (const r of rs) {
+                const act = safeJson(r.activity, {});
+                const g = act[r.jid] || {};
+                let total = 0;
+                for (const k of Object.keys(g)) total += Number(g[k]?.count) || 0;
+                if (total > 0) { ins.run(r.jid, monthKey, total, JSON.stringify(g), Date.now()); saved++; }
+            }
+        });
+        tx(rows);
+        if (saved > 0) console.log(`📸 [rank mensal] histórico de ${monthKey} salvo (${saved} grupo(s))`);
+        return saved;
+    } catch (e) {
+        console.error('❌ Falha ao salvar histórico do rank:', e.message);
+        return 0;
+    }
+}
+
+function getRankHistory(jid, monthKey) {
+    if (!jid || !monthKey) return null;
+    try {
+        const row = db.prepare('SELECT total, data, created_at FROM rank_monthly_history WHERE jid = ? AND month = ?').get(jid, monthKey);
+        if (!row) return null;
+        return { total: row.total, data: safeJson(row.data, {}), createdAt: row.created_at };
+    } catch (_) { return null; }
 }
 
 function clearAllMonthlyRanks() {
@@ -982,7 +1229,7 @@ function clearAllMonthlyRanks() {
         _activityBuffer.clear();
         const rows = _gsAll.all();
         const tx = db.transaction((rs) => {
-            for (const r of rs) _gsUpsert.run(r.jid, r.muted, r.warnings, r.antilink, '{}', r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
+            for (const r of rs) writeGroupState(r.jid, { activity: '{}' });
         });
         tx(rows);
         return rows.length;
@@ -1004,20 +1251,12 @@ function checkMonthlyReset({ force = false } = {}) {
             return { reset: false, reason: 'init', currentKey };
         }
         if (lastKey === currentKey && !force) return { reset: false, reason: 'same-month', currentKey };
-        // Só reseta automaticamente se for dia 1 (ou force/manual)
-        if (!force && !_isFirstDayBrt()) {
-            // Mês virou mas ainda não é dia 1 em BRT? Não reseta até dia 1.
-            // Porém se já estamos no mês novo (ex: 02/10 e lastKey=09), significa que perdemos a janela do dia 1 — força reset.
-            // Detecta divergência de mês real
-            const lastMonthNum = Number(String(lastKey).split('-')[1]) || 0;
-            const curMonthNum = Number(currentKey.split('-')[1]) || 0;
-            if (curMonthNum !== lastMonthNum) {
-                // Se já passou do dia 1, reset atrasado é melhor que nunca
-                // Só adia se ainda estamos no mesmo mês calendário? Na prática currentKey != lastKey já é mês novo -> reset.
-            } else {
-                return { reset: false, reason: 'waiting-day1', currentKey };
-            }
-        }
+        // Chave mudou => já estamos no mês novo (a chave vira exatamente no dia 1º).
+        // Reseta imediatamente, mesmo que o bot tenha perdido a janela do dia 1º —
+        // reset atrasado é melhor que acumular 2 meses. Compara a chave YYYY-MM
+        // completa para não travar na virada de ano p/ o mesmo mês (2025-09 -> 2026-09).
+        // Snapshot do mês que encerrou (lastKey) ANTES de zerar — histórico preservado.
+        try { snapshotMonthlyRanks(lastKey); } catch (_) {}
         const n = clearAllMonthlyRanks();
         _statsSet.run('_activityMonth', currentKey);
         try { _statsSet.run('_activityDate', currentKey); } catch (_) {}
@@ -1139,6 +1378,109 @@ function clearChatHistory(jid) {
     flushMessagesSync();
     try { db.prepare('DELETE FROM messages WHERE jid = ?').run(jid); } catch (e) { console.error('❌ Falha ao limpar histórico:', e.message); }
     _msgBufferByJid.delete(jid);
+}
+
+// ============================================================
+// Group analytics — msgs por hora + moderação (base do !infogrupo)
+// ============================================================
+function _analyticsDayHour(ts = Date.now()) {
+    try {
+        const parts = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false
+        }).formatToParts(new Date(ts));
+        const get = (t) => parts.find(p => p.type === t)?.value || '00';
+        const day = `${get('year')}-${get('month')}-${get('day')}`;
+        const hour = Math.max(0, Math.min(23, Number(get('hour')) || 0));
+        return { day, hour };
+    } catch (_) {
+        const d = new Date(ts);
+        const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return { day, hour: d.getHours() };
+    }
+}
+
+function recordGroupMessage(jid, ts = Date.now()) {
+    if (!jid || !jid.endsWith('@g.us')) return;
+    try {
+        const { day, hour } = _analyticsDayHour(ts);
+        db.prepare(`INSERT INTO group_msg_stats (jid, day, hour, count) VALUES (?, ?, ?, 1)
+            ON CONFLICT(jid, day, hour) DO UPDATE SET count = count + 1`).run(jid, day, hour);
+    } catch (_) {}
+}
+
+const MODLOG_KINDS = new Set(['join', 'leave', 'ban', 'warn', 'spam']);
+function recordModEvent(jid, kind, ts = Date.now()) {
+    if (!jid || !jid.endsWith('@g.us')) return;
+    if (!MODLOG_KINDS.has(String(kind))) return;
+    try {
+        db.prepare('INSERT INTO group_modlog (jid, kind, timestamp) VALUES (?, ?, ?)').run(jid, String(kind), Number(ts) || Date.now());
+        // poda: mantém 90 dias por grupo
+        try { db.prepare('DELETE FROM group_modlog WHERE jid = ? AND timestamp < ?').run(jid, Date.now() - 90 * 86400 * 1000); } catch (_) {}
+    } catch (_) {}
+}
+
+function getGroupAnalytics(jid, days = 7) {
+    const out = {
+        total: 0, avgDay: 0, avgHour: 0, perHour: new Array(24).fill(0),
+        perDay: {}, peakLabel: null, joins: 0, leaves: 0, bans: 0, warns: 0, spams: 0,
+        hasData: false, days
+    };
+    if (!jid) return out;
+    const d = Math.max(1, Math.min(30, Number(days) || 7));
+    const since = Date.now() - d * 86400 * 1000;
+    try {
+        const rows = db.prepare('SELECT hour, SUM(count) as c FROM group_msg_stats WHERE jid = ? AND day >= date(?, ?) GROUP BY hour').all(jid, 'now', `-${d} days`);
+        // fallback: se formato de day (dd/mm/yyyy invertido) não casar com date(), busca por timestamp aproximado via últimos N dias distintos
+        let total = 0;
+        if (rows && rows.length) {
+            for (const r of rows) {
+                const h = Number(r.hour);
+                const c = Number(r.c) || 0;
+                if (h >= 0 && h < 24) out.perHour[h] = c;
+                total += c;
+            }
+        } else {
+            // tenta soma direta dos últimos d dias distintos registrados
+            try {
+                const dayRows = db.prepare('SELECT day, hour, count FROM group_msg_stats WHERE jid = ? ORDER BY day DESC LIMIT ?').all(jid, d * 24);
+                for (const r of dayRows) {
+                    const h = Number(r.hour);
+                    const c = Number(r.count) || 0;
+                    if (h >= 0 && h < 24) out.perHour[h] += c;
+                    total += c;
+                    out.perDay[r.day] = (out.perDay[r.day] || 0) + c;
+                }
+            } catch (_) {}
+        }
+        out.total = total;
+        if (total > 0) {
+            out.hasData = true;
+            out.avgDay = total / d;
+            out.avgHour = total / (d * 24);
+            // pico: melhor janela de 2h consecutivas
+            let best = -1, bestH = -1;
+            for (let h = 0; h < 24; h++) {
+                const s = out.perHour[h] + out.perHour[(h + 1) % 24];
+                if (s > best) { best = s; bestH = h; }
+            }
+            if (best > 0 && bestH >= 0) {
+                const pad = (n) => String(n).padStart(2, '0');
+                out.peakLabel = `${pad(bestH)}:00h - ${pad((bestH + 2) % 24)}:00h`;
+            }
+        }
+    } catch (_) {}
+    try {
+        const counts = db.prepare('SELECT kind, COUNT(*) as c FROM group_modlog WHERE jid = ? AND timestamp >= ? GROUP BY kind').all(jid, since);
+        for (const r of counts || []) {
+            const c = Number(r.c) || 0;
+            if (r.kind === 'join') out.joins = c;
+            else if (r.kind === 'leave') out.leaves = c;
+            else if (r.kind === 'ban') out.bans = c;
+            else if (r.kind === 'warn') out.warns = c;
+            else if (r.kind === 'spam') out.spams = c;
+        }
+    } catch (_) {}
+    return out;
 }
 
 // ============================================================
@@ -1302,6 +1644,39 @@ migrateLegacyMessagesJson();
 migrateLegacyActiveGroups();
 migrateJsonToSqlite();
 
+// Backup automático do banco (online, via SQLite backup API) — a cada 6h, mantém os
+// últimos 28 arquivos (~7 dias). Protege rank e configs contra corrupção ou apagão.
+const DB_BACKUP_KEEP = 28;
+function backupDatabase() {
+    try {
+        flushNow();
+        const dir = path.join(process.cwd(), 'backups');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h`;
+        const file = path.join(dir, `bot-${stamp}.db`);
+        if (fs.existsSync(file)) return Promise.resolve(file);
+        return db.backup(file).then(() => {
+            console.log(`💾 [backup] banco salvo em backups/bot-${stamp}.db`);
+            try {
+                const files = fs.readdirSync(dir).filter(f => /^bot-\d{4}-\d{2}-\d{2}-\d{2}h\.db$/.test(f)).sort();
+                while (files.length > DB_BACKUP_KEEP) {
+                    const old = files.shift();
+                    try { fs.unlinkSync(path.join(dir, old)); } catch (_) {}
+                }
+            } catch (_) {}
+            return file;
+        }).catch((e) => {
+            console.error('❌ [backup] falhou:', e.message);
+            return null;
+        });
+    } catch (e) {
+        console.error('❌ [backup] falhou:', e.message);
+        return Promise.resolve(null);
+    }
+}
+
 // Background init — não bloqueia startup
 setTimeout(() => {
     // Rank mensal: reseta todo dia 1 (BRT)
@@ -1309,6 +1684,26 @@ setTimeout(() => {
     // Agenda verificação horária para garantir reset no dia 1 mesmo com bot ligado
     try {
         setInterval(() => { try { checkMonthlyReset(); } catch (_) {} }, 60 * 60 * 1000).unref();
+    } catch (_) {}
+    // Selfcheck do banco: prova escrita+leitura do group_state a cada boot.
+    // Se a escrita quebrar (ex: nº de parâmetros), falha ALTO aqui em vez de
+    // perder dados silenciosamente por semanas como aconteceu com o rank.
+    try {
+        const sj = '_selfcheck@g.us';
+        const sAct = JSON.stringify({ [sj]: { 'self@s.whatsapp.net': { name: 'Selfcheck', count: 1 } } });
+        writeGroupState(sj, { activity: sAct });
+        const back = _gsGet.get(sj);
+        const backCount = safeJson(back?.activity, {})?.[sj]?.['self@s.whatsapp.net']?.count;
+        db.prepare('DELETE FROM group_state WHERE jid = ?').run(sj);
+        if (backCount === 1) console.log('✅ [db] selfcheck escrita/leitura OK (group_state íntegro)');
+        else console.error('❌ [db] SELFCHECK FALHOU: escreveu mas leu diferente — verifique o schema!');
+    } catch (e) {
+        console.error('❌ [db] SELFCHECK FALHOU:', e.message);
+    }
+    // Backup do banco a cada 6h (primeiro após 60s do boot)
+    try {
+        setTimeout(() => { backupDatabase(); }, 60 * 1000).unref();
+        setInterval(() => { backupDatabase(); }, 6 * 60 * 60 * 1000).unref();
     } catch (_) {}
 
     try {
@@ -1321,7 +1716,7 @@ setTimeout(() => {
             if (Array.isArray(raw)) {
                 const obj = {};
                 for (const p of raw) if (p) obj[p] = now;
-                _gsUpsert.run(r.jid, JSON.stringify(obj), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
+                writeGroupState(r.jid, { muted: JSON.stringify(obj) });
                 converted++;
             } else if (raw && typeof raw === 'object') {
                 let changed = false;
@@ -1329,7 +1724,7 @@ setTimeout(() => {
                     const ts = Number(raw[k]);
                     if (!ts || now - ts >= muteApi.MUTE_TTL_MS) { delete raw[k]; changed = true; expired++; }
                 }
-                if (changed) _gsUpsert.run(r.jid, JSON.stringify(raw), r.warnings, r.antilink, r.activity, r.bot_name, r.menu_image, r.prefix ?? null, r.sticker_pack ?? null, r.sticker_author ?? null);
+                if (changed) writeGroupState(r.jid, { muted: JSON.stringify(raw) });
             }
         }
         if (converted > 0 || expired > 0) {
@@ -1351,13 +1746,16 @@ module.exports = {
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
     getPartialWaitMs, setPartialWaitMs,
-    getGroupData, setGroupData, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
+    getGroupData, setGroupData, writeGroupState, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
+    getThemeForJid, setGroupTheme, clearGroupTheme,
     getStickerPackForJid, getStickerAuthorForJid, setStickerPackForJid, clearStickerPackForJid,
     isViewOnce, getMediaMessage, getContextInfo, getMessageText,
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
     updateMemberActivity, getTopMember, getMonthlyRank, clearMonthlyRank, clearAllMonthlyRanks, checkMonthlyReset, _getCurrentMonthKey, _getMonthLabelBr,
+    snapshotMonthlyRanks, getRankHistory, backupDatabase,
+    recordGroupMessage, recordModEvent, getGroupAnalytics,
     getCachedParticipantName, getGroupParticipantName,
     getAdmins, isUserAdmin, botIsAdmin, getBotJid,
     getGroupLink, setGroupLink, normalizeJid,
@@ -1365,6 +1763,8 @@ module.exports = {
     canAdminControl,
     ...muteApi,
     getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid,
+    normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
+    getSenderLoginPhones, isBotOwner, canUseLogin,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,

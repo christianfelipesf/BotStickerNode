@@ -33,6 +33,7 @@ module.exports = {
         }
 
         await sock.groupParticipantsUpdate(from, [participant], 'remove');
+        try { utils.recordModEvent(from, 'ban'); } catch (_) {}
         await utils.reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
         return await sock.sendMessage(from, { text: '✅ Usuário banido com sucesso.' }, { quoted: m });
     }

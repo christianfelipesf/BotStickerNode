@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const dbPath = path.join(__dirname, '../../bot.db');
+const dbPath = process.env.BOT_DB_PATH || path.join(__dirname, '../../bot.db');
 const legacyDbPath = path.join(__dirname, '../../database.json');
 const legacyMsgsPath = path.join(__dirname, '../../messages.json');
 const tempDir = path.join(process.cwd(), 'temp');
@@ -79,20 +79,6 @@ try {
     console.error('[database] VACUUM inicial falhou:', e?.message || e);
 }
 
-try {
-    const removed = db.prepare(`
-        DELETE FROM dashboard_logs
-        WHERE message_id IS NULL OR message_id = ''
-    `).run();
-    if (removed.changes > 0) {
-        console.log(`🧹 [database] limpou ${removed.changes} log(s) órffão(s) sem message_id`);
-        try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
-        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
-    }
-} catch (e) {
-    console.error('[database] limpeza de órffãos falhou:', e?.message || e);
-}
-
 db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +109,8 @@ db.exec(`
         menu_image TEXT,
         prefix    TEXT,
         sticker_pack TEXT,
-        sticker_author TEXT
+        sticker_author TEXT,
+        theme     TEXT
     );
 
     CREATE TABLE IF NOT EXISTS config (
@@ -229,6 +216,39 @@ db.exec(`
         window_secs     INTEGER NOT NULL DEFAULT 8,
         updated_at      INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS login_allowed (
+        phone      TEXT PRIMARY KEY,
+        added_by   TEXT,
+        added_at   INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS group_msg_stats (
+        jid   TEXT NOT NULL,
+        day   TEXT NOT NULL,
+        hour  INTEGER NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (jid, day, hour)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_msg_stats_jid_day ON group_msg_stats(jid, day);
+
+    CREATE TABLE IF NOT EXISTS group_modlog (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        jid       TEXT NOT NULL,
+        kind      TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_modlog_jid_ts ON group_modlog(jid, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_group_modlog_jid_kind_ts ON group_modlog(jid, kind, timestamp);
+
+    CREATE TABLE IF NOT EXISTS rank_monthly_history (
+        jid        TEXT NOT NULL,
+        month      TEXT NOT NULL,
+        total      INTEGER NOT NULL DEFAULT 0,
+        data       TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (jid, month)
+    );
 `);
 
 // ============================================================
@@ -239,6 +259,22 @@ try { db.exec("ALTER TABLE group_state ADD COLUMN menu_image TEXT"); } catch (_)
 try { db.exec("ALTER TABLE group_state ADD COLUMN prefix TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_pack TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_author TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN theme TEXT"); } catch (_) {}
+
+// Limpeza de órfãos — DEPOIS do CREATE TABLE (antes falhava em banco novo).
+try {
+    const removed = db.prepare(`
+        DELETE FROM dashboard_logs
+        WHERE message_id IS NULL OR message_id = ''
+    `).run();
+    if (removed.changes > 0) {
+        console.log(`🧹 [database] limpou ${removed.changes} log(s) órffão(s) sem message_id`);
+        try { db.pragma('incremental_vacuum(500)'); } catch (_) {}
+        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+    }
+} catch (e) {
+    console.error('[database] limpeza de órffãos falhou:', e?.message || e);
+}
 
 function checkpointWal() {
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}

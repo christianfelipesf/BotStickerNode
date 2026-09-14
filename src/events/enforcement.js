@@ -1,4 +1,4 @@
-const { getGroupData, isMuted, botIsAdmin, isUserAdmin, getAdmins, normalizeJid, setGroupData } = require('../database/utils');
+const { getGroupData, isMuted, botIsAdmin, isUserAdmin, getAdmins, normalizeJid, setGroupData, recordModEvent } = require('../database/utils');
 const { enforceAntiflood } = require('../services/antiflood');
 
 async function enforceMuteAndAntilink(sock, m, from, sender, text) {
@@ -16,6 +16,7 @@ async function enforceMuteAndAntilink(sock, m, from, sender, text) {
     if (!isSenderAdmin && isMuted(from, sender)) {
         if (isBotAdmin) {
             try { await sock.sendMessage(from, { delete: m.key }); } catch (delErr) { console.error('❌ Falha ao apagar mensagem de mutado:', delErr.message); }
+            try { recordModEvent(from, 'spam'); } catch (_) {}
         }
         return 'muted';
     }
@@ -24,6 +25,7 @@ async function enforceMuteAndAntilink(sock, m, from, sender, text) {
         const groupLinkRegex = /chat\.whatsapp\.com\/[a-zA-Z0-9]/;
         if (groupLinkRegex.test(text)) {
             await sock.sendMessage(from, { delete: m.key });
+            try { recordModEvent(from, 'spam'); } catch (_) {}
             if (!groupData.warnings) groupData.warnings = {};
             groupData.warnings[sender] = (groupData.warnings[sender] || 0) + 2;
             const count = groupData.warnings[sender];
@@ -42,7 +44,7 @@ async function enforceMuteAndAntilink(sock, m, from, sender, text) {
 
     // Antiflood (respeita flag de admin)
     const flood = await enforceAntiflood(sock, m, from, sender, isSenderAdmin, isBotAdmin);
-    if (flood) return flood;
+    if (flood) { try { recordModEvent(from, 'spam'); } catch (_) {} return flood; }
 
     return null;
 }
