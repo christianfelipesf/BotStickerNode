@@ -132,6 +132,7 @@ dist
 session/
 temp/
 data/
+backups/
 
 # yarn v2
 .yarn/cache

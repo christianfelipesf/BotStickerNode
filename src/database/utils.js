@@ -1645,8 +1645,8 @@ migrateLegacyActiveGroups();
 migrateJsonToSqlite();
 
 // Backup automático do banco (online, via SQLite backup API) — a cada 6h, mantém os
-// últimos 28 arquivos (~7 dias). Protege rank e configs contra corrupção ou apagão.
-const DB_BACKUP_KEEP = 28;
+// últimos 4 arquivos (~1 dia). Pasta backups/ é local e ignorada pelo git.
+const DB_BACKUP_KEEP = 4;
 function backupDatabase() {
     try {
         flushNow();
@@ -1660,7 +1660,7 @@ function backupDatabase() {
         return db.backup(file).then(() => {
             console.log(`💾 [backup] banco salvo em backups/bot-${stamp}.db`);
             try {
-                const files = fs.readdirSync(dir).filter(f => /^bot-\d{4}-\d{2}-\d{2}-\d{2}h\.db$/.test(f)).sort();
+                const files = fs.readdirSync(dir).filter(f => /^bot-\d{4}-\d{2}-\d{2}(-\d{2}h)?\.db$/.test(f)).sort();
                 while (files.length > DB_BACKUP_KEEP) {
                     const old = files.shift();
                     try { fs.unlinkSync(path.join(dir, old)); } catch (_) {}
