@@ -360,7 +360,9 @@ const DEFAULT_CONFIG = {
     dashboardMuted: false,
     dashboardShowQR: false,
     dashboardChatBlocked: true,
-    instagramCookies: ''
+    instagramCookies: '',
+    cobaltInstance: '',
+    cobaltApiKey: ''
 };
 
 let _configCache = null;

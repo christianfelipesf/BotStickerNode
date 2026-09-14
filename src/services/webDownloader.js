@@ -7,6 +7,7 @@ const {
     extractUrl, getPlatform, normalizeLang, correctFileExtension
 } = require('./downloaderCore');
 const { getFileMime, findDownloadedFiles: coreFind, downloadFromUrl: coreDownloadFromUrl, callBtchApi: coreCallBtchApi, runYtDlp: coreRunYtDlp, buildYtDlpArgs: coreBuildYtDlpArgs, getFormatSelector } = require('./downloaderCore');
+const { callTikWmApi: coreCallTikWmApi, parseTikWmMediaUrls: coreParseTikWm, getCobaltInstance: coreGetCobalt, callCobaltApi: coreCallCobalt, parseCobaltMediaUrls: coreParseCobalt, downloadMediaUrls: coreDownloadMediaUrls } = require('./downloaderCore');
 
 const CACHE_DIR = path.join(process.cwd(), 'temp', 'web_cache');
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -213,6 +214,33 @@ async function downloadBtch(platform, url, id, hd) {
 
 function findDownloadedFiles(id) { return coreFind(CACHE_DIR, 'webdl_', id); }
 
+async function downloadTikWmAlt(url, id, hd) {
+    try {
+        console.log('[WEB-DL] tiktok via TikWM...');
+        const data = await coreCallTikWmApi(url);
+        const mediaUrls = coreParseTikWm(data, hd);
+        if (!mediaUrls.length) throw new Error('sem mídia');
+        return await coreDownloadMediaUrls(mediaUrls, CACHE_DIR, 'webdl_', id);
+    } catch (e) {
+        console.log(`[WEB-DL] TikWM falhou: ${e.message}`);
+        return [];
+    }
+}
+
+async function downloadCobaltAlt(url, id, hd) {
+    if (!coreGetCobalt()) return [];
+    try {
+        console.log('[WEB-DL] via Cobalt...');
+        const resp = await coreCallCobalt(url, { videoQuality: hd ? '1080' : '720' });
+        const mediaUrls = coreParseCobalt(resp);
+        if (!mediaUrls.length) throw new Error(resp?.text || resp?.error?.code || 'sem mídia');
+        return await coreDownloadMediaUrls(mediaUrls, CACHE_DIR, 'webdl_', id);
+    } catch (e) {
+        console.log(`[WEB-DL] Cobalt falhou: ${e.message}`);
+        return [];
+    }
+}
+
 const cacheIndex = new Map();
 
 function registerCacheEntry(filename, url) {
@@ -266,6 +294,14 @@ async function downloadMedia(url, hd = false, fmt = 'mp4', lang) {
 
     if (!isAudio && BTCH_PLATFORMS.has(platform) && !preferYtDlp) {
         allFiles = await downloadBtch(platform, url, id, hd);
+    }
+
+    // Fallback A: TikWM (tiktok) -> Cobalt (opt-in) -> yt-dlp
+    if (!isAudio && allFiles.length === 0 && platform === 'tiktok') {
+        allFiles = await downloadTikWmAlt(url, id, hd);
+    }
+    if (!isAudio && allFiles.length === 0 && coreGetCobalt()) {
+        allFiles = await downloadCobaltAlt(url, id, hd);
     }
 
     if (allFiles.length === 0 && YTDLP_PLATFORMS.has(platform)) {

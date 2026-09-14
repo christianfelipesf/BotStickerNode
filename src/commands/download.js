@@ -10,7 +10,9 @@ const {
     PLATFORM_CONFIG, YTDLP_PLATFORMS, BTCH_PLATFORMS, BTCH_BASE_URL,
     correctFileExtension, sniffExtFromFile, extractUrl, getPlatform,
     normalizeLang, parseLangFromText, getFormatSelector, callBtchApi, downloadFromUrl,
-    getMaxDownloadBytes, searchYouTube
+    getMaxDownloadBytes, searchYouTube,
+    callTikWmApi, parseTikWmMediaUrls, getCobaltInstance,
+    callCobaltApi, parseCobaltMediaUrls, downloadMediaUrls
 } = require('../services/downloaderCore');
 const { runYtDlp: _coreRunYtDlp, buildYtDlpArgs: _coreBuildYtDlpArgs } = require('../services/downloaderCore');
 
@@ -194,6 +196,36 @@ function findDownloadedFiles(id) {
     return coreFind(tempDir, 'dl_', id);
 }
 
+// Fallback A1: TikWM — TikTok sem watermark, grátis, sem key.
+async function downloadTikWmAlt(url, id, hd) {
+    try {
+        console.log('[ALT-DL] tiktok via TikWM...');
+        const data = await callTikWmApi(url);
+        const mediaUrls = parseTikWmMediaUrls(data, hd);
+        if (!mediaUrls.length) throw new Error('sem mídia');
+        return await downloadMediaUrls(mediaUrls, tempDir, 'dl_', id);
+    } catch (e) {
+        console.log(`[ALT-DL] tiktok TikWM falhou: ${e.message}`);
+        return [];
+    }
+}
+
+// Fallback A2: Cobalt — opt-in via config cobaltInstance (self-host
+// recomendado; instâncias públicas têm bot-protection).
+async function downloadCobaltAlt(url, id, hd) {
+    if (!getCobaltInstance()) return [];
+    try {
+        console.log('[ALT-DL] via Cobalt...');
+        const resp = await callCobaltApi(url, { videoQuality: hd ? '1080' : '720' });
+        const mediaUrls = parseCobaltMediaUrls(resp);
+        if (!mediaUrls.length) throw new Error(resp?.text || resp?.error?.code || 'sem mídia');
+        return await downloadMediaUrls(mediaUrls, tempDir, 'dl_', id);
+    } catch (e) {
+        console.log(`[ALT-DL] Cobalt falhou: ${e.message}`);
+        return [];
+    }
+}
+
 async function sendMedia(sock, from, m, filePath, title) {
     // defesa: se arquivo foi salvo como .mp4 mas é imagem, corrige antes de enviar
     try { filePath = correctFileExtension(filePath, null); } catch (_) {}
@@ -364,6 +396,14 @@ module.exports = {
             if (BTCH_PLATFORMS.has(platform) && !preferYtDlp) {
                 currentBotResponse = await safeReact(react, sock, m, '📥', currentBotResponse, GLOBAL_COOLDOWN);
                 allFiles = await enqueueDownload(() => downloadBtch(platform, url, id, hd));
+            }
+
+            // Fallback A: TikWM (tiktok) -> Cobalt (opt-in) -> yt-dlp
+            if (allFiles.length === 0 && platform === 'tiktok') {
+                allFiles = await enqueueDownload(() => downloadTikWmAlt(url, id, hd));
+            }
+            if (allFiles.length === 0 && getCobaltInstance()) {
+                allFiles = await enqueueDownload(() => downloadCobaltAlt(url, id, hd));
             }
 
             if (allFiles.length === 0 && YTDLP_PLATFORMS.has(platform)) {

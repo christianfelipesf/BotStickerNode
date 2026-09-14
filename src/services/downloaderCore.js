@@ -5,6 +5,7 @@ const axios = require('axios');
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/i;
 const BTCH_BASE_URL = 'https://backend1.tioo.eu.org';
+const TIKWM_API_BASE = 'https://www.tikwm.com/api/';
 
 const PLATFORM_CONFIG = {
     instagram: { api: 'igdl', hosts: ['instagram.com'], domains: ['instagram.com'], ytdlp: true },
@@ -221,6 +222,130 @@ async function callBtchApi(endpoint, url) {
     return res.data;
 }
 
+// ============================================================
+// Fallback A: TikWM (TikTok sem watermark, grátis, sem key)
+// GET https://www.tikwm.com/api/?url=<tiktok_url>
+// -> { code: 0, data: { play, hdplay, wmplay, music, images?, title } }
+// ============================================================
+async function callTikWmApi(url) {
+    const res = await axios.get(TIKWM_API_BASE, {
+        params: { url },
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36' },
+        timeout: 30000
+    });
+    if (res.status !== 200) throw new Error(`TikWM HTTP ${res.status}`);
+    return res.data;
+}
+
+function parseTikWmMediaUrls(data, hd = false) {
+    const d = data?.data || data?.result || null;
+    if (!d || typeof d !== 'object') return [];
+    const urls = [];
+    // slideshow de imagens (sem watermark)
+    if (Array.isArray(d.images) && d.images.length) {
+        for (const img of d.images.slice(0, 10)) {
+            if (typeof img === 'string' && /^https?:\/\//i.test(img)) urls.push(img);
+        }
+        if (urls.length) return urls;
+    }
+    // vídeo: hd prefere hdplay > play > wmplay; sd prefere play > hdplay > wmplay
+    const ordered = hd ? [d.hdplay, d.play, d.wmplay] : [d.play, d.hdplay, d.wmplay];
+    for (const u of ordered) {
+        if (typeof u === 'string' && /^https?:\/\//i.test(u)) return [u];
+    }
+    return urls;
+}
+
+// ============================================================
+// Fallback A: Cobalt (opt-in via config cobaltInstance).
+// API atual: POST {instance}/ com { url, videoQuality, downloadMode }.
+// Legado: POST {instance}/api/json com { url, vQuality }.
+// Resposta: { status: tunnel|redirect -> {url}, picker -> {picker[]}, error }
+// Instâncias públicas têm bot-protection; o ideal é self-host
+// (ghcr.io/imputnet/cobalt). Sem config, fica desabilitado.
+// ============================================================
+function getCobaltInstance() {
+    try {
+        const inst = (process.env.COBALT_API_URL || '').trim();
+        if (inst) return inst.replace(/\/+$/, '');
+    } catch (_) {}
+    try {
+        const { readConfig } = require('../database/utils');
+        const cfg = readConfig();
+        const v = String(cfg.cobaltInstance || '').trim().replace(/\/+$/, '');
+        if (v) return v;
+    } catch (_) {}
+    return null;
+}
+
+function getCobaltApiKey() {
+    try {
+        const k = (process.env.COBALT_API_KEY || '').trim();
+        if (k) return k;
+    } catch (_) {}
+    try {
+        const { readConfig } = require('../database/utils');
+        const cfg = readConfig();
+        const v = String(cfg.cobaltApiKey || '').trim();
+        if (v) return v;
+    } catch (_) {}
+    return null;
+}
+
+function parseCobaltMediaUrls(resp) {
+    if (!resp || typeof resp !== 'object') return [];
+    if (resp.status === 'tunnel' || resp.status === 'redirect') {
+        return typeof resp.url === 'string' && /^https?:\/\//i.test(resp.url) ? [resp.url] : [];
+    }
+    if (resp.status === 'picker' && Array.isArray(resp.picker)) {
+        return resp.picker.slice(0, 10)
+            .map(p => (p && typeof p.url === 'string' ? p.url : null))
+            .filter(u => u && /^https?:\/\//i.test(u));
+    }
+    return [];
+}
+
+async function callCobaltApi(url, { videoQuality = '720' } = {}) {
+    const instance = getCobaltInstance();
+    if (!instance) throw new Error('Cobalt não configurado (cobaltInstance vazio)');
+    const apiKey = getCobaltApiKey();
+    const headers = { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' };
+    if (apiKey) headers.Authorization = `Api-Key ${apiKey}`;
+    // 1) API atual (cobalt >= v10): POST /
+    try {
+        const res = await axios.post(instance + '/', { url, videoQuality, downloadMode: 'auto' }, { headers, timeout: 30000 });
+        if (res.status === 200 && res.data) return res.data;
+        throw new Error(`Cobalt HTTP ${res.status}`);
+    } catch (e) {
+        const status = e?.response?.status;
+        // 404 = instância legada -> tenta /api/json; demais erros propagam
+        if (status !== 404) throw e;
+    }
+    // 2) API legada: POST /api/json
+    const res2 = await axios.post(instance + '/api/json', { url, vQuality: videoQuality }, { headers, timeout: 30000 });
+    if (res2.status !== 200) throw new Error(`Cobalt HTTP ${res2.status}`);
+    return res2.data;
+}
+
+// Baixa uma lista de URLs diretas para o disco (reuso nos fallbacks).
+async function downloadMediaUrls(urls, destDir, prefix, id) {
+    const out = [];
+    const list = (Array.isArray(urls) ? urls : []).filter(u => typeof u === 'string' && /^https?:\/\//i.test(u)).slice(0, 10);
+    for (let i = 0; i < list.length; i++) {
+        let ext = '.mp4';
+        try { ext = path.extname(new URL(list[i]).pathname) || '.mp4'; } catch (_) {}
+        if (!/\.(mp4|webm|mkv|mov|m4a|mp3|jpg|jpeg|png|gif|webp)$/i.test(ext)) ext = '.mp4';
+        const dest = path.join(destDir, `${prefix}${id}_alt_${i}${ext}`);
+        try {
+            const saved = await downloadFromUrl(list[i], dest);
+            out.push(saved || dest);
+        } catch (e) {
+            console.log(`[ALT-DL] falha ao baixar mídia direta: ${e.message}`);
+        }
+    }
+    return out;
+}
+
 function getMaxDownloadBytes() {
     try {
         const { readConfig } = require('../database/utils');
@@ -312,9 +437,11 @@ function findDownloadedFiles(dir, prefix, id) {
 }
 
 module.exports = {
-    URL_REGEX, BTCH_BASE_URL, PLATFORM_CONFIG, YTDLP_PLATFORMS, BTCH_PLATFORMS,
+    URL_REGEX, BTCH_BASE_URL, TIKWM_API_BASE, PLATFORM_CONFIG, YTDLP_PLATFORMS, BTCH_PLATFORMS,
     getExtFromContentType, sniffExtFromFile, correctFileExtension,
     extractUrl, getPlatform, normalizeLang, parseLangFromText, parseLangFromQuery,
     getFormatSelector, buildYtDlpArgs, runYtDlp, callBtchApi, downloadFromUrl,
+    callTikWmApi, parseTikWmMediaUrls, getCobaltInstance, getCobaltApiKey,
+    callCobaltApi, parseCobaltMediaUrls, downloadMediaUrls,
     getFileMime, findDownloadedFiles, getMaxDownloadBytes, searchYouTube, parseDurationToSeconds
 };
