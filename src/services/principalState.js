@@ -5,6 +5,11 @@ let _connected = false;
 let _version = null;
 let _phone = null;
 let _connectedAt = null;
+let _sock = null;
+
+function setSock(sock) { _sock = sock || null; }
+function getSock() { return _sock; }
+function clearSock() { _sock = null; }
 
 function setConnected(meta = {}) {
     const wasConnected = _connected;
@@ -55,5 +60,8 @@ module.exports = {
     waitForConnection,
     isConnected,
     getVersion,
+    setSock,
+    getSock,
+    clearSock,
     emitter
 };

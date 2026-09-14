@@ -290,6 +290,10 @@ async function startBot() {
                 global.__baileysSock = null;
                 _reconnecting = false;
                 try { clearTimeout(_reconnectSafetyTimer); } catch (_) {}
+                try {
+                    const principalState = require('./src/services/principalState');
+                    principalState.clearSock();
+                } catch (_) {}
                 const lastErr = u.lastDisconnect?.error;
                 const code = (lastErr instanceof Boom)
                     ? lastErr.output?.statusCode
@@ -345,6 +349,7 @@ async function startBot() {
                     const principalState = require('./src/services/principalState');
                     // principalState guarda a versão BAILEYS (array) — sub-sessões reutilizam para o socket.
                     principalState.setConnected({ version, phone });
+                    principalState.setSock(sock);
                 } catch (_) {}
                 try { watchdog.touchConnection(); } catch (_) {}
                 try { telegram.notifyConnected({ botName: config.botName, phone, version: botVersion }).catch(()=>{}); } catch (_) {}

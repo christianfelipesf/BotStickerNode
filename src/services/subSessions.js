@@ -12,9 +12,33 @@ const {
 const { Boom } = require('@hapi/boom');
 const { initAuthCreds, BufferJSON } = baileys;
 
+const DEBUG_SUB = process.env.DEBUG_SUB === '1' || process.env.DEBUG_SUB === 'true';
+
 function dlog(msg) {
-    try { process.stderr.write(`[sub] ${msg}\n`); } catch (_) {}
+    // Escrita única (console.log já é capturado pelo terminalLog/dashboard).
+    // Antes escrevia em stderr + stdout e cada linha aparecia duplicada no log.
     try { console.log(`[sub] ${msg}`); } catch (_) {}
+}
+
+function vlog(msg) {
+    // Log verboso (upsert count, msg sem texto, PROCESSANDO sem prefixo).
+    // Só aparece com DEBUG_SUB=1 para não spammar o terminal.
+    if (!DEBUG_SUB) return;
+    dlog(msg);
+}
+
+// Avisa o dono da sub no privado do bot principal (via sock principal).
+// Usado em: restore pós-restart e reconnect automático (515/428/transiente).
+// Nunca derruba nada — só sendMessage silencioso; falha = ignora.
+async function notifyOwner(ownerJid, text) {
+    if (!ownerJid || !text) return;
+    try {
+        let psock = null;
+        try { psock = principalState.getSock?.() || global.__baileysSock || null; } catch (_) {}
+        if (!psock) return;
+        try { if (!principalState.getState().connected) return; } catch (_) {}
+        await psock.sendMessage(ownerJid, { text });
+    } catch (_) {}
 }
 
 const { readConfig } = require('../database/utils');
@@ -324,17 +348,25 @@ function loadSessionMeta(ownerJid) {
 }
 
 function attachMessagesHandler(session, sock) {
+    const ownerJid = session.ownerJid;
     const selfJidRaw = (sock.user?.id || '');
     const selfNorm = selfJidRaw.split(':')[0].split('@')[0];
-    dlog(`${hashJid(session.ownerJid)} handler attached, selfJidRaw=${selfJidRaw} selfNorm=${selfNorm}`);
+    dlog(`${hashJid(ownerJid)} handler attached, selfJidRaw=${selfJidRaw} selfNorm=${selfNorm}`);
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
-            dlog(`${hashJid(session.ownerJid)} upsert type=${type} count=${messages?.length || 0}`);
+            // Anti-fantasma: se a sessão saiu do map (logoff/close/logged-out) ou o
+            // sock foi substituído por reconnect, ignora sem logar nem processar.
+            // NUNCA desconecta aqui — só retorna. Sessão conectada segue normal.
+            const current = sessions.get(ownerJid);
+            if (!current || current.sock !== sock) return;
+            // Desconectado (connected=false) não processa nem spamma log.
+            // Só volta a processar quando 'open' marcar connected=true de novo.
+            if (!current.connected) return;
+            if (DEBUG_SUB) vlog(`${hashJid(ownerJid)} upsert type=${type} count=${messages?.length || 0}`);
             if (type !== 'notify' && type !== 'append') return;
             for (const m of messages) {
                 if (!m?.message) {
-                    dlog(`${hashJid(session.ownerJid)} msg sem .message (skipped)`);
                     continue;
                 }
 
@@ -359,18 +391,20 @@ function attachMessagesHandler(session, sock) {
                 const isSelfChat = !isGroup && fromNorm === selfNorm;
 
                 if (isGroup && !getSubsGroupsEnabled()) {
-                    dlog(`${hashJid(session.ownerJid)} msg em grupo ignorada (subSessionsGroups=false) from=${from}`);
                     continue;
                 }
 
                 const text = extractText(m.message, m);
                 if (!text || !text.trim()) {
-                    dlog(`${hashJid(session.ownerJid)} msg sem texto extraível. from=${from} keys=${keys.join(',')}`);
                     continue;
                 }
                 const t = text.trim();
 
-                dlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} isSelfChat=${isSelfChat} fromMe=${!!m.key.fromMe} text="${t.slice(0,60)}"`);
+                // Só loga PROCESSANDO quando é comando potencial (com prefixo).
+                // Mensagem comum ("Nada cara que isso", "Oba 🥰") não spamma mais.
+                if (t.startsWith(session.prefix)) {
+                    vlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} text="${t.slice(0,60)}"`);
+                }
 
                 if (!t.startsWith(session.prefix)) {
                     if (t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix') {
@@ -608,8 +642,8 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
         if (normalizedPhone) {
             const tryRequestCode = async (attempt = 1) => {
                 if (session.pairCodeSent || session.connected) return;
-                if (!sessions.has(ownerJid)) {
-                    dlog(`${hashJid(ownerJid)} sessão removida do map, parando tentativas de pairing`);
+                if (sessions.get(ownerJid) !== session) {
+                    dlog(`${hashJid(ownerJid)} sessão trocada/removida, parando tentativas de pairing`);
                     return;
                 }
                 try {
@@ -621,9 +655,10 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     armWatchdog();
                 } catch (e) {
                     dlog(`${hashJid(ownerJid)} erro pairing (tentativa ${attempt}/3): ${e?.message}`);
-                    if (attempt < 3 && !session.connected && sessions.has(ownerJid)) {
+                    if (session.connected || sessions.get(ownerJid) !== session) return;
+                    if (attempt < 3 && !session.connected && sessions.get(ownerJid) === session) {
                         setTimeout(() => tryRequestCode(attempt + 1), 3000);
-                    } else if (attempt >= 3 && sessions.has(ownerJid)) {
+                    } else if (attempt >= 3 && sessions.get(ownerJid) === session) {
                         dlog(`${hashJid(ownerJid)} ❌ 3 tentativas de pairing falharam → limpando tudo automaticamente`);
                         pairingBlockedUntil.set(ownerJid, Date.now() + PAIRING_FAIL_BLOCK_MS);
                         try { await safeCallback(session.onPairingCode, ownerJid, { code: null, phoneNumber: normalizedPhone, failed: true, attempts: 3 }); } catch (_) {}
@@ -635,6 +670,11 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
         }
 
         const cleanupAndCancel = async (reason) => {
+            // NUNCA cancela quem já conectou: se conectou no meio do caminho,
+            // o watchdog/pairing tardio não pode derrubar nem avisar "cancelada".
+            if (session.connected) return;
+            // Timer obsoleto de um sock antigo (recreate) não pode matar a sessão nova.
+            if (sessions.get(ownerJid) !== session) return;
             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
             destroySock(sock);
             if (normalizedPhone && dir && dir.includes('_pair_')) {
@@ -655,6 +695,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
             session.qrTimer = setTimeout(async () => {
                 try {
                     if (session.connected) return;
+                    if (sessions.get(ownerJid) !== session) return;
                     const sinceLast = Date.now() - (session.lastQrAt || 0);
                     if (sinceLast < QR_INTERVAL_MS) {
                         armWatchdog();
@@ -742,6 +783,8 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         session._restartCount = (session._restartCount || 0) + 1;
                         if (session._restartCount > 5) {
                             dlog(`${hashJid(ownerJid)} ${why} loop >5 — abortando`);
+                            try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                            destroySock(sock);
                             try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                             sessions.delete(ownerJid);
                             loginCooldowns.delete(ownerJid);
@@ -750,6 +793,14 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         }
                         const delay = Math.min(30000, 3000 * Math.pow(2, session._restartCount - 1)) + Math.floor(Math.random() * 1000);
                         dlog(`${hashJid(ownerJid)} ${why} → recriando sock sem apagar credenciais (${session._restartCount}/5) em ${delay}ms, qrAttempts=${session.qrAttempts}`);
+                        const wasOnline = !!session._wasConnected;
+                        // Avisa no privado do dono (via principal) que vai tentar reconectar.
+                        // Só avisa quem já estava ONLINE — fase de QR já tem suas próprias mensagens.
+                        if (wasOnline) {
+                            notifyOwner(ownerJid,
+                                `🔄 *Sub-sessão caiu (${why})*\nTentando reconectar automaticamente em ~${Math.round(delay / 1000)}s…\nVocê não precisa fazer nada.`
+                            ).catch?.(() => {});
+                        }
                         destroySock(sock);
                         const saved = {
                             qrAttempts: session.qrAttempts,
@@ -762,6 +813,22 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                             onClosed: session.onClosed, onPairingCode: session.onPairingCode,
                             onQueued: session.onQueued
                         };
+                        // Envolve onConnected/onClosed para avisar no WhatsApp via principal atual
+                        // (o closure original do !login pode referenciar o sock principal antigo).
+                        const savedOnConnected = saved.onConnected;
+                        const savedOnClosed = saved.onClosed;
+                        const wrappedOnConnected = async (jid, info) => {
+                            try { if (typeof savedOnConnected === 'function') await savedOnConnected(jid, info); } catch (_) {}
+                            if (wasOnline) {
+                                await notifyOwner(jid, `✅ *Sub-sessão reconectada!*\n📞 Número: \`${info?.phoneNumber || saved.phoneNumber || '?'}\`\nPode usar normalmente.`);
+                            }
+                        };
+                        const wrappedOnClosed = async (jid, reason) => {
+                            try { if (typeof savedOnClosed === 'function') await savedOnClosed(jid, reason); } catch (_) {}
+                            if (wasOnline && (reason === 'restart-loop' || String(reason).startsWith('auth-failed') || reason === 'unauthorized')) {
+                                await notifyOwner(jid, `❌ *Sub-sessão não reconectou (${reason}).*\nUse *!login* para conectar de novo ou *!subclean* antes se persistir.`);
+                            }
+                        };
                         sessions.delete(ownerJid);
                         setTimeout(async () => {
                             try {
@@ -770,8 +837,8 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                                     try { await principalState.waitForConnection(90000); } catch (_) {}
                                 }
                                 await _doStartLogin(ownerJid, {
-                                    onQr: saved.onQr, onConnected: saved.onConnected,
-                                    onClosed: saved.onClosed, onPairingCode: saved.onPairingCode,
+                                    onQr: saved.onQr, onConnected: wrappedOnConnected,
+                                    onClosed: wrappedOnClosed, onPairingCode: saved.onPairingCode,
                                     onQueued: saved.onQueued,
                                     phoneNumber: normalizedPhone || saved.phoneNumber,
                                     _reconnect: true,
@@ -783,6 +850,8 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         armWatchdog();
                     };
                     if (code === DisconnectReason.loggedOut) {
+                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                        destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
@@ -794,10 +863,14 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         recreateLoginSock('515-restart');
                     } else if (code === 401 || code === 403 || code === 405) {
                         dlog(`${hashJid(ownerJid)} ${code} → deletando credenciais e sessão`);
+                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                        destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'unauthorized');
                     } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
+                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                        destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
@@ -807,10 +880,14 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         recreateLoginSock(`transient-late-${code}`);
                     } else if (code && code >= 400 && code < 500) {
                         dlog(`${hashJid(ownerJid)} erro ${code} → deletando credenciais e sessão`);
+                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                        destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, `auth-failed-${code}`);
                     } else {
+                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                        destroySock(sock);
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, `close-${code}`);
                     }
@@ -905,9 +982,18 @@ async function restoreFromDisk(onConnected) {
             try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch (_) { continue; }
             if (!meta || !meta.ownerJid) continue;
             try {
+                // Avisa o dono no privado do principal que o bot reiniciou e vai reconectar.
+                await notifyOwner(meta.ownerJid,
+                    `🔄 *Bot reiniciado*\nTentando reconectar sua sub-sessão automaticamente…\nVocê não precisa escanear QR de novo.`
+                );
                 await _doStartLogin(meta.ownerJid, {
                     onQr: async () => {},
-                    onConnected: async () => { if (typeof onConnected === 'function') await onConnected(meta.ownerJid); },
+                    onConnected: async (jid, info) => {
+                        try { if (typeof onConnected === 'function') await onConnected(jid); } catch (_) {}
+                        await notifyOwner(jid,
+                            `✅ *Sub-sessão reconectada após reinício!*\n📞 Número: \`${info?.phoneNumber || meta.phoneNumber || '?'}\`\nPode usar normalmente.`
+                        );
+                    },
                     onClosed: async (jid, reason) => {
                         if (reason === 'unauthorized' || reason === 'logged-out' || reason === 'close-401' || reason === 'close-403') {
                             try {
@@ -915,6 +1001,13 @@ async function restoreFromDisk(onConnected) {
                                 fs.rmSync(dir2, { recursive: true, force: true });
                                 dlog(`${hashJid(jid)} credenciais inválidas/expiradas → removidas`);
                             } catch (_) {}
+                            await notifyOwner(jid,
+                                `❌ *Sub-sessão não reconectou após reinício (${reason}).*\nA sessão expirou no WhatsApp.\nUse *!login* para conectar de novo.`
+                            );
+                        } else if (reason && reason !== 'login-cancelado') {
+                            await notifyOwner(jid,
+                                `⚠️ *Sub-sessão: falha ao reconectar (${reason}).*\nVou tentar de novo sozinho; se persistir use *!login*.`
+                            );
                         }
                     },
                     _silent: true,
