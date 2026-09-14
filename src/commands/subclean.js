@@ -50,6 +50,7 @@ module.exports = {
             } catch (_) {}
         }
 
+        try { subSessions.cancelQueuedLogin(sender); } catch (_) {}
         try { await subSessions.logout(sender); } catch (_) {}
 
         await sock.sendMessage(from, {

@@ -53,7 +53,73 @@ const ALLOWED_BASIC = new Set([
 
 const sessions = new Map();
 const loginLocks = new Map();
-const LOGIN_LOCK_TTL_MS = 2000;
+const LOGIN_LOCK_TTL_MS = 60000;
+const LOGIN_COOLDOWN_MS = 3 * 60 * 1000;
+const LOGIN_MIN_GAP_MS = 12000;
+const PAIRING_FAIL_BLOCK_MS = 30 * 60 * 1000;
+const loginCooldowns = new Map();
+const pairingBlockedUntil = new Map();
+
+// Fila global: 1 login de sub por vez, sempre depois do principal.
+// Evita 2 sockets Baileys concorrendo no mesmo IP/processo (428/515/401).
+const loginQueue = [];
+let loginActive = false;
+let lastLoginStart = 0;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function destroySock(sock) {
+    try { sock?.ev?.removeAllListeners?.('connection.update'); } catch (_) {}
+    try { sock?.ev?.removeAllListeners?.('creds.update'); } catch (_) {}
+    try { sock?.ev?.removeAllListeners?.('messages.upsert'); } catch (_) {}
+    try { sock?.end?.(undefined); } catch (_) {}
+    try { sock?.ws?.close?.(); } catch (_) {}
+}
+
+function getQueuePosition(ownerJid) {
+    const i = loginQueue.findIndex(e => e.ownerJid === ownerJid);
+    return i >= 0 ? i + 1 : 0;
+}
+
+function cancelQueuedLogin(ownerJid) {
+    const i = loginQueue.findIndex(e => e.ownerJid === ownerJid);
+    if (i < 0) return false;
+    const [entry] = loginQueue.splice(i, 1);
+    try { entry?.reject?.(new Error('login-cancelado')); } catch (_) {}
+    return true;
+}
+
+async function pumpLoginQueue() {
+    if (loginActive) return;
+    const next = loginQueue.shift();
+    if (!next) return;
+    loginActive = true;
+    try {
+        const gap = Date.now() - lastLoginStart;
+        if (lastLoginStart && gap < LOGIN_MIN_GAP_MS) {
+            await sleep(LOGIN_MIN_GAP_MS - gap + Math.floor(Math.random() * 2000));
+        }
+        lastLoginStart = Date.now();
+        const session = await _doStartLogin(next.ownerJid, next.opts);
+        try { next.resolve?.(session); } catch (_) {}
+    } catch (e) {
+        try { next.reject?.(e); } catch (_) {}
+    } finally {
+        loginActive = false;
+        if (loginQueue.length) setImmediate(pumpLoginQueue);
+    }
+}
+
+function enqueueLogin(ownerJid, opts) {
+    return new Promise((resolve, reject) => {
+        loginQueue.push({ ownerJid, opts, resolve, reject, enqueuedAt: Date.now() });
+        try {
+            const pos = getQueuePosition(ownerJid);
+            safeCallback(opts?.onQueued, ownerJid, { position: pos }).catch?.(() => {});
+        } catch (_) {}
+        setImmediate(pumpLoginQueue);
+    });
+}
 
 function hashJid(jid) {
     return crypto.createHash('sha1').update(String(jid || '')).digest('hex').slice(0, 16);
@@ -346,14 +412,80 @@ function extractText(message, m) {
     );
 }
 
-async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null, _waitPrincipal = false }) {
+async function startLogin(ownerJid, opts = {}) {
+    const { _silent = false, _reconnect = false } = opts || {};
+    // Retries internos do próprio serviço não passam pela fila.
+    if (_silent || _reconnect) return _doStartLogin(ownerJid, opts);
+
+    // Idempotente: se já está conectando ou na fila, só atualiza callbacks/chat.
+    const existing = sessions.get(ownerJid);
+    if (existing && (existing.connecting || existing.queued)) {
+        existing.onQr = opts.onQr || existing.onQr;
+        existing.onConnected = opts.onConnected || existing.onConnected;
+        existing.onClosed = opts.onClosed || existing.onClosed;
+        existing.onPairingCode = opts.onPairingCode || existing.onPairingCode;
+        existing.onQueued = opts.onQueued || existing.onQueued;
+        dlog(`${hashJid(ownerJid)} login já em andamento — reutilizando (sem novo sock)`);
+        try { await safeCallback(existing.onQueued, ownerJid, { position: getQueuePosition(ownerJid), alreadyRunning: true }); } catch (_) {}
+        return existing;
+    }
+    if (existing?.connected) return existing;
+    if (getQueuePosition(ownerJid) > 0) {
+        const entry = loginQueue.find(e => e.ownerJid === ownerJid);
+        if (entry) {
+            entry.opts.onQr = opts.onQr || entry.opts.onQr;
+            entry.opts.onConnected = opts.onConnected || entry.opts.onConnected;
+            entry.opts.onClosed = opts.onClosed || entry.opts.onClosed;
+            entry.opts.onPairingCode = opts.onPairingCode || entry.opts.onPairingCode;
+            entry.opts.onQueued = opts.onQueued || entry.opts.onQueued;
+            try { await safeCallback(entry.opts.onQueued, ownerJid, { position: getQueuePosition(ownerJid), alreadyRunning: true }); } catch (_) {}
+        }
+        dlog(`${hashJid(ownerJid)} login já na fila — callbacks atualizados, sem duplicar`);
+        return sessions.get(ownerJid) || null;
+    }
+
+    // Cooldown anti-spam: 3min entre tentativas manuais do mesmo dono.
+    const cdUntil = loginCooldowns.get(ownerJid);
+    if (cdUntil && cdUntil > Date.now()) {
+        dlog(`${hashJid(ownerJid)} cooldown ativo (${Math.ceil((cdUntil - Date.now()) / 1000)}s)`);
+        await safeCallback(opts.onClosed, ownerJid, 'cooldown');
+        return sessions.get(ownerJid) || null;
+    }
+
+    // Lock 60s contra duplo-clique / 2 chats simultâneos.
+    const lockUntil = loginLocks.get(ownerJid);
+    if (lockUntil && lockUntil > Date.now()) {
+        dlog(`${hashJid(ownerJid)} login duplicado bloqueado (lock ativo)`);
+        return sessions.get(ownerJid) || null;
+    }
+    loginLocks.set(ownerJid, Date.now() + LOGIN_LOCK_TTL_MS);
+    setTimeout(() => loginLocks.delete(ownerJid), LOGIN_LOCK_TTL_MS).unref?.();
+    loginCooldowns.set(ownerJid, Date.now() + LOGIN_COOLDOWN_MS);
+
+    // Bloqueio de pairing após 3 falhas (rate-limit do WhatsApp): força QR por 30min.
+    const phoneEarly = opts.phoneNumber ? String(opts.phoneNumber).replace(/\D/g, '') : null;
+    if (phoneEarly) {
+        const blocked = pairingBlockedUntil.get(ownerJid);
+        if (blocked && blocked > Date.now()) {
+            dlog(`${hashJid(ownerJid)} pairing bloqueado até ${new Date(blocked).toLocaleTimeString('pt-BR')} — use QR`);
+            await safeCallback(opts.onClosed, ownerJid, 'pairing-blocked');
+            return null;
+        }
+    }
+
+    return enqueueLogin(ownerJid, { ...opts, _waitPrincipal: true });
+}
+
+async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = false, _reconnect = false, phoneNumber = null, onPairingCode = null, onQueued = null, _waitPrincipal = true, _resumeState = null }) {
     const baseHash = hashJid(ownerJid);
     const metaEarly = loadSessionMeta(ownerJid) || {};
     const normalizedPhoneEarly = phoneNumber ? String(phoneNumber).replace(/\D/g, '') : null;
 
-    if (_waitPrincipal && !principalState.getState().connected) {
+    // GATE: sub nunca sobe antes do principal. Fonte única da verdade.
+    if (!_reconnect && !principalState.getState().connected) {
         dlog(`${hashJid(ownerJid)} aguardando bot principal conectar (timeout 90s)...`);
         try {
+            await safeCallback(onQueued, ownerJid, { position: getQueuePosition(ownerJid), waitingPrincipal: true });
             await principalState.waitForConnection(90000);
             dlog(`${hashJid(ownerJid)} bot principal conectou, prosseguindo`);
         } catch (e) {
@@ -364,37 +496,35 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
         }
     }
 
-    if (!_silent && !_reconnect) {
-        const lockUntil = loginLocks.get(ownerJid);
-        if (lockUntil && lockUntil > Date.now()) {
-            dlog(`${hashJid(ownerJid)} login duplicado bloqueado (lock ativo por ${Math.max(0, lockUntil - Date.now())}ms)`);
-            return sessions.get(ownerJid) || null;
-        }
-        loginLocks.set(ownerJid, Date.now() + LOGIN_LOCK_TTL_MS);
-        setTimeout(() => loginLocks.delete(ownerJid), LOGIN_LOCK_TTL_MS).unref?.();
-    }
-
     if (sessions.has(ownerJid)) {
         const existing = sessions.get(ownerJid);
-        if (existing.connecting && !_silent && !_reconnect && !normalizedPhoneEarly) return existing;
-        if (existing.sock) {
-            try {
-                existing.sock.ev?.removeAllListeners?.('connection.update');
-                existing.sock.ev?.removeAllListeners?.('creds.update');
-                existing.sock.ev?.removeAllListeners?.('messages.upsert');
-                existing.sock.end(undefined);
-            } catch (_) {}
-            dlog(`${hashJid(ownerJid)} sock anterior destruído (connecting=${!!existing.connecting})`);
+        // Re-chamada idempotente dentro da fila: atualiza callbacks, mantém sock.
+        if (existing.connecting || existing.queued) {
+            existing.onQr = onQr || existing.onQr;
+            existing.onConnected = onConnected || existing.onConnected;
+            existing.onClosed = onClosed || existing.onClosed;
+            existing.onPairingCode = onPairingCode || existing.onPairingCode;
+            existing.onQueued = onQueued || existing.onQueued;
+            return existing;
         }
+        destroySock(existing.sock);
+        dlog(`${hashJid(ownerJid)} sock anterior destruído (connecting=${!!existing.connecting})`);
         sessions.delete(ownerJid);
     }
+    // Limpeza segura: NUNCA apaga a pasta final no início de pairing.
+    // Apaga só _pair_* obsoletos do mesmo dono (stale >1h) para não matar retry atual.
     if (normalizedPhoneEarly) {
         try {
             const allDirs = fs.readdirSync(SUB_SESSIONS_DIR);
+            const now = Date.now();
             for (const n of allDirs) {
-                if (n.startsWith(baseHash + '_pair_') || n === baseHash) {
-                    try { fs.rmSync(path.join(SUB_SESSIONS_DIR, n), { recursive: true, force: true }); } catch (_) {}
-                }
+                if (!n.startsWith(baseHash + '_pair_')) continue;
+                try {
+                    const st = fs.statSync(path.join(SUB_SESSIONS_DIR, n));
+                    if (now - st.mtimeMs > 60 * 60 * 1000) {
+                        fs.rmSync(path.join(SUB_SESSIONS_DIR, n), { recursive: true, force: true });
+                    }
+                } catch (_) {}
             }
         } catch (_) {}
     }
@@ -414,18 +544,21 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
 
     const session = {
         ownerJid,
-        prefix: meta.prefix || PER_SESSION_PREFIX_DEFAULT,
-        phoneNumber: normalizedPhone || meta.phoneNumber || null,
+        prefix: (_resumeState && _resumeState.prefix) || meta.prefix || PER_SESSION_PREFIX_DEFAULT,
+        phoneNumber: normalizedPhone || (_resumeState && _resumeState.phoneNumber) || meta.phoneNumber || null,
         startedAt: Date.now(),
         sock: null,
         connected: false,
         connecting: true,
-        qrAttempts: 0,
+        queued: false,
+        qrAttempts: (_resumeState && Number(_resumeState.qrAttempts)) || 0,
         qrTimer: null,
-        lastQrHash: null,
-        lastQrAt: 0,
+        lastQrHash: (_resumeState && _resumeState.lastQrHash) || null,
+        lastQrAt: (_resumeState && _resumeState.lastQrAt) || 0,
         pairCodeSent: false,
-        onQr, onConnected, onClosed, onPairingCode
+        _restartCount: (_resumeState && Number(_resumeState.restartCount)) || 0,
+        _wasConnected: false,
+        onQr, onConnected, onClosed, onPairingCode, onQueued
     };
     sessions.set(ownerJid, session);
     persistSessionMeta(session);
@@ -443,8 +576,15 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
             dlog(`${hashJid(ownerJid)} falha ao criar creds: ${e?.message}`);
         }
         const { state, saveCreds } = await useMultiFileAuthState(dir);
-        const { getCachedBaileysVersion } = require('./version');
-        const version = await getCachedBaileysVersion();
+        // Reutiliza a versão do principal para evitar mismatch 401/405 entre sockets.
+        // O principalState pode conter a versão do BOT (string) — só usa se for array [major, minor, patch].
+        let version = principalState.getVersion();
+        const isValidVersion = Array.isArray(version) && version.length === 3 && version.every(n => Number.isInteger(n));
+        if (!isValidVersion) {
+            if (version != null) dlog(`principal version inválida (${JSON.stringify(version)}) — buscando versão Baileys`);
+            const { getCachedBaileysVersion } = require('./version');
+            version = await getCachedBaileysVersion();
+        }
         dlog(`${hashJid(ownerJid)} usando version=${JSON.stringify(version)} (pairing=${!!normalizedPhone})`);
 
         const sock = makeWASocket({
@@ -485,6 +625,7 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         setTimeout(() => tryRequestCode(attempt + 1), 3000);
                     } else if (attempt >= 3 && sessions.has(ownerJid)) {
                         dlog(`${hashJid(ownerJid)} ❌ 3 tentativas de pairing falharam → limpando tudo automaticamente`);
+                        pairingBlockedUntil.set(ownerJid, Date.now() + PAIRING_FAIL_BLOCK_MS);
                         try { await safeCallback(session.onPairingCode, ownerJid, { code: null, phoneNumber: normalizedPhone, failed: true, attempts: 3 }); } catch (_) {}
                         await cleanupAndCancel('pairing-failed');
                     }
@@ -495,11 +636,16 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
 
         const cleanupAndCancel = async (reason) => {
             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
-            try { sock.end(undefined); } catch (_) {}
+            destroySock(sock);
             if (normalizedPhone && dir && dir.includes('_pair_')) {
                 try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
             }
+            // Pasta final só é apagada em falha definitiva de auth, nunca em timeout/retry.
+            if ((reason === 'unauthorized' || reason === 'logged-out' || String(reason).startsWith('auth-failed')) && !normalizedPhone) {
+                try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+            }
             sessions.delete(ownerJid);
+            loginCooldowns.delete(ownerJid);
             console.log(`🔐 [sub:${hashJid(ownerJid)}] cleanup (${reason})`);
             await safeCallback(session.onClosed, ownerJid, reason);
         };
@@ -580,31 +726,74 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         : u.lastDisconnect?.error?.statusCode;
                     const errMsg = u.lastDisconnect?.error?.message || 'sem mensagem';
                     const errData = u.lastDisconnect?.error?.data ? JSON.stringify(u.lastDisconnect.error.data).slice(0, 200) : '';
-                    dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" data="${errData}" attempts=${session.qrAttempts}`);
+                    const errLower = String(errMsg).toLowerCase();
+                    dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" data="${errData}" attempts=${session.qrAttempts} connected=${!!session._wasConnected}`);
+                    const isLoginPhase = !session._wasConnected;
+                    const isTransient = (
+                        code === 408 || code === 428 || code === 515 || code === 502 ||
+                        code === 503 || code === 500 || code == null ||
+                        errLower.includes('restart required') ||
+                        errLower.includes('connection closed') ||
+                        errLower.includes('timed out') || errLower.includes('timeout') ||
+                        errLower.includes('econnreset') || errLower.includes('socket closed') ||
+                        errLower.includes('precondition required')
+                    );
+                    const recreateLoginSock = (why) => {
+                        session._restartCount = (session._restartCount || 0) + 1;
+                        if (session._restartCount > 5) {
+                            dlog(`${hashJid(ownerJid)} ${why} loop >5 — abortando`);
+                            try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                            sessions.delete(ownerJid);
+                            loginCooldowns.delete(ownerJid);
+                            safeCallback(session.onClosed, ownerJid, 'restart-loop');
+                            return;
+                        }
+                        const delay = Math.min(30000, 3000 * Math.pow(2, session._restartCount - 1)) + Math.floor(Math.random() * 1000);
+                        dlog(`${hashJid(ownerJid)} ${why} → recriando sock sem apagar credenciais (${session._restartCount}/5) em ${delay}ms, qrAttempts=${session.qrAttempts}`);
+                        destroySock(sock);
+                        const saved = {
+                            qrAttempts: session.qrAttempts,
+                            lastQrHash: session.lastQrHash,
+                            lastQrAt: session.lastQrAt,
+                            prefix: session.prefix,
+                            phoneNumber: session.phoneNumber,
+                            restartCount: session._restartCount,
+                            onQr: session.onQr, onConnected: session.onConnected,
+                            onClosed: session.onClosed, onPairingCode: session.onPairingCode,
+                            onQueued: session.onQueued
+                        };
+                        sessions.delete(ownerJid);
+                        setTimeout(async () => {
+                            try {
+                                // Se o principal caiu junto, espera ele voltar antes de recriar.
+                                if (!principalState.getState().connected) {
+                                    try { await principalState.waitForConnection(90000); } catch (_) {}
+                                }
+                                await _doStartLogin(ownerJid, {
+                                    onQr: saved.onQr, onConnected: saved.onConnected,
+                                    onClosed: saved.onClosed, onPairingCode: saved.onPairingCode,
+                                    onQueued: saved.onQueued,
+                                    phoneNumber: normalizedPhone || saved.phoneNumber,
+                                    _reconnect: true,
+                                    _resumeState: saved
+                                });
+                            } catch (e) { dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`); }
+                        }, delay);
+                        // mantém o usuário informado que o QR vai atualizar, sem encerrar
+                        armWatchdog();
+                    };
                     if (code === DisconnectReason.loggedOut) {
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
-                    } else if (code === 515 || errMsg.toLowerCase().includes('restart required')) {
-                        session._restartCount = (session._restartCount || 0) + 1;
-                        if (session._restartCount > 5) {
-                            dlog(`${hashJid(ownerJid)} 515 loop >5 — abortando`);
-                            try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-                            sessions.delete(ownerJid);
-                            await safeCallback(session.onClosed, ownerJid, 'restart-loop');
-                        } else {
-                            dlog(`${hashJid(ownerJid)} 515/restart required → recriando sock automaticamente (${session._restartCount}/5)`);
-                            try { sock.end(undefined); } catch (_) {}
-                            sessions.delete(ownerJid);
-                            setTimeout(() => {
-                                try {
-                                    startLogin(ownerJid, { onQr: session.onQr, onConnected: session.onConnected, onClosed: session.onClosed, _reconnect: true })
-                                        .catch(e => dlog(`${hashJid(ownerJid)} erro ao recriar: ${e?.message}`));
-                                } catch (_) {}
-                            }, 5000);
-                        }
-                    } else if (code === 401) {
-                        dlog(`${hashJid(ownerJid)} 401 → deletando credenciais e sessão`);
+                    } else if (isTransient && isLoginPhase) {
+                        // Fase de QR/pairing: close transitório (428/408/515/502/503/timeout)
+                        // NÃO apaga credenciais nem avisa "cancelado" — só recria e aguarda próximo QR.
+                        recreateLoginSock(`transient-${code}`);
+                    } else if (code === 515 || errLower.includes('restart required')) {
+                        recreateLoginSock('515-restart');
+                    } else if (code === 401 || code === 403 || code === 405) {
+                        dlog(`${hashJid(ownerJid)} ${code} → deletando credenciais e sessão`);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'unauthorized');
@@ -612,6 +801,10 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
                         await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
+                    } else if (isTransient) {
+                        // Sessão já conectada que caiu com erro transitório, ou fase de login
+                        // com código não coberto acima: recria sem apagar credenciais.
+                        recreateLoginSock(`transient-late-${code}`);
                     } else if (code && code >= 400 && code < 500) {
                         dlog(`${hashJid(ownerJid)} erro ${code} → deletando credenciais e sessão`);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
@@ -623,7 +816,10 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                     }
                 } else if (u.connection === 'open') {
                     session.connected = true;
+                    session._wasConnected = true;
                     session.connecting = false;
+                    session.queued = false;
+                    loginCooldowns.delete(ownerJid);
                     try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                     session.phoneNumber = sock.user?.id?.split?.(':')?.[0] || session.phoneNumber;
 
@@ -632,7 +828,13 @@ async function startLogin(ownerJid, { onQr, onConnected, onClosed, _silent = fal
                         try {
                             fs.rmSync(finalDir, { recursive: true, force: true });
                             fs.mkdirSync(path.dirname(finalDir), { recursive: true });
-                            fs.renameSync(dir, finalDir);
+                            try {
+                                fs.renameSync(dir, finalDir);
+                            } catch (_) {
+                                // Windows/EPERM: copia e depois apaga a temporária.
+                                fs.cpSync(dir, finalDir, { recursive: true });
+                                fs.rmSync(dir, { recursive: true, force: true });
+                            }
                             dlog(`${hashJid(ownerJid)} credenciais movidas de ${path.basename(dir)} → ${path.basename(finalDir)}`);
                         } catch (e) {
                             dlog(`${hashJid(ownerJid)} erro ao mover credenciais: ${e?.message}`);
@@ -668,10 +870,16 @@ async function safeCallback(cb, ...args) {
 }
 
 async function logout(ownerJid) {
+    cancelQueuedLogin(ownerJid);
+    loginCooldowns.delete(ownerJid);
+    loginLocks.delete(ownerJid);
     const session = sessions.get(ownerJid);
-    if (!session) return false;
+    if (!session) {
+        try { fs.rmSync(sessionFolder(ownerJid), { recursive: true, force: true }); } catch (_) {}
+        return false;
+    }
     try { if (session.qrTimer) clearTimeout(session.qrTimer); } catch (_) {}
-    try { if (session.sock) session.sock.end(undefined); } catch (_) {}
+    destroySock(session.sock);
     try { fs.rmSync(sessionFolder(ownerJid), { recursive: true, force: true }); } catch (_) {}
     sessions.delete(ownerJid);
     return true;
@@ -679,17 +887,25 @@ async function logout(ownerJid) {
 
 async function restoreFromDisk(onConnected) {
     try {
+        // Restore sequencial e espaçado: 1 sub por vez, só com principal online.
+        if (!principalState.getState().connected) {
+            try { await principalState.waitForConnection(120000); } catch (e) {
+                dlog(`restore adiado: principal offline (${e?.message})`);
+                return [];
+            }
+        }
         if (!fs.existsSync(SUB_SESSIONS_DIR)) return [];
         const dirs = fs.readdirSync(SUB_SESSIONS_DIR, { withFileTypes: true }).filter(d => d.isDirectory());
         const restored = [];
         for (const d of dirs) {
+            if (d.name.includes('_pair_')) continue;
             const metaPath = path.join(SUB_SESSIONS_DIR, d.name, META_FILE);
             if (!fs.existsSync(metaPath)) continue;
             let meta;
             try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch (_) { continue; }
             if (!meta || !meta.ownerJid) continue;
             try {
-                const session = await startLogin(meta.ownerJid, {
+                await _doStartLogin(meta.ownerJid, {
                     onQr: async () => {},
                     onConnected: async () => { if (typeof onConnected === 'function') await onConnected(meta.ownerJid); },
                     onClosed: async (jid, reason) => {
@@ -705,6 +921,7 @@ async function restoreFromDisk(onConnected) {
                     _waitPrincipal: true
                 });
                 restored.push(meta.ownerJid);
+                await sleep(LOGIN_MIN_GAP_MS);
             } catch (e) {
                 dlog(`${hashJid(meta.ownerJid)} falha ao restaurar: ${e?.message}`);
             }
@@ -722,6 +939,8 @@ module.exports = {
     listSessions,
     getSession,
     restoreFromDisk,
+    cancelQueuedLogin,
+    getQueuePosition,
     PER_SESSION_PREFIX_DEFAULT,
     QR_MAX_ATTEMPTS,
     ALLOWED_BASIC

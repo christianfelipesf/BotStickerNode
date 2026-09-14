@@ -1,0 +1,7 @@
+﻿Coloque aqui o GIF desta interacao (matar).
+
+- Formatos aceitos: .gif, .mp4, .jpg, .jpeg, .png, .webp
+- Exemplos de nome: matar.gif ou matar.mp4
+- Se colocar varios arquivos, o bot sorteia 1 a cada comando.
+- O GIF sera enviado junto com o texto da interacao.
+- Sem busca na web: se a pasta estiver vazia, o bot envia so o texto.

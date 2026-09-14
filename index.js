@@ -91,17 +91,26 @@ loadCommands({ verbose: false });
 // Limpeza automática de temp/ a cada 30 min (arquivos > 1h)
 startTempCleanup();
 
-// Restaurar sub-sessões Baileys persistidas (aguarda antes do startBot)
-const _restorePromise = (async () => {
-    try {
-        const restored = await subSessions.restoreFromDisk();
-        if (restored.length) {
-            console.log(`🔐 [subSessions] restauradas ${restored.length} sessão(ões) do disco`);
+// Restaurar sub-sessões Baileys persistidas SOMENTE depois do principal 🟢.
+// Antes elas subiam em paralelo ao principal e causavam 428/515/401 (conflito Baileys).
+const _restorePromise = Promise.resolve();
+try {
+    const principalState = require('./src/services/principalState');
+    principalState.emitter.once('connected', async () => {
+        try {
+            // Pequena folga para o principal estabilizar antes da primeira sub.
+            await new Promise(r => setTimeout(r, 8000));
+            const restored = await subSessions.restoreFromDisk();
+            if (restored.length) {
+                console.log(`🔐 [subSessions] restauradas ${restored.length} sessão(ões) do disco (pós-principal)`);
+            }
+        } catch (e) {
+            console.error('⚠️ [subSessions] falha ao restaurar:', e.message);
         }
-    } catch (e) {
-        console.error('⚠️ [subSessions] falha ao restaurar:', e.message);
-    }
-})();
+    });
+} catch (e) {
+    console.error('⚠️ [subSessions] falha ao agendar restore:', e.message);
+}
 
 // --- Tratamento de Erros Globais ---
 let _fatalExiting = false;
@@ -325,22 +334,23 @@ async function startBot() {
                     if (cfg.baileysEnabled === false) writeConfig({ ...cfg, baileysEnabled: true });
                 } catch (_) {}
                 const utils = require('./src/database/utils');
-                const version = utils.getVersion();
+                const botVersion = utils.getVersion();
                 const stats = utils.readStats();
                 const ts = new Date().toLocaleString('pt-BR');
                 const phone = sock.user?.id?.split?.(':')?.[0] || null;
-                console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${version} | attemptId=${_restartNumber}-${_connAttemptId} | phone=${phone || '?'})\n`);
+                console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${botVersion} | attemptId=${_restartNumber}-${_connAttemptId} | phone=${phone || '?'})\n`);
                 try { if (utils.checkMonthlyReset) utils.checkMonthlyReset(); } catch (_) {}
                 try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');
+                    // principalState guarda a versão BAILEYS (array) — sub-sessões reutilizam para o socket.
                     principalState.setConnected({ version, phone });
                 } catch (_) {}
                 try { watchdog.touchConnection(); } catch (_) {}
-                try { telegram.notifyConnected({ botName: config.botName, phone, version }).catch(()=>{}); } catch (_) {}
+                try { telegram.notifyConnected({ botName: config.botName, phone, version: botVersion }).catch(()=>{}); } catch (_) {}
                 try {
                     dashboard.log('action', 'SISTEMA',
-                        `🟢 Bot Conectado — v${version} • ${ts} • Comandos: ${stats.totalCommands || 0} • ${phone||''}`,
+                        `🟢 Bot Conectado — v${botVersion} • ${ts} • Comandos: ${stats.totalCommands || 0} • ${phone||''}`,
                         'Sistema', '—');
                 } catch (_) {}
             }

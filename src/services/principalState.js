@@ -44,10 +44,16 @@ function waitForConnection(timeoutMs = 60000) {
     });
 }
 
+function isConnected() { return _connected; }
+
+function getVersion() { return _version; }
+
 module.exports = {
     setConnected,
     setDisconnected,
     getState,
     waitForConnection,
+    isConnected,
+    getVersion,
     emitter
 };

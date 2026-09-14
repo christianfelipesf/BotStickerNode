@@ -1,24 +1,4 @@
-const fs = require('fs');
-const path = require('path');
 const https = require('https');
-
-const MENUS_DIR = path.join(process.cwd(), 'src', 'media', 'menus');
-const VALID_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
-
-function listMenuImages() {
-    try {
-        if (!fs.existsSync(MENUS_DIR)) return [];
-        return fs.readdirSync(MENUS_DIR)
-            .filter(f => VALID_EXT.has(path.extname(f).toLowerCase()))
-            .map(f => path.join(MENUS_DIR, f));
-    } catch (_) { return []; }
-}
-
-function pickRandomMenuImage() {
-    const images = listMenuImages();
-    if (images.length === 0) return null;
-    return images[Math.floor(Math.random() * images.length)];
-}
 
 function httpsPing(timeoutMs = 5000) {
     return new Promise((resolve) => {
@@ -101,9 +81,12 @@ module.exports = {
     category: 'geral',
     description: 'Verifica latência real com o Google',
     async execute(sock, m, { from, config, utils, lastBotResponse, GLOBAL_COOLDOWN, startTime }) {
-        const { react, getBotName, getGroupData, formatUptime, readStats, getVersion } = utils;
+        const { react, getBotName, getGroupData, getThemeForJid, groupMetadataCached, formatUptime, readStats, getVersion } = utils;
+        const { getTheme, themeBullets } = require('../services/themes');
+        const themeId = (typeof getThemeForJid === 'function' ? getThemeForJid(from) : ((getGroupData(from).theme) || 'default'));
+        const theme = getTheme(themeId);
 
-        let currentBotResponse = await react(sock, m, '🏓', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await react(sock, m, theme.react || '🏓', lastBotResponse, GLOBAL_COOLDOWN);
 
         const t0 = process.hrtime.bigint();
 
@@ -119,44 +102,70 @@ module.exports = {
         const plataforma = process.platform === 'win32' ? 'Windows' : 'Linux';
 
         const googleLinha = google.ok
-            ? `│ 🌐 *Google:* ${google.ms}ms ${classifyPing(google.ms)}`
-            : `│ 🌐 *Google:* falha (${google.error || 'sem resposta'}) ❌`;
+            ? `${theme.bullet || '│'} 🌐 *Google:* ${google.ms}ms ${classifyPing(google.ms)}`
+            : `${theme.bullet || '│'} 🌐 *Google:* falha (${google.error || 'sem resposta'}) ${theme.err || '❌'}`;
 
         const statusLinha = google.ok
-            ? classifyPing(google.ms).includes('❌') ? '│ 📡 *Status:* Instável ⚠️' : '│ 📡 *Status:* Online ✅'
-            : '│ 📡 *Status:* Offline ❌';
+            ? classifyPing(google.ms).includes('❌') ? `${theme.bullet || '│'} 📡 *Status:* Instável ⚠️` : `${theme.bullet || '│'} 📡 *Status:* Online ${theme.ok || '✅'}`
+            : `${theme.bullet || '│'} 📡 *Status:* Offline ${theme.err || '❌'}`;
 
-        const pingText = `*${botName} — Ping* 🏓\n_teste de conexão_\n\n` +
+        let pingText = `*${botName} — Ping* ${theme.header}\n_teste de conexão_\n\n` +
             `╭─── *LATÊNCIA* ───\n` +
-            `│ ⚡ *Resposta:* ${respostaMs}ms\n` +
+            `${theme.bullet || '│'} ⚡ *Resposta:* ${respostaMs}ms\n` +
             `${googleLinha}\n` +
             `${statusLinha}\n` +
             `╰───────────────\n\n` +
             `╭─── *SISTEMA* ───\n` +
-            `│ ⏱️ *Uptime:* ${uptime}\n` +
-            `│ 🖥️ *Plataforma:* ${plataforma}\n` +
-            `│ 🆔 *Versão:* ${version}\n` +
-            `│ ⌨️ *Comandos:* ${stats.totalCommands}\n` +
-            `│ 🔄 *Reinícios:* ${stats.restarts}\n` +
+            `${theme.bullet || '│'} ⏱️ *Uptime:* ${uptime}\n` +
+            `${theme.bullet || '│'} 🖥️ *Plataforma:* ${plataforma}\n` +
+            `${theme.bullet || '│'} 🆔 *Versão:* ${version}\n` +
+            `${theme.bullet || '│'} ⌨️ *Comandos:* ${stats.totalCommands}\n` +
+            `${theme.bullet || '│'} 🔄 *Reinícios:* ${stats.restarts}\n` +
             `╰───────────────`;
+        pingText = themeBullets(pingText, theme);
 
-        // mesma lógica visual do !menu para imagem
-        const groupData = getGroupData(from);
-        let menuImagePath = null;
-        if (groupData.menuImage) {
-            const potentialPath = path.isAbsolute(groupData.menuImage)
-                ? groupData.menuImage
-                : path.join(process.cwd(), groupData.menuImage);
-            if (fs.existsSync(potentialPath)) menuImagePath = potentialPath;
+        // Card 21:9 gerado como no !menu/!rank: foto do grupo + latência + cores do tema.
+        // Fallback: foto cortada/antiga; por último, só texto.
+        if (config.showLogoInMenu) {
+            const groupData = getGroupData(from);
+            const { generateMenuImage, getRawGroupBuffer, resolveMenuImageBuffer } = require('../services/menuImage');
+            let groupName = 'Grupo';
+            let avatarRaw = null;
+            if (from && from.endsWith('@g.us')) {
+                try {
+                    const meta = await groupMetadataCached(sock, from).catch(() => null);
+                    if (meta?.subject) groupName = meta.subject;
+                } catch (_) {}
+                try { avatarRaw = await getRawGroupBuffer(sock, from); } catch (_) { avatarRaw = null; }
+            }
+            const latencyLabel = google.ok ? `${respostaMs}ms • Google ${google.ms}ms` : `${respostaMs}ms • offline`;
+            try {
+                const card = await generateMenuImage({
+                    title: 'PING',
+                    headerEmoji: theme.header,
+                    groupName,
+                    memberLabel: latencyLabel,
+                    tagline: theme.tagline,
+                    footer: theme.menuTitle,
+                    badge: theme.id === 'default' ? 'PING' : theme.id.toUpperCase(),
+                    theme,
+                    avatarRaw
+                });
+                if (card) {
+                    await sock.sendMessage(from, { image: card, caption: pingText }, { quoted: m });
+                    return currentBotResponse;
+                }
+            } catch (_) {}
+            try {
+                const legacy = await resolveMenuImageBuffer(sock, { groupJid: from, groupMenuImage: groupData.menuImage, themeId: theme.id });
+                if (legacy) {
+                    await sock.sendMessage(from, { image: legacy, caption: pingText }, { quoted: m });
+                    return currentBotResponse;
+                }
+            } catch (_) {}
         }
-        if (!menuImagePath) menuImagePath = pickRandomMenuImage();
-        if (!menuImagePath) menuImagePath = path.join(process.cwd(), 'src', 'media', 'logo.png');
 
-        if (config.showLogoInMenu && menuImagePath && fs.existsSync(menuImagePath)) {
-            await sock.sendMessage(from, { image: { url: menuImagePath }, caption: pingText }, { quoted: m });
-        } else {
-            await sock.sendMessage(from, { text: pingText }, { quoted: m });
-        }
+        await sock.sendMessage(from, { text: pingText }, { quoted: m });
 
         return currentBotResponse;
     }

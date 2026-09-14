@@ -13,23 +13,26 @@ module.exports = {
     name: 'login',
     aliases: ['entrar', 'conectar'],
     category: 'admin',
-    description: 'Conecta uma sub-sessão Baileys (QR Code ou código de pareamento)',
-    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    description: 'Conecta uma sub-sessão Baileys (QR Code ou código de pareamento). Só inicia depois do bot principal.',
+    async execute(sock, m, { from, isGroup, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react } = utils;
         const ownerJid = sender;
 
-        if (subSessions.getSession(ownerJid)) {
+        const existing = subSessions.getSession(ownerJid);
+        if (existing?.connected) {
             await sock.sendMessage(from, {
                 text: '⚠️ Você já tem uma sub-sessão ativa.\nUse !logoff ou !sair para encerrar.'
             }, { quoted: m });
             return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
-        const meId = utils.normalizeJid(sock.user.id);
-        const senderNorm = utils.normalizeJid(ownerJid);
-        const isBotOwner = m.key.fromMe === true || ownerJid === meId || senderNorm === meId;
-        if (!isBotOwner) {
-            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        const perm = utils.canUseLogin(sock, m, sender, from);
+        if (!perm.ok) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.\n💡 Peça ao dono para liberar seu número com !addlogin.' }, { quoted: m });
+        }
+        // Autorizados (não-dono) só podem usar no privado
+        if (!perm.owner && isGroup) {
+            return await sock.sendMessage(from, { text: '❌ Use o !login apenas no privado do bot.' }, { quoted: m });
         }
 
         const phoneArg = normalizePhone(fullArgsText);
@@ -37,34 +40,37 @@ module.exports = {
 
         let currentBotResponse = await react(sock, m, '🔐', lastBotResponse, GLOBAL_COOLDOWN);
 
-        if (!principalState.getState().connected) {
-            await sock.sendMessage(from, {
-                text: '⏳ *Aguardando o bot principal conectar…*\n\nO bot principal ainda não está conectado (🟢). A sub-sessão só inicia depois disso.\n\n⏱️ Vou esperar até 90 segundos.'
-            }, { quoted: m });
-            try {
-                await principalState.waitForConnection(90000);
-            } catch (e) {
-                await sock.sendMessage(from, {
-                    text: '❌ *Bot principal não conectou em 90s.*\n\nTente `!login` novamente em alguns minutos.'
-                }, { quoted: m });
-                return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
-            }
-            await sock.sendMessage(from, { text: '✅ Bot principal conectado! Iniciando sub-sessão…' }, { quoted: m });
-        }
-
+        const principalOnline = principalState.getState().connected;
         if (usePairing) {
             await sock.sendMessage(from, {
-                text: `🔐 *Sub-sessão iniciando…*\n\n📞 *Número:* \`${phoneArg}\`\n📲 *Modo:* código de pareamento\n\nVou gerar um *código de 8 dígitos* para você digitar no WhatsApp.\n\n⏱️ Você tem até 5 minutos para parear.`
+                text: `🔐 *Sub-sessão na fila…*\n\n📞 *Número:* \`${phoneArg}\`\n📲 *Modo:* código de pareamento\n${principalOnline ? '✅ Bot principal online — iniciando (1 login por vez).' : '⏳ Bot principal ainda offline — vou esperar ele conectar (até 90s) e inicio sozinho.'}\n\nVou gerar um *código de 8 dígitos*. Use \`!subcancel\` para sair da fila.`
             }, { quoted: m });
         } else {
             await sock.sendMessage(from, {
-                text: '🔐 *Sub-sessão iniciando…*\n\nVou enviar o QR Code em até *3 tentativas*. Escaneie no WhatsApp → Aparelhos conectados.\n\n💡 _Dica:_ use `!login 5511999999999` para parear com código de 8 dígitos em vez de QR.\n\n⏱️ Você tem ~1 min por QR.'
+                text: `🔐 *Sub-sessão na fila…*\n\n${principalOnline ? '✅ Bot principal online — gerando QR (1 login por vez).' : '⏳ Bot principal ainda offline — vou esperar ele conectar (até 90s) e gero o QR sozinho.'}\n\nVou enviar o QR em até *3 tentativas*.\n💡 _Dica:_ use \`!login 5511999999999\` para código de 8 dígitos.\nUse \`!subcancel\` para sair da fila.`
             }, { quoted: m });
         }
 
         try {
             await subSessions.startLogin(ownerJid, {
                 phoneNumber: usePairing ? phoneArg : null,
+                onQueued: async (jid, { position, waitingPrincipal, alreadyRunning } = {}) => {
+                    try {
+                        if (alreadyRunning) {
+                            await sock.sendMessage(from, {
+                                text: `ℹ️ Seu login já está em andamento${position ? ` (posição ${position} na fila)` : ''} — aguarde o QR/código aqui mesmo.\nUse \`!subcancel\` para cancelar e recomeçar.`
+                            }, { quoted: m });
+                        } else if (waitingPrincipal) {
+                            await sock.sendMessage(from, {
+                                text: '⏳ *Aguardando o bot principal conectar…*\nA sub-sessão inicia sozinha assim que ele ficar 🟢 (até 90s). Não precisa mandar `!login` de novo.'
+                            }, { quoted: m });
+                        } else if (position > 1) {
+                            await sock.sendMessage(from, {
+                                text: `⏳ Você é o nº *${position}* na fila de login (1 por vez para não conflitar). Aguarde…`
+                            }, { quoted: m });
+                        }
+                    } catch (_) {}
+                },
                 onQr: async (jid, { buffer, attempt, max }) => {
                     if (usePairing) return;
                     try {
@@ -75,7 +81,7 @@ module.exports = {
                             }, { quoted: m });
                         } else {
                             await sock.sendMessage(from, {
-                                text: `📱 *QR ${attempt}/${max}*\n_\n(string abaixo é o QR — normalmente envio como imagem, mas falhou agora. Tente escanear a partir do terminal do bot se necessário.)_`
+                                text: `📱 *QR ${attempt}/${max}*\n_(falha ao gerar imagem — veja o terminal do bot)_`
                             }, { quoted: m });
                         }
                     } catch (_) {}
@@ -84,7 +90,7 @@ module.exports = {
                     try {
                         if (failed) {
                             await sock.sendMessage(from, {
-                                text: `❌ *Falha no pareamento (${attempts} tentativas).*\n\nO WhatsApp rejeitou o código ${attempts}x. Provável rate-limit desta VPS.\n\n✅ *Limpeza automática:*\n• Sub-sessão encerrada\n• Credenciais apagadas do disco\n\n🔄 *Próximas opções:*\n• Use \`!login\` (sem número) → QR Code\n• Aguarde 30-60 min e tente \`!login ${phoneNumber}\` novamente\n• Use \`!subclean\` para limpar antes de tentar de novo`
+                                text: `❌ *Falha no pareamento (${attempts} tentativas).*\n\nO WhatsApp rejeitou o código ${attempts}x. Provável rate-limit desta VPS.\n\n✅ *Limpeza automática:*\n• Sub-sessão encerrada\n• Credenciais apagadas do disco\n• Pairing bloqueado por 30min (use QR nesse meio-tempo)\n\n🔄 *Próximas opções:*\n• Use \`!login\` (sem número) → QR Code\n• Aguarde 30-60 min e tente \`!login ${phoneNumber}\` novamente\n• Use \`!subclean\` para limpar antes de tentar de novo`
                             }, { quoted: m });
                             return;
                         }
@@ -116,9 +122,29 @@ module.exports = {
                             await sock.sendMessage(from, {
                                 text: '🔒 *Falha de autenticação (401).*\n\nO WhatsApp rejeitou a conexão.\n\n💡 *Possíveis causas:*\n• O número já tem outro dispositivo pareado\n• O WhatsApp bloqueou este IP (muitos pareamentos)\n• Credenciais anteriores expiradas\n\n🔄 *Alternativa:* use `!login` (sem número) para gerar QR Code.\n\n⏰ Se o problema persistir, espere 15-30 min antes de tentar novamente.'
                             }, { quoted: m });
+                        } else if (reason === 'principal-not-connected') {
+                            await sock.sendMessage(from, {
+                                text: '❌ *Bot principal não conectou em 90s.*\n\nTente `!login` novamente em alguns minutos.'
+                            }, { quoted: m });
+                        } else if (reason === 'cooldown') {
+                            await sock.sendMessage(from, {
+                                text: '⏳ *Aguarde antes de tentar de novo.*\nVocê tentou `!login` há pouco. Espere ~3 minutos ou use `!subcancel` + `!subclean`.'
+                            }, { quoted: m });
+                        } else if (reason === 'pairing-blocked') {
+                            await sock.sendMessage(from, {
+                                text: '🔒 *Pairing em pausa por 30min* (3 falhas seguidas = rate-limit).\n\nUse `!login` (sem número) para QR Code agora.'
+                            }, { quoted: m });
                         } else if (reason && reason.startsWith('close-')) {
                             await sock.sendMessage(from, {
-                                text: `❌ *Conexão fechada (${reason}).*\n\nO servidor WhatsApp encerrou a conexão antes de gerar o código de pareamento.\n\n💡 *Sugestão:* use \`!login\` (sem número) para gerar *QR Code* como alternativa — QR é menos restritivo.\n\n⏰ Aguarde 15-30 min se quiser tentar pairing novamente.`
+                                text: `❌ *Conexão fechada (${reason}).*\n\nO servidor WhatsApp encerrou a conexão antes de concluir.\n\n💡 *Sugestão:* use \`!login\` (sem número) para gerar *QR Code* como alternativa — QR é menos restritivo.\n\n⏰ Aguarde 15-30 min se quiser tentar pairing novamente.`
+                            }, { quoted: m });
+                        } else if (reason === 'restart-loop') {
+                            await sock.sendMessage(from, {
+                                text: '❌ *WhatsApp pediu restart 5x seguidas.*\n\nPossível instabilidade/Baileys desatualizado.\n\n🔄 Use `!subclean` e tente `!login` de novo em alguns minutos.'
+                            }, { quoted: m });
+                        } else if (reason && reason !== 'login-cancelado') {
+                            await sock.sendMessage(from, {
+                                text: `❌ *Sub-sessão encerrada (${reason}).*\n\nUse \`!login\` para tentar novamente ou \`!subclean\` para limpar antes.`
                             }, { quoted: m });
                         }
                     } catch (_) {}
@@ -126,6 +152,9 @@ module.exports = {
             });
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (e) {
+            if (String(e?.message || '').includes('login-cancelado')) {
+                return currentBotResponse;
+            }
             await sock.sendMessage(from, { text: `❌ Falha ao iniciar sub-sessão: ${e.message || e}` }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         }

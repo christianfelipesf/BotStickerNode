@@ -64,8 +64,12 @@ async function placeholderAvatar(name, size = AVATAR_SIZE) {
  * @param {string} opts.monthKey - "2026-09" para debug
  * @param {Array<Buffer>} opts._avatarBuffers - interno: já circulares (opcional)
  */
-async function generateRankImage({ groupName, botName, monthLabel, ranking, monthKey }) {
+async function generateRankImage({ groupName, botName, monthLabel, ranking, monthKey, theme }) {
     const top = Array.isArray(ranking) ? ranking.slice(0, 10) : [];
+    const C = (theme && theme.colors) ? { ...COLORS, ...theme.colors } : COLORS;
+    const rankTitle = (theme && theme.rankTitle) || 'RANK MENSAL — TOP 10 ATIVOS';
+    const rankIcon = (theme && theme.rankIcon) || '🏆';
+    const emptyLine = (theme && theme.rankEmpty) || 'Nenhum registro este mês. Seja o primeiro a falar! 💬';
     const W = 1080;
     const HEADER_H = 210;
     const ROW_H = 72;
@@ -78,12 +82,12 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
     const avatarNames = top.map(u => u.name);
 
     const rowsSvg = top.length === 0
-        ? `<text x="${W/2}" y="${HEADER_H + 80}" text-anchor="middle" font-family="sans-serif" font-size="28" fill="${COLORS.sub}">Nenhum registro este mês. Seja o primeiro a falar! 💬</text>`
+        ? `<text x="${W/2}" y="${HEADER_H + 80}" text-anchor="middle" font-family="sans-serif" font-size="28" fill="${C.sub}">${escapeXml(emptyLine)}</text>`
         : top.map((u, i) => {
             const y = HEADER_H + i * ROW_H;
             const isTop3 = i < 3;
-            const bg = i % 2 === 0 ? COLORS.row : COLORS.rowAlt;
-            const borderColor = i === 0 ? COLORS.gold : i === 1 ? COLORS.silver : i === 2 ? COLORS.bronze : 'transparent';
+            const bg = i % 2 === 0 ? C.row : C.rowAlt;
+            const borderColor = i === 0 ? C.gold : i === 1 ? C.silver : i === 2 ? C.bronze : 'transparent';
             const medal = i < 3 ? MEDALS[i] : `#${i + 1}`;
             const name = escapeXml(truncate(u.name, 24));
             const count = Number(u.count) || 0;
@@ -103,44 +107,44 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
             <g>
                 <rect x="${PAD}" y="${y}" width="${W - PAD*2}" height="${ROW_H - 8}" rx="14" fill="${bg}" stroke="${borderColor}" stroke-width="${isTop3 ? 2 : 0}"/>
                 <!-- medal -->
-                <text x="${medalX}" y="${y + 44}" font-family="sans-serif" font-size="${i < 3 ? 34 : 24}" font-weight="700" fill="${isTop3 ? borderColor : COLORS.sub}">${escapeXml(medal)}</text>
+                <text x="${medalX}" y="${y + 44}" font-family="sans-serif" font-size="${i < 3 ? 34 : 24}" font-weight="700" fill="${isTop3 ? borderColor : C.sub}">${escapeXml(medal)}</text>
                 <!-- avatar placeholder border (imagem real vem via composite) -->
                 <circle cx="${avatarX + AVATAR_SIZE/2}" cy="${y + (ROW_H-8)/2}" r="${AVATAR_SIZE/2 + 2}" fill="none" stroke="${avatarBorder}" stroke-width="2"/>
                 <!-- nome -->
-                <text x="${nameX}" y="${y + 32}" font-family="sans-serif" font-size="26" font-weight="700" fill="${COLORS.text}">${name}</text>
-                <text x="${nameX}" y="${y + 54}" font-family="sans-serif" font-size="16" fill="${COLORS.sub}">${isTop3 ? '★ TOP '+ (i+1) : 'ativo do mês'}</text>
+                <text x="${nameX}" y="${y + 32}" font-family="sans-serif" font-size="26" font-weight="700" fill="${C.text}">${name}</text>
+                <text x="${nameX}" y="${y + 54}" font-family="sans-serif" font-size="16" fill="${C.sub}">${isTop3 ? '★ TOP '+ (i+1) : 'ativo do mês'}</text>
                 <!-- count -->
-                <text x="${countX}" y="${y + 40}" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="800" fill="${COLORS.text}">${escapeXml(countLabel)}</text>
+                <text x="${countX}" y="${y + 40}" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="800" fill="${C.text}">${escapeXml(countLabel)}</text>
                 <!-- barra -->
-                <rect x="${countX - 110}" y="${y + 48}" width="${barW}" height="6" rx="3" fill="${isTop3 ? borderColor : COLORS.accent}" opacity="0.95"/>
+                <rect x="${countX - 110}" y="${y + 48}" width="${barW}" height="6" rx="3" fill="${isTop3 ? borderColor : C.accent}" opacity="0.95"/>
             </g>`;
         }).join('\n');
 
     const headerSvg = `
-        <rect x="0" y="0" width="${W}" height="${HEADER_H}" rx="0" fill="${COLORS.headerBg}"/>
-        <rect x="0" y="0" width="${W}" height="6" fill="${COLORS.accent}"/>
+        <rect x="0" y="0" width="${W}" height="${HEADER_H}" rx="0" fill="${C.headerBg}"/>
+        <rect x="0" y="0" width="${W}" height="6" fill="${C.accent}"/>
         <!-- ícone troféu -->
-        <text x="${PAD}" y="85" font-family="sans-serif" font-size="56">🏆</text>
-        <text x="110" y="70" font-family="sans-serif" font-size="38" font-weight="900" fill="${COLORS.text}">RANK MENSAL — TOP 10 ATIVOS</text>
-        <text x="110" y="105" font-family="sans-serif" font-size="22" font-weight="600" fill="${COLORS.sub}">${escapeXml(truncate(groupName || 'Grupo', 42))} • ${escapeXml(monthLabel || '')}</text>
-        <text x="110" y="135" font-family="sans-serif" font-size="16" fill="${COLORS.sub}">${escapeXml(botName || 'Bot')} • reseta todo dia 1 • ${escapeXml(monthKey || '')}</text>
+        <text x="${PAD}" y="85" font-family="sans-serif" font-size="56">${escapeXml(rankIcon)}</text>
+        <text x="110" y="70" font-family="sans-serif" font-size="38" font-weight="900" fill="${C.text}">${escapeXml(rankTitle)}</text>
+        <text x="110" y="105" font-family="sans-serif" font-size="22" font-weight="600" fill="${C.sub}">${escapeXml(truncate(groupName || 'Grupo', 42))} • ${escapeXml(monthLabel || '')}</text>
+        <text x="110" y="135" font-family="sans-serif" font-size="16" fill="${C.sub}">${escapeXml(botName || 'Bot')} • reseta todo dia 1 • ${escapeXml(monthKey || '')}</text>
         <!-- badge mês -->
-        <rect x="${W - 240}" y="32" width="208" height="42" rx="21" fill="${COLORS.accent}"/>
+        <rect x="${W - 240}" y="32" width="208" height="42" rx="21" fill="${C.accent}"/>
         <text x="${W - 136}" y="60" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="800" fill="#fff">${escapeXml((monthLabel || '').toUpperCase().slice(0,22))}</text>
         <!-- linha divisória -->
         <rect x="${PAD}" y="${HEADER_H - 12}" width="${W - PAD*2}" height="1" fill="#2a2a3a"/>
     `;
 
     const footerSvg = `
-        <text x="${W/2}" y="${H - 28}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="${COLORS.sub}">Use !rank ou !rankativos para ver este ranking • ${escapeXml(botName || '')}</text>
+        <text x="${W/2}" y="${H - 28}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="${C.sub}">Use !rank ou !rankativos para ver este ranking • ${escapeXml(botName || '')}</text>
     `;
 
     const svg = `
     <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#0f0f14"/>
-                <stop offset="100%" stop-color="#141420"/>
+                <stop offset="0%" stop-color="${C.bg0 || '#0f0f14'}"/>
+                <stop offset="100%" stop-color="${C.bg1 || '#141420'}"/>
             </linearGradient>
         </defs>
         <rect width="${W}" height="${H}" rx="24" fill="url(#bg)"/>

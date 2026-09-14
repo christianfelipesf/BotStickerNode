@@ -72,9 +72,12 @@ module.exports = {
     category: 'geral',
     description: 'Verifica latência real com o Google',
     async execute(sock, m, { from, config, utils, lastBotResponse, GLOBAL_COOLDOWN, startTime }) {
-        const { react, getBotName, formatUptime, readStats, getVersion } = utils;
+        const { react, getBotName, getGroupData, getThemeForJid, formatUptime, readStats, getVersion } = utils;
+        const { getTheme, themeBullets } = require('../services/themes');
+        const themeId = (typeof getThemeForJid === 'function' ? getThemeForJid(from) : ((getGroupData(from).theme) || 'default'));
+        const theme = getTheme(themeId);
 
-        let currentBotResponse = await react(sock, m, '🏓', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await react(sock, m, theme.react || '🏓', lastBotResponse, GLOBAL_COOLDOWN);
 
         const t0 = process.hrtime.bigint();
         const google = await measureGooglePing();
@@ -87,26 +90,27 @@ module.exports = {
         const plataforma = process.platform === 'win32' ? 'Windows' : 'Linux';
 
         const googleLinha = google.ok
-            ? `│ 🌐 *Google:* ${google.ms}ms ${classifyPing(google.ms)}`
-            : `│ 🌐 *Google:* falha (${google.error || 'sem resposta'}) ❌`;
+            ? `${theme.bullet || '│'} 🌐 *Google:* ${google.ms}ms ${classifyPing(google.ms)}`
+            : `${theme.bullet || '│'} 🌐 *Google:* falha (${google.error || 'sem resposta'}) ${theme.err || '❌'}`;
 
         const statusLinha = google.ok
-            ? classifyPing(google.ms).includes('❌') ? '│ 📡 *Status:* Instável ⚠️' : '│ 📡 *Status:* Online ✅'
-            : '│ 📡 *Status:* Offline ❌';
+            ? classifyPing(google.ms).includes('❌') ? `${theme.bullet || '│'} 📡 *Status:* Instável ⚠️` : `${theme.bullet || '│'} 📡 *Status:* Online ${theme.ok || '✅'}`
+            : `${theme.bullet || '│'} 📡 *Status:* Offline ${theme.err || '❌'}`;
 
-        const pingText = `*${botName} — Ping* 🏓\n_teste de conexão_\n\n` +
+        let pingText = `*${botName} — Ping* ${theme.header}\n_teste de conexão_\n\n` +
             `╭─── *LATÊNCIA* ───\n` +
-            `│ ⚡ *Resposta:* ${respostaMs}ms\n` +
+            `${theme.bullet || '│'} ⚡ *Resposta:* ${respostaMs}ms\n` +
             `${googleLinha}\n` +
             `${statusLinha}\n` +
             `╰───────────────\n\n` +
             `╭─── *SISTEMA* ───\n` +
-            `│ ⏱️ *Uptime:* ${uptime}\n` +
-            `│ 🖥️ *Plataforma:* ${plataforma}\n` +
-            `│ 🆔 *Versão:* ${version}\n` +
-            `│ ⌨️ *Comandos:* ${stats.totalCommands}\n` +
-            `│ 🔄 *Reinícios:* ${stats.restarts}\n` +
+            `${theme.bullet || '│'} ⏱️ *Uptime:* ${uptime}\n` +
+            `${theme.bullet || '│'} 🖥️ *Plataforma:* ${plataforma}\n` +
+            `${theme.bullet || '│'} 🆔 *Versão:* ${version}\n` +
+            `${theme.bullet || '│'} ⌨️ *Comandos:* ${stats.totalCommands}\n` +
+            `${theme.bullet || '│'} 🔄 *Reinícios:* ${stats.restarts}\n` +
             `╰───────────────`;
+        pingText = themeBullets(pingText, theme);
 
         // !status envia apenas texto, sem imagem
         await sock.sendMessage(from, { text: pingText }, { quoted: m });

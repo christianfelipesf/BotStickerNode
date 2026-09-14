@@ -1,111 +1,166 @@
-const axios = require('axios');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
 
-const ENDPOINTS = {
-    beijar: [
-        'https://api.waifu.pics/sfw/kiss',
-        'https://nekos.life/api/v2/img/kiss'
-    ],
-    abraco: [
-        'https://api.waifu.pics/sfw/hug',
-        'https://nekos.life/api/v2/img/hug'
-    ],
-    cafune: [
-        'https://api.waifu.pics/sfw/pat',
-        'https://nekos.life/api/v2/img/pat'
-    ],
-    tapa: [
-        'https://api.waifu.pics/sfw/slap',
-        'https://nekos.life/api/v2/img/slap'
-    ],
-    soco: [
-        'https://api.waifu.pics/sfw/punch',
-        'https://api.waifu.im/search?included_tags=punch'
-    ],
-    morder: [
-        'https://api.waifu.pics/sfw/bite',
-        'https://api.waifu.im/search?included_tags=bite'
-    ],
-    lamber: [
-        'https://api.waifu.pics/sfw/lick',
-        'https://api.waifu.im/search?included_tags=lick'
-    ],
-    chute: [
-        'https://api.waifu.pics/sfw/kick',
-        'https://api.waifu.im/search?included_tags=kick'
-    ],
-    matar: [
-        'https://api.waifu.pics/sfw/kill',
-        'https://api.waifu.im/search?included_tags=kill'
-    ],
-    cutucar: [
-        'https://api.waifu.pics/sfw/poke',
-        'https://nekos.life/api/v2/img/poke'
-    ],
-    cuddle: [
-        'https://api.waifu.pics/sfw/cuddle',
-        'https://api.waifu.im/search?included_tags=cuddle'
-    ],
-    chorar: [
-        'https://api.waifu.pics/sfw/cry',
-        'https://api.waifu.im/search?included_tags=cry'
-    ],
-    highfive: [
-        'https://api.waifu.pics/sfw/highfive',
-        'https://api.waifu.im/search?included_tags=highfive'
-    ]
-};
+// Pasta base: src/media/interacoes/<tipo>/arquivo.gif|mp4|jpg|png|webp
+// Ex: src/media/interacoes/beijar/kiss.gif
+const BASE_DIR = path.join(__dirname, '..', 'media', 'interacoes');
 
-const TIMEOUT_MS = 8000;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_EXTS = ['.gif', '.mp4', '.jpg', '.jpeg', '.png', '.webp'];
 
-function extractUrl(data) {
-    if (!data) return null;
-    if (typeof data === 'string') return data;
-    if (data.url) return data.url;
-    if (data.image) return data.image;
-    if (data.link) return data.link;
-    // waifu.im retorna { images: [{ url, image_id }] }
-    if (Array.isArray(data.images) && data.images[0]?.url) return data.images[0].url;
-    if (data.images && data.images[0]?.url) return data.images[0].url;
-    return null;
+// Tipos válidos = pastas criadas (mantém compat com comandos antigos)
+const INTERACTION_TYPES = [
+    'beijar',
+    'abraco',
+    'cafune',
+    'tapa',
+    'soco',
+    'morder',
+    'lamber',
+    'chute',
+    'matar',
+    'cutucar',
+    'cuddle',
+    'chorar',
+    'highfive'
+];
+
+function getInteractionDir(tipo) {
+    return path.join(BASE_DIR, String(tipo || '').toLowerCase());
 }
 
-async function fetchImageBuffer(url) {
-    const res = await axios.get(url, {
-        responseType: 'arraybuffer',
-        timeout: TIMEOUT_MS,
-        maxContentLength: MAX_IMAGE_BYTES,
-        headers: { 'User-Agent': 'BotStickerNode/1.0' }
-    });
-    const buf = Buffer.from(res.data);
-    if (!buf || buf.length < 256) throw new Error('Imagem vazia');
-    if (buf.length > MAX_IMAGE_BYTES) throw new Error('Imagem muito grande');
-    const ct = (res.headers['content-type'] || '').toLowerCase();
-    if (ct && !ct.startsWith('image/')) {
-        // alguns endpoints retornam image mesmo sem content-type correto
-        if (buf.slice(0, 2).toString('hex') !== 'ffd8' && buf.slice(0, 4).toString() !== '8950' && buf.slice(1, 4).toString() !== 'PNG' && buf.slice(0, 4).toString() !== 'RIFF') {
-            // não é imagem conhecida, mas tenta mesmo assim
-        }
+function listLocalInteractionFiles(tipo) {
+    const dir = getInteractionDir(tipo);
+    let entries = [];
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+        return [];
     }
-    return buf;
+    return entries
+        .filter((e) => e.isFile())
+        .map((e) => e.name)
+        .filter((n) => {
+            if (n.startsWith('.')) return false;
+            if (n.toLowerCase() === 'leia-me.txt' || n.toLowerCase() === 'readme.txt') return false;
+            return SUPPORTED_EXTS.includes(path.extname(n).toLowerCase());
+        })
+        .sort((a, b) => a.localeCompare(b))
+        .map((n) => path.join(dir, n));
 }
 
+function pickRandom(arr) {
+    if (!arr || !arr.length) return null;
+    if (arr.length === 1) return arr[0];
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function mimeForExt(ext) {
+    switch (ext.toLowerCase()) {
+        case '.gif': return 'image/gif';
+        case '.mp4': return 'video/mp4';
+        case '.png': return 'image/png';
+        case '.webp': return 'image/webp';
+        case '.jpg':
+        case '.jpeg':
+        default: return 'image/jpeg';
+    }
+}
+
+// Lê um arquivo aleatório da pasta local (sem web).
+// Retorna { buffer, mimetype, ext, filePath } ou null se a pasta estiver vazia.
+async function getInteractionMedia(tipo) {
+    const files = listLocalInteractionFiles(tipo);
+    const picked = pickRandom(files);
+    if (!picked) return null;
+    const ext = path.extname(picked).toLowerCase();
+    const buffer = fs.readFileSync(picked);
+    if (!buffer || buffer.length < 16) return null;
+    return { buffer, mimetype: mimeForExt(ext), ext, filePath: picked };
+}
+
+// WhatsApp só anima GIF quando enviado como vídeo MP4 com gifPlayback=true.
+// GIF cru enviado como `image` é rejeitado no upload — por isso convertemos aqui.
+async function convertGifToMp4(buffer) {
+    if (!buffer || buffer.length === 0) return null;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inPath = path.join(os.tmpdir(), `inter_${id}.gif`);
+    const outPath = path.join(os.tmpdir(), `inter_${id}.mp4`);
+    try {
+        fs.writeFileSync(inPath, buffer);
+        await new Promise((resolve, reject) => {
+            let killed = false;
+            let ff = null;
+            const to = setTimeout(() => { killed = true; try { ff && ff.kill('SIGKILL'); } catch (_) {} reject(new Error('ffmpeg gif->mp4 timeout 30s')); }, 30000);
+            // Preserva proporção (sem crop): interações não devem ser cortadas em quadrado.
+            ff = spawn('ffmpeg', [
+                '-y',
+                '-i', inPath,
+                '-vf', 'scale=480:-2:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                '-r', '15',
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-crf', '23',
+                '-preset', 'veryfast',
+                '-movflags', '+faststart',
+                '-an',
+                '-t', '6',
+                outPath
+            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ff.on('error', (err) => { clearTimeout(to); reject(err); });
+            ff.on('close', (code) => { clearTimeout(to); if (killed) return; code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)); });
+        });
+        const mp4 = fs.readFileSync(outPath);
+        return mp4 && mp4.length > 512 ? mp4 : null;
+    } catch (e) {
+        console.warn(`⚠️ [interaction] conversão GIF→MP4 falhou: ${e.message}`);
+        return null;
+    } finally {
+        try { fs.unlinkSync(inPath); } catch (_) {}
+        try { fs.unlinkSync(outPath); } catch (_) {}
+    }
+}
+
+// Retorna mídia pronta para envio: prefere MP4 (video gifPlayback).
+// { buffer, ext: '.mp4'|'.gif'|..., mimetype, filePath }
+async function getInteractionVideoMedia(tipo) {
+    const media = await getInteractionMedia(tipo);
+    if (!media) return null;
+    if (media.ext === '.mp4') return media;
+    if (media.ext === '.gif') {
+        const mp4 = await convertGifToMp4(media.buffer);
+        if (mp4) return { buffer: mp4, mimetype: 'video/mp4', ext: '.mp4', filePath: media.filePath };
+        // sem ffmpeg: devolve o gif original para fallback como documento
+        return media;
+    }
+    return media;
+}
+// Compat: código antigo esperava um Buffer direto (só disco, sem web).
 async function fetchInteractionImage(tipo) {
-    const urls = ENDPOINTS[tipo] || [];
-    let lastErr = null;
-    for (const api of urls) {
-        try {
-            const { data } = await axios.get(api, { timeout: TIMEOUT_MS, headers: { 'User-Agent': 'BotStickerNode/1.0' } });
-            const imageUrl = extractUrl(data);
-            if (!imageUrl) throw new Error('API sem url');
-            const buf = await fetchImageBuffer(imageUrl);
-            return buf;
-        } catch (e) {
-            lastErr = e;
-            console.warn(`⚠️ [interaction:${tipo}] falhou ${api}: ${e.message}`);
-        }
+    const media = await getInteractionMedia(tipo);
+    if (!media) {
+        throw new Error(
+            `Sem mídia local para "${tipo}". Coloque um .gif/.mp4 em ${getInteractionDir(tipo)}`
+        );
     }
-    throw lastErr || new Error('Nenhuma API disponível para ' + tipo);
+    return media.buffer;
 }
 
-module.exports = { ENDPOINTS, fetchInteractionImage, fetchImageBuffer };
+// Compat: export antigo ENDPOINTS não é mais usado (sem web).
+// Mantido vazio para não quebrar imports.
+const ENDPOINTS = {};
+
+module.exports = {
+    BASE_DIR,
+    INTERACTION_TYPES,
+    SUPPORTED_EXTS,
+    getInteractionDir,
+    listLocalInteractionFiles,
+    getInteractionMedia,
+    getInteractionVideoMedia,
+    convertGifToMp4,
+    fetchInteractionImage,
+    fetchImageBuffer: async () => { throw new Error('fetchImageBuffer removido: interações agora são locais (sem web).'); },
+    ENDPOINTS
+};

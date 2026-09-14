@@ -18,6 +18,7 @@ module.exports = {
 
         let currentBotResponse = await react(sock, m, '🚪', lastBotResponse, GLOBAL_COOLDOWN);
 
+        try { subSessions.cancelQueuedLogin(ownerJid); } catch (_) {}
         const ok = await subSessions.logout(ownerJid);
         if (ok) {
             await sock.sendMessage(from, {

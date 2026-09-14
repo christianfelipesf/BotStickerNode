@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { generateRankImage } = require('../services/rankImage');
+const { getTheme, themeBullets } = require('../services/themes');
 
 module.exports = {
     name: 'rank',
@@ -7,20 +8,23 @@ module.exports = {
     category: 'geral',
     description: 'Rank mensal dos 10 mais ativos — reseta todo dia 1',
     async execute(sock, m, { from, isGroup, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, getBotName, getMonthlyRank, isActiveGroup, isPartialActive, groupMetadataCached, _getCurrentMonthKey, _getMonthLabelBr } = utils;
+        const { react, getBotName, getMonthlyRank, isActiveGroup, isPartialActive, groupMetadataCached, _getCurrentMonthKey, _getMonthLabelBr, getGroupData, getThemeForJid } = utils;
 
-        let currentBotResponse = await react(sock, m, '🏆', lastBotResponse, GLOBAL_COOLDOWN);
+        const themeId = (typeof getThemeForJid === 'function' ? getThemeForJid(from) : ((getGroupData(from).theme) || 'default'));
+        const theme = getTheme(themeId);
+
+        let currentBotResponse = await react(sock, m, theme.rankReact || '🏆', lastBotResponse, GLOBAL_COOLDOWN);
 
         if (!isGroup) {
-            await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
+            await sock.sendMessage(from, { text: `${theme.err || '❌'} Este comando só funciona em grupos.` }, { quoted: m });
             return currentBotResponse;
         }
 
         const isActive = isActiveGroup(from);
         const isPartial = isPartialActive(from);
         if (!isActive && !isPartial) {
-            await sock.sendMessage(from, { text: `❌ Este grupo não está ativo.\nUse *${config.prefix}ativar* (dono) ou *${config.prefix}ativarp* para ativar.` }, { quoted: m });
-            await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            await sock.sendMessage(from, { text: `${theme.err || '❌'} Este grupo não está ativo.\nUse *${config.prefix}ativar* (dono) ou *${config.prefix}ativarp* para ativar.` }, { quoted: m });
+            await react(sock, m, theme.err || '❌', currentBotResponse, GLOBAL_COOLDOWN);
             return currentBotResponse;
         }
 
@@ -120,10 +124,10 @@ module.exports = {
         }
 
         // Texto fallback curto para caption
-        let caption = `*${botName} — Rank Mensal* 🏆\n_top 10 mais ativos_\n\n`;
-        caption += `📅 *Mês:* ${monthLabel} (${monthKey})\n`;
+        let caption = `*${botName} — ${theme.id === 'default' ? 'Rank Mensal' : theme.menuTitle.replace(/^MENU\s+/, 'RANK ')}* ${theme.rankIcon || '🏆'}\n_top 10 mais ativos_\n\n`;
+        caption += `${theme.bullet || '📅'} *Mês:* ${monthLabel} (${monthKey})\n`;
         caption += `👥 *Grupo:* ${groupName}\n`;
-        caption += `${isPartial ? '🟡 *Modo:* Parcial (subativo)\n' : '🟢 *Modo:* Ativo\n'}`;
+        caption += `${isPartial ? '🟡 *Modo:* Parcial (subativo)\n' : (theme.id === 'hell' ? '🔥 *Modo:* Fornalha ativa\n' : '🟢 *Modo:* Ativo\n')}`;
         caption += `🔄 *Reseta:* todo dia 1\n`;
         caption += `────────────────\n`;
         if (!ranking || ranking.length === 0) {
@@ -146,10 +150,11 @@ module.exports = {
                 botName,
                 monthLabel,
                 ranking: rankingWithAvatar,
-                monthKey
+                monthKey,
+                theme
             });
             await sock.sendMessage(from, { image: imgBuffer, caption }, { quoted: m });
-            currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
+            currentBotResponse = await react(sock, m, theme.ok || '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (e) {
             console.error('❌ [rank] falha ao gerar imagem:', e.message);
             // Fallback apenas texto

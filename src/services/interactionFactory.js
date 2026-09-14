@@ -1,4 +1,18 @@
-const { fetchInteractionImage } = require('./interaction');
+const { getInteractionVideoMedia, getInteractionDir } = require('./interaction');
+
+// Extrai contextInfo de qualquer tipo de mensagem (texto, imagem, vídeo, etc.)
+function getContextInfo(m) {
+    const msg = m?.message || {};
+    return (
+        msg.extendedTextMessage?.contextInfo ||
+        msg.imageMessage?.contextInfo ||
+        msg.videoMessage?.contextInfo ||
+        msg.stickerMessage?.contextInfo ||
+        msg.documentMessage?.contextInfo ||
+        msg.audioMessage?.contextInfo ||
+        null
+    );
+}
 
 function createInteractionCommand({ name, aliases, category = 'interação', description, emoji, captionVerb, endpointKey, selfMessage }) {
     const cmdName = name;
@@ -8,11 +22,12 @@ function createInteractionCommand({ name, aliases, category = 'interação', des
         aliases,
         category,
         description,
-        async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+        async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN, log }) {
             const { react } = utils;
+            const say = (...a) => { try { if (typeof log === 'function') log(...a); } catch (_) {} };
             let current = await react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN);
             try {
-                const ctx = m.message.extendedTextMessage?.contextInfo;
+                const ctx = getContextInfo(m);
                 const mentionedJid = ctx?.mentionedJid?.[0] || null;
                 const quotedParticipant = ctx?.participant || null;
                 let targetJid = mentionedJid || quotedParticipant || null;
@@ -25,8 +40,14 @@ function createInteractionCommand({ name, aliases, category = 'interação', des
                     await sock.sendMessage(from, { text: msg }, { quoted: m });
                     return current;
                 }
-                let buffer = null;
-                try { buffer = await fetchInteractionImage(key); } catch (e) { console.error(`❌ [${cmdName}] fetch falhou:`, e.message); }
+                let media = null;
+                try { media = await getInteractionVideoMedia(key); } catch (e) { console.error(`❌ [${cmdName}] mídia local falhou:`, e.message); say('mídia falhou', e.message); }
+                if (!media) {
+                    console.warn(`⚠️ [${cmdName}] pasta vazia: coloque um .gif/.mp4 em ${getInteractionDir(key)}`);
+                    say('pasta vazia', getInteractionDir(key));
+                } else {
+                    say('mídia', `${media.ext} ${Math.round(media.buffer.length / 1024)}KB`);
+                }
 
                 const isLid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');
                 const isGenericName = (n) => !n || ['usuario', 'usuário'].includes(String(n).trim().toLowerCase());
@@ -66,8 +87,37 @@ function createInteractionCommand({ name, aliases, category = 'interação', des
 
                 const caption = `${emoji} ${senderDisp.text} ${captionVerb} ${targetDisp.text}`;
                 const mentions = [senderDisp.jid, targetDisp.jid].filter(Boolean);
-                if (buffer) await sock.sendMessage(from, { image: buffer, caption, mentions }, { quoted: m });
-                else await sock.sendMessage(from, { text: caption, mentions }, { quoted: m });
+                if (media) {
+                    // 1) MP4 (ou gif convertido): vídeo com gifPlayback — único formato animado que o WhatsApp aceita
+                    if (media.ext === '.mp4') {
+                        try {
+                            await sock.sendMessage(from, { video: media.buffer, mimetype: 'video/mp4', gifPlayback: true, caption, mentions }, { quoted: m });
+                            return current;
+                        } catch (e) {
+                            console.error(`❌ [${cmdName}] envio video falhou, tentando documento:`, e.message);
+                            say('video falhou', e.message);
+                        }
+                    }
+                    // 2) GIF original (sem ffmpeg) ou imagem: envia como documento (entrega garantida)
+                    if (media.ext === '.gif') {
+                        try {
+                            await sock.sendMessage(from, { document: media.buffer, mimetype: 'image/gif', fileName: `${key}.gif`, caption, mentions }, { quoted: m });
+                            return current;
+                        } catch (e) {
+                            console.error(`❌ [${cmdName}] envio documento falhou, tentando imagem:`, e.message);
+                            say('documento falhou', e.message);
+                        }
+                    }
+                    // 3) Imagem estática
+                    try {
+                        await sock.sendMessage(from, { image: media.buffer, caption, mentions }, { quoted: m });
+                        return current;
+                    } catch (e) {
+                        console.error(`❌ [${cmdName}] envio imagem falhou, enviando só texto:`, e.message);
+                        say('imagem falhou', e.message);
+                    }
+                }
+                await sock.sendMessage(from, { text: caption, mentions }, { quoted: m });
                 return current;
             } catch (e) {
                 console.error(`❌ [${cmdName}] erro:`, e.message);

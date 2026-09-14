@@ -34,12 +34,13 @@ async function send(chatId, text, opts = {}) {
     const api = _getApi();
     if (!api) return { ok: false, error: 'not_configured' };
     try {
-        const res = await api.post('/sendMessage', {
+        const payload = {
             chat_id: chatId || _getAllowedChatId(),
             text: String(text).slice(0, 4000),
-            parse_mode: opts.parseMode || 'Markdown',
             ...opts.extra
-        });
+        };
+        if (opts.parseMode !== null) payload.parse_mode = opts.parseMode || 'Markdown';
+        const res = await api.post('/sendMessage', payload);
         return { ok: !!res.data?.ok };
     } catch (e) {
         console.warn(`⚠️ [telegramBot] send falhou: ${e.response?.data?.description || e.message}`);
@@ -53,18 +54,75 @@ function isAuthorized(chatId) {
     return String(chatId) === String(allowed);
 }
 
+async function downloadTelegramFile(fileId) {
+    const api = _getApi();
+    if (!api) return { ok: false, error: 'not_configured' };
+    try {
+        const info = await api.get('/getFile', { params: { file_id: fileId } });
+        const filePath = info.data?.result?.file_path;
+        if (!filePath) return { ok: false, error: 'file_path vazio' };
+        const url = `https://api.telegram.org/file/bot${_getToken()}/${filePath}`;
+        const resp = await axios.get(url, {
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            maxContentLength: 12 * 1024 * 1024
+        });
+        if (!resp.data) return { ok: false, error: 'download vazio' };
+        const buf = Buffer.from(resp.data);
+        if (buf.length < 100) return { ok: false, error: 'arquivo muito pequeno' };
+        return { ok: true, buffer: buf };
+    } catch (e) {
+        return { ok: false, error: e.response?.data?.description || e.message };
+    }
+}
+
+async function fanOutBroadcast(chatId, makePayload, label) {
+    const utils = require('../database/utils');
+    const groups = utils.listActiveGroups();
+    if (!groups.length) { await send(chatId, `⚠️ Nenhum grupo ativo`); return; }
+    const sock = global.__baileysSock;
+    if (!sock) { await send(chatId, `❌ Baileys desconectado`); return; }
+    await send(chatId, `📢 Broadcast ${label || ''}para ${groups.length} grupos...`);
+    let sent = 0, failed = 0;
+    for (const jid of groups) {
+        try { await sock.sendMessage(jid, makePayload(jid)); sent++; } catch (_) { failed++; }
+        await new Promise(r => setTimeout(r, 1500));
+    }
+    await send(chatId, `✅ Broadcast ok: ${sent} enviados, ${failed} falhas`);
+}
+
 async function handleUpdate(update) {
     const msg = update.message || update.edited_message;
-    if (!msg || !msg.text) return;
+    if (!msg) return;
     const chatId = msg.chat?.id;
-    const text = msg.text.trim();
     if (!chatId) return;
 
     if (!isAuthorized(chatId)) {
+        const preview = (msg.text || msg.caption || '').trim();
         try { await send(chatId, `⛔ Não autorizado. Seu chatId: \`${chatId}\``, { parseMode: 'Markdown' }); } catch (_) {}
-        console.warn(`⚠️ [telegramBot] acesso negado chat ${chatId}: ${text.slice(0,80)}`);
+        console.warn(`⚠️ [telegramBot] acesso negado chat ${chatId}: ${preview.slice(0,80)}`);
         return;
     }
+
+    // Foto com legenda /broadcast => broadcast de imagem + texto para os grupos
+    const photo = Array.isArray(msg.photo) && msg.photo.length ? msg.photo[msg.photo.length - 1] : null;
+    if (photo) {
+        const caption = (msg.caption || '').trim();
+        if (!caption.toLowerCase().startsWith('/broadcast')) {
+            await send(chatId, `🖼️ Para enviar imagem aos grupos, envie a foto com a legenda \`/broadcast <texto>\``);
+            return;
+        }
+        const spaceIdx = caption.indexOf(' ');
+        const legenda = spaceIdx === -1 ? '' : caption.slice(spaceIdx + 1).trim();
+        await send(chatId, `⬇️ Baixando imagem...`);
+        const dl = await downloadTelegramFile(photo.file_id);
+        if (!dl.ok) { await send(chatId, `❌ Falha ao baixar imagem: ${dl.error}`, { parseMode: null }); return; }
+        await fanOutBroadcast(chatId, () => (legenda ? { image: dl.buffer, caption: legenda } : { image: dl.buffer }), 'com imagem ');
+        return;
+    }
+
+    if (!msg.text) return;
+    const text = msg.text.trim();
 
     const lower = text.toLowerCase();
     const args = text.split(/\s+/).slice(1);
@@ -81,6 +139,7 @@ async function handleUpdate(update) {
             `/ativar <jid> — ativa grupo (ex: 120363...@g.us)`,
             `/desativar <jid> — desativa grupo`,
             `/broadcast <texto> — envia para todos os grupos ativos`,
+            `foto com legenda /broadcast <texto> — broadcast com imagem`,
             `/logs — últimos logs do terminal`,
             `/help — esta ajuda`
         ].join('\n');
@@ -163,18 +222,7 @@ async function handleUpdate(update) {
         const broadcastText = text.slice(text.indexOf(' ') + 1).trim();
         if (!broadcastText) { await send(chatId, `❌ Uso: \`/broadcast <texto>\``); return; }
         try {
-            const utils = require('../database/utils');
-            const groups = utils.listActiveGroups();
-            if (!groups.length) { await send(chatId, `⚠️ Nenhum grupo ativo`); return; }
-            await send(chatId, `📢 Broadcast para ${groups.length} grupos...`);
-            const sock = global.__baileysSock;
-            if (!sock) { await send(chatId, `❌ Baileys desconectado`); return; }
-            let sent = 0, failed = 0;
-            for (const jid of groups) {
-                try { await sock.sendMessage(jid, { text: broadcastText }); sent++; } catch (_) { failed++; }
-                await new Promise(r => setTimeout(r, 1500));
-            }
-            await send(chatId, `✅ Broadcast ok: ${sent} enviados, ${failed} falhas`);
+            await fanOutBroadcast(chatId, () => ({ text: broadcastText }));
         } catch (e) { await send(chatId, `❌ Erro broadcast: ${e.message}`); }
         return;
     }

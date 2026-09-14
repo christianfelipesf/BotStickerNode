@@ -140,8 +140,8 @@ function migrateJsonToSqlite() {
 
     const cfgInsert = db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)');
     const statsInsert = db.prepare('INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)');
-    const gsUpsert = db.prepare(`INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+    const gsUpsert = db.prepare(`INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, theme)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(jid) DO UPDATE SET
             muted=excluded.muted, warnings=excluded.warnings,
             antilink=excluded.antilink, activity=excluded.activity,
@@ -170,7 +170,8 @@ function migrateJsonToSqlite() {
                 existing?.antilink || 0,
                 existing?.activity || '{}',
                 g.botName || null,
-                g.menuImage || null);
+                g.menuImage || null,
+                null);
         }
     });
     tx();

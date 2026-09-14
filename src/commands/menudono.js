@@ -34,6 +34,9 @@ module.exports = {
             `╰───────────────\n\n` +
             `╭─── *SUB-SESSÕES* ───\n` +
             `│ 🔐 *${p}login* — parear sub-sessão (QR/código)\n` +
+            `│ ➕ *${p}addlogin* <numero> — autoriza privado p/ !login\n` +
+            `│ ➖ *${p}removerlogin* <numero|all> — remove autorização\n` +
+            `│ 📋 *${p}listalogins* — lista autorizados (privado)\n` +
             `│ 📃 *${p}logins* — lista sub-sessões ativas\n` +
             `│ 🚪 *${p}logoff* — encerra sua sub-sessão\n` +
             `│ 🧹 *${p}subclean* — limpa sub-sessão do disco\n` +
