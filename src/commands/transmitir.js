@@ -8,7 +8,7 @@ module.exports = {
     aliases: ['broadcast', 'transmitirgrupos'],
     category: 'admin',
     description: 'Transmite mensagem/mídia para todos os grupos ativos',
-    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN, cancelToken }) {
         const { react, listActiveGroups, getMediaMessage, getMessageText } = utils;
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
@@ -63,6 +63,10 @@ module.exports = {
         await sock.sendMessage(from, { text: `📡 Transmitindo para ${targets.length} grupo(s)...` }, { quoted: m });
 
         for (const jid of targets) {
+            if (cancelToken?.cancelled) {
+                await sock.sendMessage(from, { text: `⏹️ Transmissão interrompida por timeout após ${success + fail}/${targets.length} grupos (✓${success} ✗${fail}).` }, { quoted: m }).catch(() => {});
+                break;
+            }
             try {
                 const payload = mediaBuf
                     ? { [mediaType]: mediaBuf, mimetype: mimeType, caption: text || undefined }

@@ -2,6 +2,7 @@
  * Watchdog anti-zumbi — detecta bot "conectado" mas sem receber mensagens
  * ou com websocket half-open, e força reconexão + alerta Telegram.
  */
+const fs = require('fs');
 const { queueSize } = require('./queue');
 
 let _sockGetter = null;
@@ -29,6 +30,17 @@ const DEFAULTS = {
 };
 
 function touchInbound() {
+    lastUpsertAt = Date.now();
+    if (wasZombie) {
+        wasZombie = false;
+        zombieCount = 0;
+        if (_onHealthy) try { _onHealthy({ idleMs: 0 }); } catch (_) {}
+    }
+}
+
+// Sinal de vida em ENVIOS (transmitir/divulgar de madrugada enviam muito e
+// recebem pouco): sem isso, noite ativa de envio conta como "zumbi".
+function touchOutbound() {
     lastUpsertAt = Date.now();
     if (wasZombie) {
         wasZombie = false;
@@ -187,8 +199,17 @@ async function _check() {
         }
     } catch (e) { console.warn('[watchdog] recovery falhou:', e.message); }
 
-    // Se persistir por N ciclos, força exit para Docker reiniciar
+    // Se persistir por N ciclos, força exit para Docker reiniciar.
+    // MAS só em container: no Windows (sem restart automático) exit(1)
+    // vira outage permanente. Sem /.dockerenv, só alerta + recovery.
     if (zombieCount >= cfg.maxZombieBeforeExit) {
+        let inDocker = false;
+        try { inDocker = fs.existsSync('/.dockerenv') || !!process.env.DOCKER_CONTAINER; } catch (_) {}
+        if (!inDocker && process.env.WATCHDOG_EXIT !== '1') {
+            console.error(`💀 [watchdog] zumbi persistente (${zombieCount}/${cfg.maxZombieBeforeExit}) — SEM auto-exit fora de container; mantendo recovery por ws.close`);
+            zombieCount = Math.max(0, cfg.maxZombieBeforeExit - 1); // evita spam, mantém pressão
+            return;
+        }
         console.error(`💀 [watchdog] zumbi persistente (${zombieCount}/${cfg.maxZombieBeforeExit}) — forçando process.exit(1) para Docker reiniciar`);
         try {
             const { flushNow } = require('../database/utils');
@@ -202,6 +223,7 @@ module.exports = {
     start,
     stop,
     touchInbound,
+    touchOutbound,
     touchConnection,
     getState,
     // para testes

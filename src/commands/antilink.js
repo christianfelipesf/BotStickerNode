@@ -3,7 +3,7 @@ module.exports = {
     description: 'Ativa ou desativa o antilink de grupos de WhatsApp.',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        if (!isGroup) return;
+        if (!isGroup) return await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
 
         const admins = await utils.getAdmins(sock, from);
         const isSenderAdmin = utils.isUserAdmin(sender, admins);

@@ -1077,17 +1077,22 @@ function _scheduleActivityFlush() {
 
 function updateMemberActivity(jid, sender, senderName) {
     if (!jid || !sender) return;
+    // Canônico: "5511..:12@s.whatsapp.net" e "5511..@s.whatsapp.net" viram
+    // a mesma chave (antes o mesmo usuário gerava 2 linhas no rank).
+    // LID→PN é resolvido no message.js (participantPn) antes de chegar aqui.
+    let canon = sender;
+    try { canon = normalizeJid(sender); } catch (_) {}
     if (!_activityBuffer.has(jid)) _activityBuffer.set(jid, new Map());
     const members = _activityBuffer.get(jid);
     const cleanName = String(senderName || 'Usuário').trim().slice(0, 30) || 'Usuário';
     const isGeneric = ['usuario', 'usuário'].includes(cleanName.toLowerCase());
-    if (!members.has(sender)) {
-        members.set(sender, { name: cleanName, count: 0 });
+    if (!members.has(canon)) {
+        members.set(canon, { name: cleanName, count: 0 });
     } else if (!isGeneric) {
         // mantém o nome sempre atualizado (apelidos novos refletem no rank)
-        members.get(sender).name = cleanName;
+        members.get(canon).name = cleanName;
     }
-    members.get(sender).count += 1;
+    members.get(canon).count += 1;
     _scheduleActivityFlush();
 }
 
@@ -1157,14 +1162,31 @@ function getMonthlyRank(jid, limit = 10) {
         const merged = { ...groupActivity };
         if (buf) {
             for (const [sender, info] of buf.entries()) {
-                if (!merged[sender]) merged[sender] = { name: info.name, count: 0 };
-                merged[sender] = { name: merged[sender].name || info.name, count: (Number(merged[sender].count) || 0) + (Number(info.count) || 0) };
+                let key = sender;
+                try { key = normalizeJid(sender); } catch (_) {}
+                if (!merged[key]) merged[key] = { name: info.name, count: 0 };
+                merged[key] = { name: merged[key].name || info.name, count: (Number(merged[key].count) || 0) + (Number(info.count) || 0) };
             }
         }
-        const list = Object.entries(merged).map(([senderJid, v]) => ({
-            jid: senderJid,
-            name: String(v.name || 'Usuário').trim().slice(0, 30) || 'Usuário',
-            count: Number(v.count) || 0
+        // Colapsa variantes LID/PN do mesmo número (dígitos iguais = mesma
+        // pessoa) para o rank não mostrar 2 linhas do mesmo usuário.
+        const byDigits = new Map();
+        for (const [senderJid, v] of Object.entries(merged)) {
+            const digits = String(senderJid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+            const dkey = digits.length >= 8 ? `d:${digits.slice(-11)}` : `j:${senderJid}`;
+            const cur = byDigits.get(dkey);
+            const cnt = Number(v.count) || 0;
+            const nm = String(v.name || '').trim();
+            if (!cur) byDigits.set(dkey, { jid: senderJid, name: nm || 'Usuário', count: cnt });
+            else {
+                cur.count += cnt;
+                if (nm && /^(usuário|usuario)?$/i.test(cur.name) && !/^(usuário|usuario)?$/i.test(nm)) cur.name = nm;
+            }
+        }
+        const list = Array.from(byDigits.values()).map(x => ({
+            jid: x.jid,
+            name: String(x.name || 'Usuário').trim().slice(0, 30) || 'Usuário',
+            count: Number(x.count) || 0
         })).filter(x => x.count > 0);
         list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'));
         const lim = Math.max(1, Math.min(50, Number(limit) || 10));
@@ -1624,7 +1646,11 @@ async function sendMessageSafe(sock, jid, payload, options = {}) {
     const backoffs = _buildBackoffs(baseDelayMs);
     let attempt = 0;
     while (true) {
-        try { return await sock.sendMessage(jid, payload, options.sendOptions || {}); } catch (err) {
+        try {
+            const r = await sock.sendMessage(jid, payload, options.sendOptions || {});
+            try { require('../services/watchdog').touchOutbound(); } catch (_) {}
+            return r;
+        } catch (err) {
             if (_isRateLimitError(err) && attempt < maxRetries) {
                 const wait = backoffs[attempt] || backoffs[backoffs.length - 1];
                 try { if (typeof onRetry === 'function') onRetry(attempt + 1, wait, err); } catch (_) {}
@@ -1656,13 +1682,18 @@ function backupDatabase() {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const d = new Date();
         const pad = (n) => String(n).padStart(2, '0');
-        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h`;
+        // Stamp com minutos: antes o 2º backup da mesma hora era pulado em
+        // silêncio (if exists return). Minutos evitam a colisão.
+        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h${pad(d.getMinutes())}`;
         const file = path.join(dir, `bot-${stamp}.db`);
-        if (fs.existsSync(file)) return Promise.resolve(file);
+        if (fs.existsSync(file)) {
+            console.warn(`⚠️ [backup] arquivo ${path.basename(file)} já existe — pulando (sem aviso seria bug)`);
+            return Promise.resolve(file);
+        }
         return db.backup(file).then(() => {
             console.log(`💾 [backup] banco salvo em backups/bot-${stamp}.db`);
             try {
-                const files = fs.readdirSync(dir).filter(f => /^bot-\d{4}-\d{2}-\d{2}(-\d{2}h)?\.db$/.test(f)).sort();
+                const files = fs.readdirSync(dir).filter(f => /^bot-\d{4}-\d{2}-\d{2}(-\d{2}h(\d{2})?)?\.db$/.test(f)).sort();
                 while (files.length > DB_BACKUP_KEEP) {
                     const old = files.shift();
                     try { fs.unlinkSync(path.join(dir, old)); } catch (_) {}

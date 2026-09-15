@@ -8,7 +8,7 @@ module.exports = {
     aliases: ['broadcastall'],
     category: 'admin',
     description: 'Transmite mensagem/mídia para todos os grupos ativos e parcialmente ativos',
-    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN, cancelToken }) {
         const { react, listActiveGroups, listPartialGroups, getMediaMessage, getMessageText } = utils;
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
@@ -63,6 +63,10 @@ module.exports = {
         await sock.sendMessage(from, { text: `📡 Transmitindo para ${targets.length} grupo(s) (${active.length} ativos + ${partial.length} parciais)...` }, { quoted: m });
 
         for (const jid of targets) {
+            if (cancelToken?.cancelled) {
+                await sock.sendMessage(from, { text: `⏹️ Transmissão interrompida por timeout após ${success + fail}/${targets.length} grupos (✓${success} ✗${fail}).` }, { quoted: m }).catch(() => {});
+                break;
+            }
             try {
                 // Verifica se o bot ainda está no grupo (grupos parciais podem não estar mais)
                 await sock.groupMetadata(jid);

@@ -293,6 +293,9 @@ async function startBot() {
                 try {
                     const principalState = require('./src/services/principalState');
                     principalState.clearSock();
+                    // Marca offline de verdade: sem isso _connected ficava true
+                    // para sempre e o GATE das subs/waitForConnection mentia.
+                    principalState.setDisconnected();
                 } catch (_) {}
                 const lastErr = u.lastDisconnect?.error;
                 const code = (lastErr instanceof Boom)
@@ -303,10 +306,6 @@ async function startBot() {
                 const stack0 = (lastErr?.stack||'').split('\n')[1]?.trim()||'';
                 console.warn(`🔌 [CONNECTION] close code=${code ?? '?'} reason=${reasonName} boom=${!!(lastErr instanceof Boom)} msg="${String(boomMsg).slice(0,150)}" stack0="${stack0}" attemptId=${_restartNumber}-${_qrAttempts} isBoom=${!!lastErr?.isBoom}`);
                 try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
-                try {
-                    const principalState = require('./src/services/principalState');
-                    principalState.clearSock();
-                } catch (_) {}
                 try { require('./src/services/subConnLog').connlog('principal', 'close', `code=${code ?? '?'} reason=${reasonName}`); } catch (_) {}
                 try { telegram.notifyDisconnect({ botName: config.botName, code: code ?? '?', reasonName, phone: null }).catch(()=>{}); } catch (_) {}
                 if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
@@ -317,11 +316,25 @@ async function startBot() {
                 if (code !== DisconnectReason.loggedOut) {
                     const wait = _reconnectBackoffMs;
                     _reconnectBackoffMs = Math.min(RECONNECT_BACKOFF_MAX, _reconnectBackoffMs * 2);
-                    console.log(`🔄 [CONNECTION] reconectando em ${Math.round(wait/1000)}s (code=${code} reason=${reasonName} backoff=${wait}ms)`);
-                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, wait);
+                    // Jitter ±25%: evita rajada sincronizada principal+subs no mesmo IP.
+                    const jittered = Math.round(wait * (0.75 + Math.random() * 0.5));
+                    console.log(`🔄 [CONNECTION] reconectando em ${Math.round(jittered/1000)}s (code=${code} reason=${reasonName} backoff=${wait}ms)`);
+                    setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, jittered);
                 } else {
-                    console.warn(`🔑 [CONNECTION] loggedOut — limpando session e reconectando`);
-                    try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
+                    console.warn(`🔑 [CONNECTION] loggedOut — movendo session p/ quarentena e reconectando`);
+                    try {
+                        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                        const bak = `session.bak-${stamp}`;
+                        try { fs.rmSync(bak, { recursive: true, force: true }); } catch (_) {}
+                        // Quarentena em vez de apagar: 401 transitório não destrói a sessão.
+                        fs.renameSync('session', bak);
+                        try {
+                            const olds = fs.readdirSync('.').filter(n => n.startsWith('session.bak-')).sort();
+                            while (olds.length > 2) { const o = olds.shift(); try { fs.rmSync(o, { recursive: true, force: true }); } catch (_) {} }
+                        } catch (_) {}
+                    } catch (e) {
+                        try { fs.rmSync('session', { recursive: true, force: true }); } catch (_) {}
+                    }
                     _qrAttempts = 0;
                     _reconnectBackoffMs = 5000;
                     setTimeout(() => { startBot().catch(e => console.error('reconnect falhou:', e.message, e.stack?.split('\n')[1]?.trim()||'')); }, 5000);

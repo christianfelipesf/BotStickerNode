@@ -3,7 +3,7 @@ module.exports = {
     description: 'Bane um membro do grupo.',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, args, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        if (!isGroup) return;
+        if (!isGroup) return await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
 
         const admins = await utils.getAdmins(sock, from);
         const isSenderAdmin = utils.isUserAdmin(sender, admins);

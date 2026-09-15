@@ -24,19 +24,30 @@ async function enforceMuteAndAntilink(sock, m, from, sender, text) {
     if (groupData.antilink && !isSenderAdmin && isBotAdmin) {
         const groupLinkRegex = /chat\.whatsapp\.com\/[a-zA-Z0-9]/;
         if (groupLinkRegex.test(text)) {
-            await sock.sendMessage(from, { delete: m.key });
+            try {
+                await sock.sendMessage(from, { delete: m.key });
+            } catch (delErr) {
+                // Bot perdeu admin em corrida: não aborta o handler, só loga.
+                console.error('❌ Falha ao apagar mensagem de antilink:', delErr?.message || delErr);
+                return 'antilink';
+            }
             try { recordModEvent(from, 'spam'); } catch (_) {}
             if (!groupData.warnings) groupData.warnings = {};
             groupData.warnings[sender] = (groupData.warnings[sender] || 0) + 2;
             const count = groupData.warnings[sender];
             setGroupData(from, groupData);
             if (count >= 3) {
-                await sock.groupParticipantsUpdate(from, [sender], 'remove');
+                try {
+                    await sock.groupParticipantsUpdate(from, [sender], 'remove');
+                } catch (rmErr) {
+                    console.error('❌ Falha ao remover por antilink:', rmErr?.message || rmErr);
+                    return 'antilink';
+                }
                 delete groupData.warnings[sender];
                 setGroupData(from, groupData);
-                await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]} enviou link, atingiu ${count}/3 advertências e foi banido.`, mentions: [sender] });
+                try { await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]} enviou link, atingiu ${count}/3 advertências e foi banido.`, mentions: [sender] }); } catch (_) {}
             } else {
-                await sock.sendMessage(from, { text: `⚠️ @${sender.split('@')[0]} enviou link e recebeu 2 advertências. (${count}/3)`, mentions: [sender] });
+                try { await sock.sendMessage(from, { text: `⚠️ @${sender.split('@')[0]} enviou link e recebeu 2 advertências. (${count}/3)`, mentions: [sender] }); } catch (_) {}
             }
             return 'antilink';
         }

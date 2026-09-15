@@ -69,7 +69,11 @@ const CMD_COOLDOWN_DEFAULTS = {
 };
 
 function getKey(commandName, userId) {
-    return `${commandName}:${userId}`;
+    // Canônico: "5511..:7@s.whatsapp.net" e "5511..@s.whatsapp.net" usam a
+    // mesma chave (evita burla/duplicidade por troca de device).
+    let u = String(userId || '');
+    try { u = u.split('@')[0].split(':')[0].toLowerCase(); } catch (_) {}
+    return `${commandName}:${u}`;
 }
 
 function getEffectiveCooldownMs(commandName) {

@@ -4,7 +4,7 @@ module.exports = {
     description: 'Dá uma advertência a um membro. 3 advertências resultam em banimento.',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        if (!isGroup) return;
+        if (!isGroup) return await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
 
         const admins = await utils.getAdmins(sock, from);
         const isSenderAdmin = utils.isUserAdmin(sender, admins);

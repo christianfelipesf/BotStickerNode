@@ -75,7 +75,7 @@ async function sendConfirmation(sock, m, from, sender, targets, metadata) {
 }
 
 async function runDivulgacao(sock, m, ctx) {
-    const { from, sender, lastBotResponse, GLOBAL_COOLDOWN, react } = ctx;
+    const { from, sender, lastBotResponse, GLOBAL_COOLDOWN, react, cancelToken } = ctx;
 
     const link = getGroupLink();
     if (!link) return sock.sendMessage(from, { text: '❌ Nenhum link configurado. Use !setlink <link> primeiro.' }, { quoted: m });
@@ -91,7 +91,9 @@ async function runDivulgacao(sock, m, ctx) {
     }
 
     const adminsRaw = await getAdmins(sock, from);
-    const admins = adminsRaw.map(p => normalizeJid(p.id || p.jid));
+    // Inclui p.lid: em grupos com privacidade LID o id vem como @lid e
+    // sem isso admins viravam alvo de DM-spam.
+    const admins = adminsRaw.flatMap(p => [p.id, p.jid, p.lid].filter(Boolean).map(normalizeJid));
     info(`[divulgar] admins (${admins.length}): ${admins.join(', ')}`);
 
     let metadata;
@@ -134,6 +136,13 @@ async function runDivulgacao(sock, m, ctx) {
     let lastProgressLog = 0;
 
     for (let i = 0; i < targets.length; i++) {
+        // Cancelamento cooperativo: o anti-zumbi (timeout) sinaliza aqui;
+        // sem isso o loop continuava em background após "interrompido".
+        if (cancelToken?.cancelled) {
+            warn(`Divulgar cancelado por timeout após ${i}/${targets.length} envios.`);
+            try { await sock.sendMessage(from, { text: `⏹️ Divulgação interrompida por timeout após ${i}/${targets.length} envios (✓${success} ✗${failed}).` }, { quoted: m }); } catch (_) {}
+            break;
+        }
         const jid = targets[i];
         const num = jid.split('@')[0];
         const template = pickTemplate();
@@ -144,6 +153,11 @@ async function runDivulgacao(sock, m, ctx) {
         const sendStart = Date.now();
         info(`[${i + 1}/${targets.length}] → ${num} | aguardando ${(delay / 1000).toFixed(1)}s | elapsed=${formatElapsed(Date.now() - startTs)}`);
         await sleep(delay);
+        if (cancelToken?.cancelled) {
+            warn(`Divulgar cancelado por timeout durante espera (${i}/${targets.length} enviados).`);
+            try { await sock.sendMessage(from, { text: `⏹️ Divulgação interrompida por timeout após ${i}/${targets.length} envios (✓${success} ✗${failed}).` }, { quoted: m }); } catch (_) {}
+            break;
+        }
 
         try {
             await sock.sendMessage(jid, {
@@ -247,7 +261,7 @@ module.exports = {
         }
 
         const adminsRaw = await getAdmins(sock, from);
-        const admins = adminsRaw.map(p => normalizeJid(p.id || p.jid));
+        const admins = adminsRaw.flatMap(p => [p.id, p.jid, p.lid].filter(Boolean).map(normalizeJid));
 
         let metadata;
         try {

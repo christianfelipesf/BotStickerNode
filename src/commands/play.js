@@ -87,45 +87,101 @@ module.exports = {
     aliases: ['p', 'musica', 'youtube'],
     category: 'mídia',
     description: 'Baixa áudio do YouTube (limite configurável, padrão 15 min)',
-    async execute(sock, m, { from, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN, config, getSock }) {
         const { react, reactStatus } = utils;
+        // Tag nos logs p/ distinguir sub-sessão do principal (sub passa botName 'Sub-sessão').
+        const isSub = config?.botName === 'Sub-sessão';
+        const PTAG = isSub ? '[PLAY][sub]' : '[PLAY]';
+        const plog = (...a) => { try { console.log(`${PTAG}`, ...a); } catch (_) {} };
+        const pwarn = (...a) => { try { console.warn(`${PTAG}`, ...a); } catch (_) {} };
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        // Socket VIVO: na sub ele pode ter sido recriado (reconnect) no meio
+        // de um download longo; usar o antigo = envio morto. No principal
+        // getSock não existe e cai para o próprio sock (sem mudança).
+        const live = () => {
+            try { const s = typeof getSock === 'function' ? getSock() : null; return s || sock; }
+            catch (_) { return sock; }
+        };
+        // Na sub o socket cai com frequência (428/515/502); não deixa
+        // falha de REAÇÃO abortar o fluxo nem esconder o erro real.
+        const isConnClosedErr = (e) => {
+            if (!e) return false;
+            const code = e?.output?.statusCode || e?.statusCode;
+            if (code === 428 || code === 515 || code === 502) return true;
+            const msg = String(e?.message || e || '').toLowerCase();
+            return msg.includes('connection closed') || msg.includes('precondition required');
+        };
+        const safeReact = async (fn, _s, ...a) => {
+            try { return await fn(live(), ...a); }
+            catch (e) { if (isConnClosedErr(e)) { pwarn(`react falhou (conexão fechada): ${e.message}`); return a[2] ?? null; } throw e; }
+        };
+        const safeReactStatus = async (_s, ...a) => {
+            try { return await reactStatus(live(), ...a); }
+            catch (e) { if (isConnClosedErr(e)) return a[5] ?? null; throw e; }
+        };
+        // Envio do áudio com retry no socket atual: se a sub caiu no meio
+        // do upload (Stream Errored/428/515), espera o reconnect automático
+        // (3-30s) e tenta de novo no socket novo em vez de desistir mudo.
+        const sendAudioResilient = async (payload) => {
+            const waits = [0, 8000, 20000];
+            let lastErr = null;
+            for (let i = 0; i < waits.length; i++) {
+                if (waits[i]) {
+                    pwarn(`nova tentativa de envio em ${waits[i] / 1000}s (tentativa ${i + 1}/${waits.length})...`);
+                    await sleep(waits[i]);
+                }
+                const s = live();
+                try {
+                    return await enqueueSend(() => sendMessageSafe(s, from, payload, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
+                } catch (e) {
+                    lastErr = e;
+                    if (!isConnClosedErr(e)) throw e;
+                    pwarn(`envio falhou (tentativa ${i + 1}/${waits.length}): ${e?.message || e}`.slice(0, 200));
+                }
+            }
+            throw lastErr;
+        };
         let q = fullArgsText.trim();
 
-        if (!q) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        if (!q) return await safeReact(react, sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         // parse lang trailing token: !play <query> [pt|original|en...] default pt
         const parsedQuery = parseLangFromQuery(q);
         const effectiveLang = parsedQuery.lang; // null = original, 'pt' = português
         q = parsedQuery.query;
-        if (!q) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        if (!q) return await safeReact(react, sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
-        let currentBotResponse = await react(sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+        let currentBotResponse = await safeReact(react, sock, m, '🔎', lastBotResponse, GLOBAL_COOLDOWN);
+        plog(`busca: "${q.slice(0, 80)}" em ${from}`);
 
         try {
             let video;
             try {
                 video = (await yts(q)).videos[0];
             } catch (searchErr) {
-                console.log(`⚠️ [PLAY] yt-search falhou (${String(searchErr.message).slice(0, 120)}) — resolvendo busca via yt-dlp`);
+                plog(`⚠️ yt-search falhou (${String(searchErr.message).slice(0, 120)}) — resolvendo busca via yt-dlp`);
                 video = await searchViaYtDlp(q);
             }
 
             if (!video) {
-                await sock.sendMessage(from, { text: '❌ Nenhum vídeo encontrado.' }, { quoted: m });
-                return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+                try { await live().sendMessage(from, { text: '❌ Nenhum vídeo encontrado.' }, { quoted: m }); }
+                catch (sendErr) { pwarn(`aviso 'nenhum vídeo' não enviado: ${sendErr?.message || sendErr}`); }
+                return await safeReactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
             const safeTitle = String(video.title || 'sem título').trim() || 'sem título';
             const duration = parseDurationToSeconds(video.seconds ?? video.duration);
             const maxSeconds = getMaxDurationSeconds();
             if (duration > maxSeconds) {
-                await sock.sendMessage(from, {
-                    text: `⏱️ *Limite de duração excedido!*\n\n📌 O *!play* baixa no máximo *${formatDuration(maxSeconds)}* (${maxSeconds}s).\n🎵 *Vídeo:* ${safeTitle}\n⏰ *Duração:* ${formatDuration(duration)}\n\n💡 Para vídeos longos, use *!d <link>* e baixe apenas o trecho que quiser em outro app.\n⚙️ _Limite configurável:_ \`!set maxMediaDurationSeconds <segundos>\``
-                }, { quoted: m });
-                return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+                try {
+                    await live().sendMessage(from, {
+                        text: `⏱️ *Limite de duração excedido!*\n\n📌 O *!play* baixa no máximo *${formatDuration(maxSeconds)}* (${maxSeconds}s).\n🎵 *Vídeo:* ${safeTitle}\n⏰ *Duração:* ${formatDuration(duration)}\n\n💡 Para vídeos longos, use *!d <link>* e baixe apenas o trecho que quiser em outro app.\n⚙️ _Limite configurável:_ \`!set maxMediaDurationSeconds <segundos>\``
+                    }, { quoted: m });
+                } catch (sendErr) { pwarn(`aviso 'limite duração' não enviado: ${sendErr?.message || sendErr}`); }
+                return await safeReactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             }
 
-            currentBotResponse = await react(sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
+            currentBotResponse = await safeReact(react, sock, m, '⬇️', currentBotResponse, GLOBAL_COOLDOWN);
 
             const tempName = `music_${crypto.randomBytes(4).toString('hex')}.mp3`;
             const tempDir = path.join(process.cwd(), 'temp');
@@ -133,7 +189,7 @@ module.exports = {
 
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-            console.log(`🎵 [PLAY] Baixando: ${safeTitle} (${formatDuration(duration)})`);
+            console.log(`${PTAG} Baixando: ${safeTitle} (${formatDuration(duration)})`);
 
             const hasCookies = fs.existsSync(cookiesPath);
             // tenta yt-dlp com cookies/user-agent (igual download.js) + fallback BTCH
@@ -166,7 +222,7 @@ module.exports = {
                     let stderr = '';
                     let timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} reject(new Error('yt-dlp timeout 180s')); }, 180000);
                     let reactTimer = setTimeout(async () => {
-                        try { currentBotResponse = await react(sock, m, '🔄', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
+                        try { currentBotResponse = await safeReact(react, sock, m, '🔄', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
                     }, 5000);
                     proc.stderr.on('data', (d) => { stderr += d.toString(); });
                     proc.on('error', (err) => {
@@ -183,7 +239,7 @@ module.exports = {
                 try { downloaded = fs.existsSync(outPath) && fs.statSync(outPath).size > 1024; } catch (_) { downloaded = false; }
             } catch (e) {
                 lastError = e.message;
-                console.log(`⚠️ [PLAY] yt-dlp falhou: ${lastError} — tentando fallback API...`);
+                plog(`⚠️ yt-dlp falhou: ${lastError} — tentando fallback API...`);
             }
 
             // Fallback: API btch-downloader (funciona mesmo com IP bloqueado pelo YouTube)
@@ -199,7 +255,7 @@ module.exports = {
                     const mp3Url = res.data?.mp3 || res.data?.result?.mp3 || res.data?.audio;
                     if (!mp3Url) throw new Error('API sem mp3');
                     if (!/^https?:\/\//i.test(mp3Url)) throw new Error('URL fallback inválida');
-                    console.log(`🎵 [PLAY] fallback BTCH: ${mp3Url.slice(0, 80)}...`);
+                    plog(`🎵 fallback BTCH: ${mp3Url.slice(0, 80)}...`);
                     const writer = fs.createWriteStream(outPath);
                     const dl = await axios({ url: mp3Url, method: 'GET', responseType: 'stream', timeout: 120000, maxContentLength: 100*1024*1024, maxBodyLength: 100*1024*1024 });
                     let total = 0;
@@ -242,30 +298,40 @@ module.exports = {
                         }
                     } : {})
                 };
-                await enqueueSend(() => sendMessageSafe(sock, from, audioPayload, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
+                const sent = await sendAudioResilient(audioPayload);
+                try {
+                    const sentId = sent?.key?.id || sent?.id || null;
+                    if (sentId && isSub) {
+                        try { require('../services/subSessions').trackSubSentId(sentId); } catch (_) {}
+                        plog(`enviado: "${safeTitle.slice(0, 60)}" em ${from} id=${String(sentId).slice(-8)}`);
+                    } else {
+                        plog(`enviado: "${safeTitle.slice(0, 60)}" em ${from}`);
+                    }
+                } catch (_) { plog(`enviado: "${safeTitle.slice(0, 60)}" em ${from}`); }
 
                 try { fs.unlinkSync(outPath); } catch (_) {}
-                currentBotResponse = await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+                currentBotResponse = await safeReactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
             } else {
                 throw new Error('Arquivo não foi gerado');
             }
         } catch (e) {
             const isConnClosed = e?.output?.statusCode === 428 || String(e?.message || '').includes('Connection Closed') || String(e?.message || '').includes('Precondition Required');
             if (isConnClosed) {
-                console.warn(`⚠️ [PLAY] conexão fechada (428) — abortando sem responder`);
+                pwarn(`conexão fechada (428) — abortando sem responder`);
                 try { if (typeof outPath !== 'undefined' && outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
                 return currentBotResponse;
             }
             try { if (typeof outPath !== 'undefined' && outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
-            console.error('❌ [PLAY] Falha geral:', e);
+            console.error(`${PTAG} Falha geral:`, e);
             const is403 = e.message.includes('403') || e.message.includes('Forbidden');
             const hint = is403
                 ? '\n\n💡 *YouTube bloqueou seu IP (403 Forbidden).* Soluções:\n1. Crie `cookies.txt` na raiz (extensão "Get cookies.txt" logado no YouTube)\n2. Ou use `!dl <link>` que já tem fallback automático'
                 : '';
-            try { await sock.sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${e.message.slice(0, 200)}\`` }, { quoted: m }); } catch (sendErr) {
+            try { await live().sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${e.message.slice(0, 200)}\`` }, { quoted: m }); } catch (sendErr) {
+                pwarn(`texto de erro não enviado (socket instável?): ${sendErr?.message || sendErr}`);
                 if (sendErr?.output?.statusCode !== 428 && !String(sendErr?.message || '').includes('Connection Closed')) throw sendErr;
             }
-            try { currentBotResponse = await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
+            try { currentBotResponse = await safeReactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
         }
 
         return currentBotResponse;

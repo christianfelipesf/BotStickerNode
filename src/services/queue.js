@@ -6,19 +6,35 @@ const sendQueue = new PQueue({ concurrency: 1, interval: 1500, intervalCap: 2, t
 const processQueue = new PQueue({ concurrency: 3, interval: 500, intervalCap: 5, timeout: 30000, throwOnTimeout: true });
 
 for (const q of [downloadQueue, sendQueue, processQueue]) {
+    // Só loga: a rejeição é tratada pelo chamador via retry abaixo.
+    // Sem isso, timeout virava unhandledRejection → process.exit(1).
     q.on('error', (err) => console.warn(`⚠️ [queue] timeout/error: ${err?.message?.slice(0,120)||err}`));
 }
 
+// 1 retry automático em timeout/falha transitória: evita que um soluço
+// (upload lento, yt-dlp congestionado) mate o comando de primeira.
+async function withRetry(fn, label) {
+    try {
+        return await fn();
+    } catch (e) {
+        const transient = /timeout|timed out|econnreset|socket|temporar|429|rate/i.test(String(e?.message || e));
+        if (!transient) throw e;
+        console.warn(`⚠️ [queue] retry ${label}: ${String(e?.message || e).slice(0, 100)}`);
+        await new Promise(r => setTimeout(r, 2000));
+        return await fn();
+    }
+}
+
 function enqueueDownload(fn) {
-    return downloadQueue.add(fn);
+    return downloadQueue.add(() => withRetry(fn, 'download'));
 }
 
 function enqueueSend(fn) {
-    return sendQueue.add(fn);
+    return sendQueue.add(() => withRetry(fn, 'send'));
 }
 
 function enqueueProcess(fn) {
-    return processQueue.add(fn);
+    return processQueue.add(() => withRetry(fn, 'process'));
 }
 
 function queueSize() {

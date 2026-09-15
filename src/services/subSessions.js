@@ -114,9 +114,12 @@ let lastLoginStart = 0;
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function destroySock(sock) {
-    try { sock?.ev?.removeAllListeners?.('connection.update'); } catch (_) {}
-    try { sock?.ev?.removeAllListeners?.('creds.update'); } catch (_) {}
-    try { sock?.ev?.removeAllListeners?.('messages.upsert'); } catch (_) {}
+    // Remove TODOS os listeners que anexamos (messages, receipts,
+    // group-participants): sock morto com listener órfão vaza memória e
+    // pode processar evento fantasma.
+    for (const ev of ['connection.update', 'creds.update', 'messages.upsert', 'message-receipt.update', 'group-participants.update', 'groups.update']) {
+        try { sock?.ev?.removeAllListeners?.(ev); } catch (_) {}
+    }
     try { sock?.end?.(undefined); } catch (_) {}
     try { sock?.ws?.close?.(); } catch (_) {}
 }
@@ -170,6 +173,27 @@ function hashJid(jid) {
     return crypto.createHash('sha1').update(String(jid || '')).digest('hex').slice(0, 16);
 }
 
+// Quarentena de credenciais: renomeia a pasta p/ .bak-<ts> em vez de apagar.
+// 401 transitório (conflito, mismatch de versão) não destrói a sessão;
+// mantém os últimos 2 backups para restauração manual.
+function quarantineDir(dir, why) {
+    try {
+        if (!dir || !fs.existsSync(dir)) return false;
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const bak = `${dir}.bak-${stamp}`;
+        try { fs.rmSync(bak, { recursive: true, force: true }); } catch (_) {}
+        fs.renameSync(dir, bak);
+        try {
+            const parent = path.dirname(dir);
+            const base = path.basename(dir);
+            const olds = fs.readdirSync(parent).filter(n => n.startsWith(base + '.bak-')).sort();
+            while (olds.length > 2) { const o = olds.shift(); try { fs.rmSync(path.join(parent, o), { recursive: true, force: true }); } catch (_) {} }
+        } catch (_) {}
+        dlog(`${hashJid(why || '')} credenciais movidas p/ quarentena ${path.basename(bak)}`);
+        return true;
+    } catch (_) { return false; }
+}
+
 function sessionFolder(ownerJid) {
     const dir = path.join(SUB_SESSIONS_DIR, hashJid(ownerJid));
     try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
@@ -182,6 +206,146 @@ function getSubsGroupsEnabled() {
         if (cfg && typeof cfg.subSessionsGroups === 'boolean') return cfg.subSessionsGroups;
     } catch (_) {}
     return SUBS_GROUPS_DEFAULT;
+}
+
+// ============================================================
+// Anti-conflito: sub fica silenciosa quando o principal está
+// no mesmo grupo. Prioridade sempre do bot principal.
+// - Se principal offline/desconectado → sub responde (fail-open,
+//   senão o grupo ficaria sem resposta = "bugado").
+// - Se não dá pra verificar (sem JID do principal, metadata
+//   falhou) → sub responde (fail-open).
+// - Cache curto (45s) + invalidação em group-participants.update
+//   para reagir rápido quando o principal sai/entra.
+// ============================================================
+const PRINCIPAL_PRESENCE_TTL_MS = 45000;
+const principalPresenceCache = new Map(); // groupJid -> { has: bool, at: number, pkey: string }
+
+function _userOf(jid) {
+    try { return String(jid || '').split('@')[0].split(':')[0].trim(); } catch (_) { return ''; }
+}
+function _digitsOf(jid) {
+    try { return _userOf(jid).replace(/\D/g, ''); } catch (_) { return ''; }
+}
+
+function getPrincipalKeys() {
+    const out = [];
+    try {
+        const ps = principalState.getState?.() || {};
+        if (ps.phone) out.push(String(ps.phone));
+    } catch (_) {}
+    try {
+        const s1 = principalState.getSock?.();
+        if (s1?.user?.id) out.push(String(s1.user.id));
+        if (s1?.user?.lid) out.push(String(s1.user.lid));
+        if (s1?.user?.jid) out.push(String(s1.user.jid));
+    } catch (_) {}
+    try {
+        const s2 = global.__baileysSock;
+        if (s2?.user?.id) out.push(String(s2.user.id));
+        if (s2?.user?.lid) out.push(String(s2.user.lid));
+        if (s2?.user?.jid) out.push(String(s2.user.jid));
+    } catch (_) {}
+    return out.filter(Boolean);
+}
+
+function collectParticipantKeys(p) {
+    if (!p) return [];
+    if (typeof p === 'string') return [p];
+    const keys = [];
+    for (const f of ['id', 'jid', 'lid', 'phoneNumber', 'author', 'notify']) {
+        try { if (p[f] && typeof p[f] === 'string') keys.push(p[f]); } catch (_) {}
+    }
+    return keys;
+}
+
+function principalMatchesParticipants(principalKeys, participants) {
+    const pUsers = new Set();
+    const pDigits = new Set();
+    for (const k of principalKeys) {
+        const u = _userOf(k);
+        const d = _digitsOf(k);
+        if (u) pUsers.add(u);
+        if (d && d.length >= 8) pDigits.add(d);
+    }
+    if (!pUsers.size && !pDigits.size) return false;
+    for (const part of participants || []) {
+        for (const ck of collectParticipantKeys(part)) {
+            const u = _userOf(ck);
+            const d = _digitsOf(ck);
+            if (u && pUsers.has(u)) return true;
+            if (d && d.length >= 8) {
+                for (const pd of pDigits) {
+                    if (pd === d) return true;
+                    // Sufixo: cobre variação de DDI/DDD ("55..." vs "...").
+                    if (pd.length >= 10 && d.length >= 10) {
+                        if (pd.endsWith(d) || d.endsWith(pd)) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+async function isPrincipalInGroup(subSock, groupJid) {
+    if (!groupJid || !groupJid.endsWith('@g.us')) return false;
+    // Principal offline → sub DEVE responder (evita grupo mudo).
+    try { if (!principalState.getState?.().connected) return false; } catch (_) { return false; }
+    const pkeys = getPrincipalKeys();
+    if (!pkeys.length) return false; // sem referência → fail-open
+    const pkey = pkeys.map(_userOf).sort().join('|');
+    const now = Date.now();
+    const cached = principalPresenceCache.get(groupJid);
+    if (cached && (now - cached.at) < PRINCIPAL_PRESENCE_TTL_MS && cached.pkey === pkey) {
+        return !!cached.has;
+    }
+    let participants = null;
+    try {
+        const metaP = subSock.groupMetadata(groupJid);
+        const timeoutP = new Promise((_, rej) => setTimeout(() => rej(new Error('gm-timeout')), 8000));
+        const meta = await Promise.race([metaP, timeoutP]);
+        participants = meta?.participants || [];
+    } catch (e) {
+        // Falha ao verificar → fail-open (responde) para não bugar.
+        // Mantém cache antigo se existir, senão assume ausente.
+        vlog(`presence-check falhou ${groupJid}: ${e?.message || e} → fail-open`);
+        return cached ? !!cached.has : false;
+    }
+    let has = false;
+    try { has = principalMatchesParticipants(pkeys, participants); } catch (_) { has = false; }
+    try {
+        principalPresenceCache.set(groupJid, { has, at: now, pkey });
+        // Cap: grupos entram e o Map cresceria sem limite ao longo de dias.
+        if (principalPresenceCache.size > 300) {
+            const oldest = principalPresenceCache.keys().next().value;
+            principalPresenceCache.delete(oldest);
+        }
+    } catch (_) {}
+    if (has) vlog(`presence-check ${groupJid}: principal PRESENTE → sub silenciosa`);
+    return has;
+}
+
+function clearPrincipalPresenceCache(groupJid) {
+    try {
+        if (groupJid) principalPresenceCache.delete(groupJid);
+        else principalPresenceCache.clear();
+    } catch (_) {}
+}
+
+// IDs de mensagens de mídia enviadas pela sub (para o listener de
+// message-receipt.update confirmar entrega). Cap simples, sem TTL:
+// recibo chega em segundos; overflow limpa os mais antigos.
+const recentSubSentIds = new Set();
+function trackSubSentId(id) {
+    try {
+        if (!id) return;
+        recentSubSentIds.add(String(id));
+        if (recentSubSentIds.size > 60) {
+            const first = recentSubSentIds.values().next().value;
+            recentSubSentIds.delete(first);
+        }
+    } catch (_) {}
 }
 
 function listSessions() {
@@ -197,7 +361,12 @@ function listSessions() {
 function getSession(ownerJid) { return sessions.get(ownerJid) || null; }
 
 async function reactSilent(sock, m, emoji) {
-    try { await sock.sendMessage(m.key.remoteJid, { react: { text: emoji, key: m.key } }); }
+    try {
+        const r = await sock.sendMessage(m.key.remoteJid, { react: { text: emoji, key: m.key } });
+        // Rastreia recibo: reação APARECE no celular do usuário, então o
+        // recibo dela prova que o listener funciona e que a sessão entrega.
+        try { trackSubSentId(r?.key?.id); } catch (_) {}
+    }
     catch (_) {}
 }
 
@@ -303,8 +472,14 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
         const dummyConfig = { prefix: session.prefix, botName: `Sub-sessão` };
         const utils = require('../database/utils');
         const GLOBAL_COOLDOWN = 600;
-        const lastBotResponse = Date.now();
+        // lastBotResponse=0: os comandos usam utils.react com cooldown
+        // (now - last < COOLDOWN → suprime). Com Date.now() aqui, TODAS
+        // as reações internas (🔎⬇️✅❌) eram suprimidas e o usuário só
+        // via ⏳ + ✅ — inclusive ✅ em caso de falha (mascarava erro).
+        const lastBotResponse = 0;
 
+        const _t0 = Date.now();
+        try { vlog(`${hashJid(session.ownerJid)} INICIO !${commandName} em ${targetJid}`); } catch (_) {}
         await mod.execute(sock, m, {
             from: targetJid,
             isGroup: targetJid?.endsWith?.('@g.us'),
@@ -319,9 +494,19 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
             startTime: session.startedAt,
             lastBotResponse,
             GLOBAL_COOLDOWN,
-            mediaHandler
+            mediaHandler,
+            // Socket ATUAL da sessão (pode ter sido recriado por reconnect
+            // no meio de um download longo). Comandos de mídia usam para
+            // re-tentar o envio no socket novo em vez do morto.
+            getSock: () => {
+                try { return sessions.get(session.ownerJid)?.sock || sock; }
+                catch (_) { return sock; }
+            }
         });
-        await reactSilent(sock, m, '✅');
+        // SEM ✅ automático: cada comando já envia sua própria reação
+        // final (✅/❌ via reactStatus). ✅ incondicional aqui mentia em
+        // caso de falha interna (ex: !play com download falho).
+        try { vlog(`${hashJid(session.ownerJid)} FIM !${commandName} ok em ${Date.now() - _t0}ms`); } catch (_) {}
         return true;
     } catch (e) {
         dlog(`${hashJid(session.ownerJid)} erro em !${commandName}: ${e?.message || e}`);
@@ -373,6 +558,50 @@ function attachMessagesHandler(session, sock) {
     const selfJidRaw = (sock.user?.id || '');
     const selfNorm = selfJidRaw.split(':')[0].split('@')[0];
     dlog(`${hashJid(ownerJid)} handler attached, selfJidRaw=${selfJidRaw} selfNorm=${selfNorm}`);
+
+    // Invalida cache anti-conflito quando alguém entra/sai do grupo.
+    // Assim se o principal sair, a sub volta a responder no próximo
+    // comando sem esperar o TTL; se entrar, a sub silencia rápido.
+    try {
+        sock.ev.removeAllListeners?.('group-participants.update');
+    } catch (_) {}
+    try {
+        sock.ev.on('group-participants.update', (u) => {
+            try {
+                const gid = u?.id;
+                if (gid) clearPrincipalPresenceCache(gid);
+            } catch (_) {}
+        });
+    } catch (_) {}
+
+    // Rastreio de entrega: IDs de mídia enviadas pela sub (ex: áudio do
+    // !play). Quando o WhatsApp confirma entrega/leitura, loga — prova se
+    // a mensagem saiu do servidor e chegou ao aparelho (ou sumiu no meio).
+    try {
+        sock.ev.on('message-receipt.update', (updates) => {
+            try {
+                const current = sessions.get(ownerJid);
+                if (!current || current.sock !== sock) return;
+                for (const u of updates || []) {
+                    const ids = [];
+                    try {
+                        if (u?.key?.id) ids.push(u.key.id);
+                        if (Array.isArray(u?.keyIds)) for (const id of u.keyIds) ids.push(id);
+                    } catch (_) {}
+                    for (const id of ids) {
+                        if (!id || !recentSubSentIds.has(id)) continue;
+                        const rc = u?.receipt || {};
+                        // IUserReceipt: receiptTimestamp=entregue, readTimestamp=lido, playedTimestamp=ouvido.
+                        // Sem campo conhecido, despeja o objeto p/ aprender o formato real.
+                        let rtype = rc.playedTimestamp ? 'played' : rc.readTimestamp ? 'read' : rc.receiptTimestamp ? 'delivery' : (rc.type || null);
+                        if (!rtype) { try { rtype = JSON.stringify(rc).slice(0, 120); } catch (_) { rtype = '?'; } }
+                        const who = String(u?.key?.participant || u?.key?.remoteJid || '?').split('@')[0];
+                        dlog(`${hashJid(ownerJid)} recibo ${String(id).slice(-8)}: ${rtype} para=${who}`);
+                    }
+                }
+            } catch (_) {}
+        });
+    } catch (_) {}
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
@@ -427,8 +656,27 @@ function attachMessagesHandler(session, sock) {
                     vlog(`${hashJid(session.ownerJid)} PROCESSANDO from=${from} isGroup=${isGroup} text="${t.slice(0,60)}"`);
                 }
 
+                const isBarePrefixQuery = t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix';
+                const isPotentialCmd = t.startsWith(session.prefix) || isBarePrefixQuery;
+
+                // Anti-conflito: se o bot principal está no mesmo grupo, a sub
+                // fica 100% silenciosa (nem reage, nem responde). O principal
+                // tem prioridade. Fail-open: se o principal está offline ou a
+                // verificação falhar, a sub responde normalmente para o grupo
+                // não ficar sem resposta.
+                if (isGroup && isPotentialCmd) {
+                    try {
+                        if (await isPrincipalInGroup(sock, from)) {
+                            vlog(`${hashJid(session.ownerJid)} silenciada em ${from}: principal presente`);
+                            continue;
+                        }
+                    } catch (_) {
+                        // fail-open: erro na verificação → responde normal
+                    }
+                }
+
                 if (!t.startsWith(session.prefix)) {
-                    if (t.toLowerCase() === 'prefixo' || t.toLowerCase() === 'prefix') {
+                    if (isBarePrefixQuery) {
                         const prefixBox = `*Sub-sessão — Prefixo* ⌨️\n_prefixo atual_\n\n` +
                             `╭─── *PREFIXO* ───\n` +
                             `│ ⌨️ *Prefixo:* *${session.prefix}*\n` +
@@ -805,10 +1053,10 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     const recreateLoginSock = (why) => {
                         session._restartCount = (session._restartCount || 0) + 1;
                         if (session._restartCount > 5) {
-                            dlog(`${hashJid(ownerJid)} ${why} loop >5 — abortando`);
+                            dlog(`${hashJid(ownerJid)} ${why} loop >5 — quarentenando e abortando`);
                             try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                             destroySock(sock);
-                            try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                            quarantineDir(dir, ownerJid);
                             sessions.delete(ownerJid);
                             loginCooldowns.delete(ownerJid);
                             try { require('./subConnLog').connlog(ownerJid, 'end', `restart-loop-${why} abort>5`); } catch (_) {}
@@ -877,9 +1125,9 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     if (code === DisconnectReason.loggedOut) {
                         try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                         destroySock(sock);
-                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                        quarantineDir(dir, ownerJid);
                         sessions.delete(ownerJid);
-                        try { require('./subConnLog').connlog(ownerJid, 'end', 'logged-out cred-apagadas'); } catch (_) {}
+                        try { require('./subConnLog').connlog(ownerJid, 'end', 'logged-out cred-quarentena'); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
                     } else if (isTransient && isLoginPhase) {
                         // Fase de QR/pairing: close transitório (428/408/515/502/503/timeout)
@@ -888,13 +1136,21 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     } else if (code === 515 || errLower.includes('restart required')) {
                         recreateLoginSock('515-restart');
                     } else if (code === 401 || code === 403 || code === 405) {
-                        dlog(`${hashJid(ownerJid)} ${code} → deletando credenciais e sessão`);
-                        try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
-                        destroySock(sock);
-                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-                        sessions.delete(ownerJid);
-                        try { require('./subConnLog').connlog(ownerJid, 'end', `unauthorized-${code} cred-apagadas`); } catch (_) {}
-                        await safeCallback(session.onClosed, ownerJid, 'unauthorized');
+                        // Sessão que JÁ ESTEVE online tinha credenciais válidas:
+                        // 401 aqui costuma ser transitório (conflito/mismatch).
+                        // Tenta 1 recreate antes de quarentenar.
+                        if (session._wasConnected && !session._authRecreated) {
+                            session._authRecreated = true;
+                            recreateLoginSock(`auth-transient-${code}`);
+                        } else {
+                            dlog(`${hashJid(ownerJid)} ${code} → quarentenando credenciais e sessão`);
+                            try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
+                            destroySock(sock);
+                            quarantineDir(dir, ownerJid);
+                            sessions.delete(ownerJid);
+                            try { require('./subConnLog').connlog(ownerJid, 'end', `unauthorized-${code} cred-quarentena`); } catch (_) {}
+                            await safeCallback(session.onClosed, ownerJid, 'unauthorized');
+                        }
                     } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
                         try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                         destroySock(sock);
@@ -907,10 +1163,10 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         // com código não coberto acima: recria sem apagar credenciais.
                         recreateLoginSock(`transient-late-${code}`);
                     } else if (code && code >= 400 && code < 500) {
-                        dlog(`${hashJid(ownerJid)} erro ${code} → deletando credenciais e sessão`);
+                        dlog(`${hashJid(ownerJid)} erro ${code} → quarentenando credenciais e sessão`);
                         try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                         destroySock(sock);
-                        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+                        quarantineDir(dir, ownerJid);
                         sessions.delete(ownerJid);
                         try { require('./subConnLog').connlog(ownerJid, 'end', `auth-failed-${code}`); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, `auth-failed-${code}`);
@@ -924,6 +1180,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                 } else if (u.connection === 'open') {
                     session.connected = true;
                     session._wasConnected = true;
+                    session._authRecreated = false;
                     session.connecting = false;
                     session.queued = false;
                     loginCooldowns.delete(ownerJid);
@@ -1080,6 +1337,9 @@ module.exports = {
     restoreFromDisk,
     cancelQueuedLogin,
     getQueuePosition,
+    isPrincipalInGroup,
+    clearPrincipalPresenceCache,
+    trackSubSentId,
     PER_SESSION_PREFIX_DEFAULT,
     QR_MAX_ATTEMPTS,
     ALLOWED_BASIC

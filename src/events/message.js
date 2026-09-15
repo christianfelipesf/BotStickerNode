@@ -250,8 +250,15 @@ module.exports = {
             if (!m.key.fromMe) {
                 const remaining = cooldown.checkCooldown(cmd.name, sender);
                 if (remaining > 0) {
-                    console.log(`⏳ [COOLDOWN] !${commandName} por ${senderName} — aguarde ${Math.ceil(remaining / 1000)}s`);
+                    const secs = Math.ceil(remaining / 1000);
+                    console.log(`⏳ [COOLDOWN] !${commandName} por ${senderName} — aguarde ${secs}s`);
                     try { await sock.sendMessage(from, { react: { text: '⏳', key: m.key } }); } catch (_) {}
+                    // Avisa o tempo em vez de silêncio: antes só reagia ⏳ e o
+                    // usuário não sabia quanto esperar. Só em PV para não
+                    // poluir grupo (em grupo a reação ⏳ já basta).
+                    if (!isGroup) {
+                        try { await sock.sendMessage(from, { text: `⏳ Aguarde *${secs}s* para usar *${effectivePrefix}${commandName}* novamente.` }, { quoted: m }); } catch (_) {}
+                    }
                     return;
                 }
             }
@@ -338,12 +345,20 @@ module.exports = {
             };
             cmdLog('início', `${senderName} → ${effectivePrefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
-            // === Command execution (com timeout anti-zumbi) === 120s p/ mídia (yt-dlp sem cookies leva 22-35s + fallback BTCH 10-15s), 45s matava !play antes do fallback terminar
-            const CMD_TIMEOUT_MS = Number(process.env.CMD_TIMEOUT_MS) || 90000;
+            // === Command execution (com timeout anti-zumbi) === p/ mídia o yt-dlp
+            // sozinho pode levar até 180s + fallback; timeout menor matava !play
+            // antes do fallback terminar. cancelToken permite ao comando
+            // cooperativo (divulgar/transmitir) parar de verdade em vez de
+            // continuar em background após o "interrompido".
+            const CMD_TIMEOUT_MS = cmd.category === 'mídia'
+                ? (Number(process.env.CMD_TIMEOUT_MEDIA_MS) || 210000)
+                : (Number(process.env.CMD_TIMEOUT_MS) || 90000);
+            const cancelToken = { cancelled: false };
+            context.cancelToken = cancelToken;
             try {
                 context.log = cmdLog;
                 const execPromise = cmd.execute(sock, m, context);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)), CMD_TIMEOUT_MS));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => { cancelToken.cancelled = true; reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)); }, CMD_TIMEOUT_MS));
                 timeoutPromise.catch(()=>{}); // evita unhandled
                 const result = await Promise.race([execPromise, timeoutPromise]);
                 if (result !== undefined) lastBotResponse = result;
@@ -365,6 +380,9 @@ module.exports = {
                     if (isConnClosed) {
                         console.warn(`⚠️ [CMD-WARN] ${effectivePrefix}${commandName}: conexão fechada (428) após ${elapsed}ms — ignorado, reconexão automática`);
                         cmdLog('WARN', `Connection Closed (após ${elapsed}ms) — socket será reconectado`);
+                        // Feedback ao usuário: antes era só warn no terminal e
+                        // parecia que o bot ignorou o comando.
+                        try { await sock.sendMessage(from, { text: `🔄 Conexão instável ao executar *${effectivePrefix}${commandName}*. Tente novamente em alguns segundos.` }, { quoted: m }); } catch (_) {}
                     } else {
                         console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
                         cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);

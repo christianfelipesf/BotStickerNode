@@ -4,7 +4,7 @@ module.exports = {
     description: 'Muta um membro no grupo (suas mensagens serão apagadas). Funciona apenas enquanto o bot estiver ligado (em RAM).',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        if (!isGroup) return;
+        if (!isGroup) return await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
 
         const adminsRaw = await utils.getAdmins(sock, from);
         const isSenderAdmin = utils.isUserAdmin(sender, adminsRaw);
