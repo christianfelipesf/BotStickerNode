@@ -305,8 +305,9 @@ async function startBot() {
                 try { dashboard.setConnectionState({ status: 'disconnected', qr: null, phone: null }); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');
-                    principalState.setDisconnected();
+                    principalState.clearSock();
                 } catch (_) {}
+                try { require('./src/services/subConnLog').connlog('principal', 'close', `code=${code ?? '?'} reason=${reasonName}`); } catch (_) {}
                 try { telegram.notifyDisconnect({ botName: config.botName, code: code ?? '?', reasonName, phone: null }).catch(()=>{}); } catch (_) {}
                 if (!global.__baileysEnabled || _qrAttempts >= MAX_QR_ATTEMPTS) {
                     if (!global.__baileysEnabled) console.log('⏸️ [Baileys] desconexão manual — não reconectando');
@@ -345,6 +346,7 @@ async function startBot() {
                 console.log(`\n🟢 ${config.botName.toUpperCase()} CONECTADO! (Versão: ${botVersion} | attemptId=${_restartNumber}-${_connAttemptId} | phone=${phone || '?'})\n`);
                 try { if (utils.checkMonthlyReset) utils.checkMonthlyReset(); } catch (_) {}
                 try { dashboard.setConnectionState({ status: 'connected', qr: null, phone }); } catch (_) {}
+                try { require('./src/services/subConnLog').connlog('principal', 'open', `phone=${phone || '?'}`); } catch (_) {}
                 try {
                     const principalState = require('./src/services/principalState');
                     // principalState guarda a versão BAILEYS (array) — sub-sessões reutilizam para o socket.

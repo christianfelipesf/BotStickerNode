@@ -49,12 +49,31 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
 
         lastBotResponse = await react(sock, m, '👀', lastBotResponse, GLOBAL_COOLDOWN);
 
-        const buffer = await downloadWithTimeout(
-            { key: m.key, message: mediaMessage },
+        // Usa a mensagem COM wrapper (m.message) — o download desembrulha
+        // sozinho e o reupload precisa do contexto original da view-once.
+        let buffer = await downloadWithTimeout(
+            { key: m.key, message: m.message },
             { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
         ).catch(() => null);
+        // Fallback DM: inverte fromMe uma vez (chave citada em privado nem
+        // sempre indica o autor; palpite trocado = reupload 404).
+        if (!buffer && m?.key && typeof from === 'string' && !from.endsWith('@g.us')) {
+            try {
+                const flipKey = { ...m.key, fromMe: !m.key.fromMe };
+                buffer = await downloadWithTimeout(
+                    { key: flipKey, message: m.message },
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                ).catch(() => null);
+                if (buffer) m.key = flipKey;
+            } catch (_) { /* mantém null */ }
+        }
 
         if (!buffer) {
+            try {
+                const hasMedia = !!mediaMessage;
+                const keys = m?.message ? Object.keys(m.message).join(',') : 'sem-message';
+                console.warn(`⚠️ [REVELAR] download falhou from=${from} hasMedia=${hasMedia} keys=${keys} keyId=${m?.key?.id || '?'} fromMe=${!!m?.key?.fromMe} temParticipant=${!!m?.key?.participant}`);
+            } catch (_) {}
             return await reactStatus(sock, m, from, false, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
@@ -163,15 +182,53 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         if (quotedMsg) {
             mediaMessage = getMediaMessage(quotedMsg);
-            if (mediaMessage) targetMsg = {
-                key: {
-                    remoteJid: from,
-                    id: quotedInfo.stanzaId,
-                    participant: quotedInfo.participant || from
-                },
-                message: mediaMessage,
-                pushName: quotedInfo.pushName
-            };
+            if (mediaMessage) {
+                const stanzaId = quotedInfo.stanzaId;
+                const isGroupChat = typeof from === 'string' && from.endsWith('@g.us');
+                let key;
+                if (isGroupChat) {
+                    // Grupo: participant é obrigatório e vem no contextInfo.
+                    key = {
+                        remoteJid: from,
+                        id: stanzaId,
+                        participant: quotedInfo.participant || from
+                    };
+                    // fromMe só true se a citada foi enviada pelo próprio bot.
+                    try {
+                        const meNum = String(sock?.user?.id || '').split(':')[0].split('@')[0];
+                        const qpNum = String(quotedInfo.participant || '').split(':')[0].split('@')[0];
+                        if (meNum && qpNum && meNum === qpNum) key.fromMe = true;
+                        else key.fromMe = false;
+                    } catch (_) { key.fromMe = false; }
+                } else {
+                    // Privado (DM / LID): participant DEVE ser omitido.
+                    // Com participant setado (= from) o reupload (updateMediaMessage)
+                    // falha e o download da view-once retorna 404/timeout.
+                    // Por isso em grupo funcionava e no privado não.
+                    let fromMe = false;
+                    try {
+                        const meRaw = String(sock?.user?.id || '').split(':')[0];
+                        const meNum = meRaw.split('@')[0];
+                        const qpRaw = String(quotedInfo.participant || '').split(':')[0];
+                        const qpNum = qpRaw.split('@')[0];
+                        if (qpNum && meNum && qpNum === meNum) fromMe = true;
+                        // Sem participant no contextInfo (comum em DM): assume
+                        // mensagem do outro lado (fromMe=false) — caso mais
+                        // comum do !revelar no privado (usuário cita o próprio
+                        // view-once enviado ao bot/sub).
+                        else fromMe = false;
+                    } catch (_) { fromMe = false; }
+                    key = { remoteJid: from, id: stanzaId, fromMe };
+                }
+                targetMsg = {
+                    key,
+                    // Passa a mensagem CITADA COM o wrapper viewOnce/ephemeral,
+                    // não só o imageMessage desembrulhado: o downloadMediaMessage
+                    // desembrulha sozinho e o reupload precisa do contexto original.
+                    message: quotedMsg,
+                    pushName: quotedInfo.pushName
+                };
+            }
         } else {
             mediaMessage = getMediaMessage(m.message);
             if (mediaMessage) targetMsg = m;
@@ -186,17 +243,32 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         lastBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
 
-        const buffer = await downloadWithTimeout(
-            targetMsg,
-            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-        );
-
-        if (!buffer) throw new Error();
-
         if (action === 'reveal') {
+            // Reveal faz o próprio download (1x só) — evita download duplo.
             const revealOpts = { ...explicitOpts, config };
             return await revealViewOnce(sock, from, targetMsg, lastBotResponse, GLOBAL_COOLDOWN, revealOpts);
         }
+
+        let buffer = null;
+        try {
+            buffer = await downloadWithTimeout(
+                targetMsg,
+                { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+            );
+        } catch (_) { buffer = null; }
+        // Fallback DM: inverte fromMe uma vez (quoted sem participant não diz
+        // quem enviou; o palpite inicial pode estar trocado e o reupload falha).
+        if (!buffer && targetMsg?.key && typeof from === 'string' && !from.endsWith('@g.us')) {
+            try {
+                targetMsg.key = { ...targetMsg.key, fromMe: !targetMsg.key.fromMe };
+                buffer = await downloadWithTimeout(
+                    targetMsg,
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                );
+            } catch (_) { buffer = null; }
+        }
+
+        if (!buffer) throw new Error('download-falhou');
 
         // caption padrão para mídias convertidas (estilo menu) — usa nome, evita LID aleatório
         const senderJid = m.key.participant || m.key.remoteJid || from;

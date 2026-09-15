@@ -29,16 +29,37 @@ function vlog(msg) {
 
 // Avisa o dono da sub no privado do bot principal (via sock principal).
 // Usado em: restore pós-restart e reconnect automático (515/428/transiente).
-// Nunca derruba nada — só sendMessage silencioso; falha = ignora.
+// Nunca derruba nada — só sendMessage; resultado vai para logs/subs/.
+// Retorna true se enviou, false caso contrário.
 async function notifyOwner(ownerJid, text) {
-    if (!ownerJid || !text) return;
+    if (!ownerJid || !text) return false;
+    // Normaliza: remove sufixo de device (":12@s.whatsapp.net" -> "@s.whatsapp.net")
+    // pois sendMessage para JID com device falha silenciosamente.
+    let target = String(ownerJid);
+    try { target = target.replace(/:\d+(@)/, '$1'); } catch (_) {}
+    const { connlog } = require('./subConnLog');
+    let psock = null;
+    try { psock = principalState.getSock?.() || global.__baileysSock || null; } catch (_) {}
+    if (!psock) {
+        connlog(ownerJid, 'notify-fail', 'sem-principal-sock');
+        return false;
+    }
+    try { if (!principalState.getState().connected) { connlog(ownerJid, 'notify-fail', 'principal-offline'); return false; } } catch (_) {}
     try {
-        let psock = null;
-        try { psock = principalState.getSock?.() || global.__baileysSock || null; } catch (_) {}
-        if (!psock) return;
-        try { if (!principalState.getState().connected) return; } catch (_) {}
-        await psock.sendMessage(ownerJid, { text });
-    } catch (_) {}
+        await psock.sendMessage(target, { text });
+        connlog(ownerJid, 'notify-ok', `para=${target.split('@')[0]} len=${String(text).length}`);
+        return true;
+    } catch (e) {
+        connlog(ownerJid, 'notify-fail', `send-erro=${e?.message || e}`.slice(0, 200));
+        return false;
+    }
+}
+
+// Re-tenta o aviso uma vez após 15s (principal pode ainda estar estabilizando).
+function notifyOwnerWithRetry(ownerJid, text) {
+    notifyOwner(ownerJid, text).then((ok) => {
+        if (!ok) setTimeout(() => { notifyOwner(ownerJid, text).catch?.(() => {}); }, 15000);
+    }).catch?.(() => {});
 }
 
 const { readConfig } = require('../database/utils');
@@ -687,6 +708,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
             sessions.delete(ownerJid);
             loginCooldowns.delete(ownerJid);
             console.log(`🔐 [sub:${hashJid(ownerJid)}] cleanup (${reason})`);
+            try { require('./subConnLog').connlog(ownerJid, 'end', `cleanup-${reason} qrAttempts=${session.qrAttempts}`); } catch (_) {}
             await safeCallback(session.onClosed, ownerJid, reason);
         };
 
@@ -769,6 +791,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     const errData = u.lastDisconnect?.error?.data ? JSON.stringify(u.lastDisconnect.error.data).slice(0, 200) : '';
                     const errLower = String(errMsg).toLowerCase();
                     dlog(`${hashJid(ownerJid)} CLOSE code=${code} msg="${errMsg}" data="${errData}" attempts=${session.qrAttempts} connected=${!!session._wasConnected}`);
+                    try { require('./subConnLog').connlog(ownerJid, 'close', `code=${code} wasOnline=${!!session._wasConnected} msg=${String(errMsg).slice(0, 120)}`); } catch (_) {}
                     const isLoginPhase = !session._wasConnected;
                     const isTransient = (
                         code === 408 || code === 428 || code === 515 || code === 502 ||
@@ -788,18 +811,20 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                             try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                             sessions.delete(ownerJid);
                             loginCooldowns.delete(ownerJid);
+                            try { require('./subConnLog').connlog(ownerJid, 'end', `restart-loop-${why} abort>5`); } catch (_) {}
                             safeCallback(session.onClosed, ownerJid, 'restart-loop');
                             return;
                         }
                         const delay = Math.min(30000, 3000 * Math.pow(2, session._restartCount - 1)) + Math.floor(Math.random() * 1000);
                         dlog(`${hashJid(ownerJid)} ${why} → recriando sock sem apagar credenciais (${session._restartCount}/5) em ${delay}ms, qrAttempts=${session.qrAttempts}`);
+                        try { require('./subConnLog').connlog(ownerJid, 'recreate', `${why} em=${Math.round(delay / 1000)}s try=${session._restartCount}/5`); } catch (_) {}
                         const wasOnline = !!session._wasConnected;
                         // Avisa no privado do dono (via principal) que vai tentar reconectar.
                         // Só avisa quem já estava ONLINE — fase de QR já tem suas próprias mensagens.
                         if (wasOnline) {
-                            notifyOwner(ownerJid,
+                            notifyOwnerWithRetry(ownerJid,
                                 `🔄 *Sub-sessão caiu (${why})*\nTentando reconectar automaticamente em ~${Math.round(delay / 1000)}s…\nVocê não precisa fazer nada.`
-                            ).catch?.(() => {});
+                            );
                         }
                         destroySock(sock);
                         const saved = {
@@ -854,6 +879,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
+                        try { require('./subConnLog').connlog(ownerJid, 'end', 'logged-out cred-apagadas'); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, 'logged-out');
                     } else if (isTransient && isLoginPhase) {
                         // Fase de QR/pairing: close transitório (428/408/515/502/503/timeout)
@@ -867,12 +893,14 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
+                        try { require('./subConnLog').connlog(ownerJid, 'end', `unauthorized-${code} cred-apagadas`); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, 'unauthorized');
                     } else if (session.qrAttempts >= QR_MAX_ATTEMPTS) {
                         try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                         destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
+                        try { require('./subConnLog').connlog(ownerJid, 'end', 'qr-exhausted'); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, 'qr-exhausted');
                     } else if (isTransient) {
                         // Sessão já conectada que caiu com erro transitório, ou fase de login
@@ -884,11 +912,13 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                         destroySock(sock);
                         try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
                         sessions.delete(ownerJid);
+                        try { require('./subConnLog').connlog(ownerJid, 'end', `auth-failed-${code}`); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, `auth-failed-${code}`);
                     } else {
                         try { if (session.qrTimer) { clearTimeout(session.qrTimer); session.qrTimer = null; } } catch (_) {}
                         destroySock(sock);
                         sessions.delete(ownerJid);
+                        try { require('./subConnLog').connlog(ownerJid, 'end', `close-${code}`); } catch (_) {}
                         await safeCallback(session.onClosed, ownerJid, `close-${code}`);
                     }
                 } else if (u.connection === 'open') {
@@ -921,6 +951,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
                     persistSessionMeta(session);
                     attachMessagesHandler(session, sock);
                     dlog(`${hashJid(ownerJid)} ✅ CONECTADO phone=${session.phoneNumber}`);
+                    try { require('./subConnLog').connlog(ownerJid, 'open', `phone=${session.phoneNumber || '?'}`); } catch (_) {}
                     await safeCallback(session.onConnected, ownerJid, { phoneNumber: session.phoneNumber });
                 } else if (u.connection === 'connecting') {
                     dlog(`${hashJid(ownerJid)} estado: connecting…`);
@@ -928,11 +959,13 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
             } catch (e) {
                 dlog(`${hashJid(ownerJid)} conn.update ERRO: ${e?.message || e}`);
                 try { dlog(`stack: ${e?.stack?.split('\n').slice(0, 4).join(' | ')}`); } catch (_) {}
+                try { require('./subConnLog').connlog(ownerJid, 'bug', `conn.update-ERRO ${e?.message || e} | ${(e?.stack || '').split('\n')[1]?.trim() || ''}`.slice(0, 400)); } catch (_) {}
             }
         });
 
     } catch (e) {
         console.error('💥 [sub:startLogin]', e?.message || e);
+        try { require('./subConnLog').connlog(ownerJid, 'bug', `startLogin-fail ${e?.message || e} | ${(e?.stack || '').split('\n')[1]?.trim() || ''}`.slice(0, 400)); } catch (_) {}
         session.connecting = false;
         sessions.delete(ownerJid);
         await safeCallback(session.onClosed, ownerJid, e?.message || 'init-failed');
@@ -959,21 +992,28 @@ async function logout(ownerJid) {
     destroySock(session.sock);
     try { fs.rmSync(sessionFolder(ownerJid), { recursive: true, force: true }); } catch (_) {}
     sessions.delete(ownerJid);
+    try { require('./subConnLog').connlog(ownerJid, 'end', 'logout-manual'); } catch (_) {}
     return true;
 }
 
 async function restoreFromDisk(onConnected) {
+    const { connlog } = require('./subConnLog');
     try {
         // Restore sequencial e espaçado: 1 sub por vez, só com principal online.
         if (!principalState.getState().connected) {
             try { await principalState.waitForConnection(120000); } catch (e) {
                 dlog(`restore adiado: principal offline (${e?.message})`);
+                connlog('boot', 'restore-adiado', `principal-offline ${e?.message || ''}`);
                 return [];
             }
         }
-        if (!fs.existsSync(SUB_SESSIONS_DIR)) return [];
+        if (!fs.existsSync(SUB_SESSIONS_DIR)) {
+            connlog('boot', 'restore-vazio', 'sem-pasta-subs');
+            return [];
+        }
         const dirs = fs.readdirSync(SUB_SESSIONS_DIR, { withFileTypes: true }).filter(d => d.isDirectory());
         const restored = [];
+        connlog('boot', 'restore-inicio', `dirs=${dirs.length}`);
         for (const d of dirs) {
             if (d.name.includes('_pair_')) continue;
             const metaPath = path.join(SUB_SESSIONS_DIR, d.name, META_FILE);
@@ -982,19 +1022,22 @@ async function restoreFromDisk(onConnected) {
             try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch (_) { continue; }
             if (!meta || !meta.ownerJid) continue;
             try {
+                connlog(meta.ownerJid, 'restore-try', `dir=${d.name} phone=${meta.phoneNumber || '?'}`);
                 // Avisa o dono no privado do principal que o bot reiniciou e vai reconectar.
-                await notifyOwner(meta.ownerJid,
+                notifyOwnerWithRetry(meta.ownerJid,
                     `🔄 *Bot reiniciado*\nTentando reconectar sua sub-sessão automaticamente…\nVocê não precisa escanear QR de novo.`
                 );
                 await _doStartLogin(meta.ownerJid, {
                     onQr: async () => {},
                     onConnected: async (jid, info) => {
                         try { if (typeof onConnected === 'function') await onConnected(jid); } catch (_) {}
+                        connlog(jid, 'restore-ok', `phone=${info?.phoneNumber || meta.phoneNumber || '?'}`);
                         await notifyOwner(jid,
                             `✅ *Sub-sessão reconectada após reinício!*\n📞 Número: \`${info?.phoneNumber || meta.phoneNumber || '?'}\`\nPode usar normalmente.`
                         );
                     },
                     onClosed: async (jid, reason) => {
+                        connlog(jid, 'restore-fail', `reason=${reason}`);
                         if (reason === 'unauthorized' || reason === 'logged-out' || reason === 'close-401' || reason === 'close-403') {
                             try {
                                 const dir2 = path.join(SUB_SESSIONS_DIR, hashJid(jid));
@@ -1017,11 +1060,14 @@ async function restoreFromDisk(onConnected) {
                 await sleep(LOGIN_MIN_GAP_MS);
             } catch (e) {
                 dlog(`${hashJid(meta.ownerJid)} falha ao restaurar: ${e?.message}`);
+                connlog(meta.ownerJid, 'restore-erro', `${e?.message || e}`.slice(0, 200));
             }
         }
+        connlog('boot', 'restore-fim', `ok=${restored.length}`);
         return restored;
     } catch (e) {
         dlog(`restoreDisk erro: ${e?.message}`);
+        try { require('./subConnLog').connlog('boot', 'restore-erro-fatal', `${e?.message || e}`.slice(0, 200)); } catch (_) {}
         return [];
     }
 }
