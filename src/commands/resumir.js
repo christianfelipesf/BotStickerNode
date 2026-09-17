@@ -3,7 +3,7 @@ module.exports = {
     aliases: ['resumo', 'resuma'],
     category: 'ai',
     description: 'Resume as últimas mensagens do chat',
-    async execute(sock, m, { from, isGroup, fullArgsText, config, utils, model, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, isGroup, fullArgsText, config, utils, model, lastBotResponse, GLOBAL_COOLDOWN, abortSignal }) {
         const { react, getBotName, getMessageText, getChatHistory } = utils;
         
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
@@ -52,14 +52,15 @@ module.exports = {
                     finalPrompt = `${basePrompt}\n\n${contentToSummarize}`;
                 }
             }
-            const result = await model.generateContent(finalPrompt);
+            const result = await model.generateContent(finalPrompt, { signal: abortSignal });
             const responseText = result.response.text();
             
             if (!responseText) throw new Error('Resposta vazia da IA');
             await sock.sendMessage(from, { text: responseText }, { quoted: m }); 
             return await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
-        } catch (e) { 
-            console.error('❌ [RESUMO] Erro:', e);
+        } catch (e) {
+            if (e?.code === 'ABORTED' || abortSignal?.aborted) return currentBotResponse;
+            console.error('❌ [RESUMO] Erro:', e?.response?.data || e.message || e);
             await sock.sendMessage(from, { text: '❌ Falha ao resumir. Verifique a chave da IA ou o limite de uso.' }, { quoted: m }); 
             return currentBotResponse;
         }

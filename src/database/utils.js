@@ -13,10 +13,10 @@ const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require(
 // ============================================================
 // Prepared statements (group_state)
 // ============================================================
-const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme FROM group_state WHERE jid = ?');
+const _gsGet = db.prepare('SELECT muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme, extra FROM group_state WHERE jid = ?');
 const _gsUpsert = db.prepare(`
-    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO group_state (jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme, extra)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(jid) DO UPDATE SET
         muted = excluded.muted,
         warnings = excluded.warnings,
@@ -27,10 +27,11 @@ const _gsUpsert = db.prepare(`
         prefix = excluded.prefix,
         sticker_pack = excluded.sticker_pack,
         sticker_author = excluded.sticker_author,
-        theme = excluded.theme
+        theme = excluded.theme,
+        extra = excluded.extra
 `);
 const _gsDelete = db.prepare('DELETE FROM group_state WHERE jid = ?');
-const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme FROM group_state');
+const _gsAll = db.prepare('SELECT jid, muted, warnings, antilink, activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme, extra FROM group_state');
 
 // ============================================================
 // Prepared statements (config + stats)
@@ -139,10 +140,34 @@ function countBlacklist(groupJid) {
     try { const row = _blCount.get(groupJid); return row ? row.c : 0; } catch (_) { return 0; }
 }
 
+function normalizePhoneNumber(raw, { min = 8 } = {}) {
+    // Aceita qualquer formatação: "+55 13 93631-2912", "(13) 93631-2912",
+    // "13 93631-2912", "5513936312912". Extrai só dígitos do texto inteiro
+    // (não quebra em pedaços) e completa o DDI 55 quando for número BR
+    // com DDD mas sem país (10 ou 11 dígitos).
+    if (raw == null) return null;
+    let digits = String(raw).replace(/\D/g, '');
+    if (!digits) return null;
+    // Prefixo internacional "00" (ex: 0055...) -> remove
+    if (digits.length > 11 && digits.startsWith('00')) digits = digits.slice(2);
+    // BR sem DDI: 10 dígitos (DDD + 8) ou 11 (DDD + 9) -> prepende 55.
+    // 12/13 dígitos com 55 na frente já estão completos; demais tamanhos
+    // (estrangeiros) são mantidos como estão.
+    if (digits.length === 10 || digits.length === 11) digits = '55' + digits;
+    if (digits.length < min || digits.length > 15) return null;
+    return digits;
+}
+
+function extractPhoneFromText(text, opts) {
+    // Wrapper p/ comandos: extrai o número do texto completo já com a
+    // normalização BR (evita o bug de match(/\d{8,15}/g) que quebra
+    // "+55 13 93631-2912" em ["13","93631","2912"]).
+    return normalizePhoneNumber(text, opts);
+}
+
 function parseNumberToJid(raw) {
-    if (!raw) return null;
-    const digits = String(raw).replace(/\D/g, '');
-    if (digits.length < 8 || digits.length > 15) return null;
+    const digits = normalizePhoneNumber(raw);
+    if (!digits) return null;
     return `${digits}@s.whatsapp.net`;
 }
 
@@ -150,10 +175,7 @@ function parseNumberToJid(raw) {
 // Login permitido (!addlogin / !login) — números autorizados pelo dono
 // ============================================================
 function normalizeLoginPhone(raw) {
-    if (raw == null) return null;
-    const digits = String(raw).replace(/\D/g, '');
-    if (digits.length < 8 || digits.length > 15) return null;
-    return digits;
+    return normalizePhoneNumber(raw);
 }
 
 function _loginAllowedStmts() {
@@ -324,7 +346,7 @@ const DEFAULT_CONFIG = {
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
-    aiModel: "openrouter/free",
+    aiModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     aiMaxTokens: 500,
     aiTemperature: 0.7,
     aiMaxPromptLength: 2000,
@@ -362,7 +384,11 @@ const DEFAULT_CONFIG = {
     dashboardChatBlocked: true,
     instagramCookies: '',
     cobaltInstance: '',
-    cobaltApiKey: ''
+    cobaltApiKey: '',
+    splashEnabled: true,
+    splashInterval: 40,
+    splashWithImage: true,
+    splashCooldownMs: 90000
 };
 
 let _configCache = null;
@@ -446,11 +472,14 @@ function ensureGroupState(jid) {
 function parseGroupState(row) {
     const mutedRaw = safeJson(row.muted, {});
     const muted = (mutedRaw && typeof mutedRaw === 'object' && !Array.isArray(mutedRaw)) ? mutedRaw : {};
+    const extraRaw = safeJson(row.extra, {});
+    const extra = (extraRaw && typeof extraRaw === 'object' && !Array.isArray(extraRaw)) ? extraRaw : {};
     return {
         muted,
         warnings: safeJson(row.warnings, {}),
         antilink: !!row.antilink,
-        activity: safeJson(row.activity, {})
+        activity: safeJson(row.activity, {}),
+        extra
     };
 }
 
@@ -459,7 +488,7 @@ function parseGroupState(row) {
 // Ela sempre grava as 11 colunas, então é impossível repetir o bug de
 // "Too few parameter values" (que fez o flush do rank nunca persistir).
 // Chaves do patch usam os nomes das COLUNAS (muted, warnings, antilink,
-// activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme).
+// activity, bot_name, menu_image, prefix, sticker_pack, sticker_author, theme, extra).
 // ============================================================
 function writeGroupState(jid, patch = {}) {
     if (!jid) throw new Error('writeGroupState: jid obrigatório');
@@ -477,7 +506,8 @@ function writeGroupState(jid, patch = {}) {
         pick('prefix', null),
         pick('sticker_pack', null),
         pick('sticker_author', null),
-        pick('theme', null)
+        pick('theme', null),
+        pick('extra', '{}')
     );
 }
 
@@ -895,7 +925,10 @@ function clearFeedback(kind) {
 function getGroupData(jid) {
     try {
         const row = _gsGet.get(jid);
-        if (row) return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, theme: row.theme || undefined, ...parseGroupState(row) };
+        if (row) {
+            const parsed = parseGroupState(row);
+            return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, theme: row.theme || undefined, ...parsed, ...(parsed.extra || {}) };
+        }
     } catch (_) {}
     return {};
 }
@@ -904,6 +937,8 @@ function setGroupData(jid, data) {
     const cur = ensureGroupState(jid);
     const curParsed = parseGroupState(cur);
     const merged = { ...curParsed };
+    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg']);
+    merged.extra = { ...(curParsed.extra || {}) };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
     let prefix = cur.prefix ?? null;
@@ -917,6 +952,10 @@ function setGroupData(jid, data) {
         else if (k === 'stickerPack') stickerPack = v == null ? null : String(v).slice(0, 30) || null;
         else if (k === 'stickerAuthor') stickerAuthor = v == null ? null : String(v).slice(0, 30) || null;
         else if (k === 'theme') theme = v == null ? null : String(v).trim().toLowerCase().slice(0, 20) || null;
+        else if (EXTRA_KEYS.has(k)) {
+            if (v === null || v === undefined) delete merged.extra[k];
+            else merged.extra[k] = v;
+        }
         else merged[k] = v;
     }
     let mutedObj = merged.muted;
@@ -936,7 +975,8 @@ function setGroupData(jid, data) {
         prefix,
         sticker_pack: stickerPack,
         sticker_author: stickerAuthor,
-        theme
+        theme,
+        extra: JSON.stringify(merged.extra || {})
     });
 }
 
@@ -1508,6 +1548,139 @@ function getGroupAnalytics(jid, days = 7) {
 }
 
 // ============================================================
+// Fichas de pessoas (!ficha) — escopo global
+// ============================================================
+function _pessoaStmts() {
+    return {
+        get: db.prepare('SELECT * FROM pessoas WHERE nome_norm = ?'),
+        search: db.prepare("SELECT * FROM pessoas WHERE nome LIKE '%' || ? || '%' ESCAPE '\\' ORDER BY nome ASC LIMIT ?"),
+        list: db.prepare('SELECT * FROM pessoas ORDER BY nome ASC LIMIT ? OFFSET ?'),
+        count: db.prepare('SELECT COUNT(*) as c FROM pessoas'),
+        byMonth: db.prepare("SELECT * FROM pessoas WHERE nascimento IS NOT NULL AND substr(nascimento, 6, 2) = ? ORDER BY substr(nascimento, 9, 2) ASC"),
+        byCity: db.prepare('SELECT * FROM pessoas WHERE cidade LIKE ? ESCAPE \'\\\' ORDER BY nome ASC'),
+        cityGroups: db.prepare('SELECT cidade, COUNT(*) as total FROM pessoas WHERE cidade IS NOT NULL AND cidade != \'\' GROUP BY cidade ORDER BY total DESC, cidade ASC'),
+        random: db.prepare('SELECT * FROM pessoas ORDER BY RANDOM() LIMIT 1'),
+        upsert: db.prepare(`INSERT INTO pessoas (nome, nome_norm, nascimento, cidade, descricao, status, hobby, pix, instagram, linkedin, foto_path, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(nome_norm) DO UPDATE SET nome=excluded.nome, nascimento=excluded.nascimento, cidade=excluded.cidade, descricao=excluded.descricao, status=excluded.status, hobby=excluded.hobby, pix=excluded.pix, instagram=excluded.instagram, linkedin=excluded.linkedin, foto_path=COALESCE(excluded.foto_path, pessoas.foto_path), updated_at=excluded.updated_at`),
+        update: db.prepare('UPDATE pessoas SET nome = COALESCE(?, nome), nascimento = COALESCE(?, nascimento), cidade = COALESCE(?, cidade), descricao = COALESCE(?, descricao), status = COALESCE(?, status), hobby = COALESCE(?, hobby), pix = COALESCE(?, pix), instagram = COALESCE(?, instagram), linkedin = COALESCE(?, linkedin), foto_path = COALESCE(?, foto_path), updated_at = ? WHERE nome_norm = ?'),
+        del: db.prepare('DELETE FROM pessoas WHERE nome_norm = ?'),
+        clearFoto: db.prepare('UPDATE pessoas SET foto_path = NULL, updated_at = ? WHERE nome_norm = ?')
+    };
+}
+
+function _normPessoa(nome) {
+    try { return require('../services/ficha').normalizeNome(nome); }
+    catch (_) { return String(nome || '').trim().toLowerCase().slice(0, 40); }
+}
+
+function _escapeLike(s) {
+    return String(s || '').replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
+function upsertPessoa(data = {}) {
+    const nome = String(data.nome || '').trim().slice(0, 40);
+    if (nome.length < 2) return { ok: false, error: 'Nome muito curto (mín. 2 letras).' };
+    const nomeNorm = _normPessoa(nome);
+    if (!nomeNorm) return { ok: false, error: 'Nome inválido.' };
+    try {
+        const s = _pessoaStmts();
+        const prev = s.get.get(nomeNorm) || null;
+        const now = Date.now();
+        const pick = (k) => (data[k] !== undefined ? data[k] : (prev ? prev[k] : null));
+        s.upsert.run(nome, nomeNorm, pick('nascimento'), pick('cidade'), pick('descricao'), pick('status'), pick('hobby'), pick('pix'), pick('instagram'), pick('linkedin'), data.foto_path !== undefined ? data.foto_path : (prev ? prev.foto_path : null), data.created_by || (prev ? prev.created_by : null), prev ? prev.created_at : now, now);
+        return { ok: true, created: !prev };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function getPessoa(nome) {
+    const norm = _normPessoa(nome);
+    if (!norm) return null;
+    try { return _pessoaStmts().get.get(norm) || null; } catch (_) { return null; }
+}
+
+function searchPessoas(term, limit = 5) {
+    const t = String(term || '').trim().slice(0, 40);
+    if (!t) return [];
+    try { return _pessoaStmts().search.all(_escapeLike(t), Math.max(1, Math.min(10, Number(limit) || 5))) || []; } catch (_) { return []; }
+}
+
+function listPessoas(limit = 10, offset = 0) {
+    try {
+        const lim = Math.max(1, Math.min(50, Number(limit) || 10));
+        const off = Math.max(0, Number(offset) || 0);
+        return _pessoaStmts().list.all(lim, off) || [];
+    } catch (_) { return []; }
+}
+
+function countPessoas() {
+    try { const r = _pessoaStmts().count.get(); return r ? r.c : 0; } catch (_) { return 0; }
+}
+
+function deletePessoa(nome) {
+    const norm = _normPessoa(nome);
+    if (!norm) return false;
+    try { return _pessoaStmts().del.run(norm).changes > 0; } catch (_) { return false; }
+}
+
+function updatePessoa(nome, patch = {}) {
+    const norm = _normPessoa(nome);
+    if (!norm) return { ok: false, error: 'Nome inválido.' };
+    try {
+        const s = _pessoaStmts();
+        const prev = s.get.get(norm);
+        if (!prev) return { ok: false, error: 'Ficha não encontrada.' };
+        const novoNome = patch.nome !== undefined ? String(patch.nome).trim().slice(0, 40) : null;
+        if (novoNome !== null && novoNome.length < 2) return { ok: false, error: 'Novo nome muito curto.' };
+        const r = s.update.run(novoNome || null, patch.nascimento !== undefined ? patch.nascimento : null, patch.cidade !== undefined ? patch.cidade : null, patch.descricao !== undefined ? patch.descricao : null, patch.status !== undefined ? patch.status : null, patch.hobby !== undefined ? patch.hobby : null, patch.pix !== undefined ? patch.pix : null, patch.instagram !== undefined ? patch.instagram : null, patch.linkedin !== undefined ? patch.linkedin : null, patch.foto_path !== undefined ? patch.foto_path : null, Date.now(), norm);
+        if (novoNome) {
+            try {
+                const newNorm = _normPessoa(novoNome);
+                if (newNorm && newNorm !== norm) db.prepare('UPDATE pessoas SET nome_norm = ? WHERE nome_norm = ?').run(newNorm, norm);
+            } catch (_) {}
+        }
+        return { ok: r.changes > 0 };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function clearPessoaFoto(nome) {
+    const norm = _normPessoa(nome);
+    if (!norm) return false;
+    try { return _pessoaStmts().clearFoto.run(Date.now(), norm).changes > 0; } catch (_) { return false; }
+}
+
+function aniversariantes(mes) {
+    const mm = String(mes).padStart(2, '0');
+    if (!/^(0[1-9]|1[0-2])$/.test(mm)) return [];
+    try { return _pessoaStmts().byMonth.all(mm) || []; } catch (_) { return []; }
+}
+
+function pessoasPorCidade(cidade) {
+    const c = String(cidade || '').trim();
+    if (!c) return [];
+    try { return _pessoaStmts().byCity.all(`%${_escapeLike(c)}%`) || []; } catch (_) { return []; }
+}
+
+function agruparCidades() {
+    try { return _pessoaStmts().cityGroups.all() || []; } catch (_) { return []; }
+}
+
+function pessoaAleatoria() {
+    try { return _pessoaStmts().random.get() || null; } catch (_) { return null; }
+}
+
+async function saveFichaPhoto(buffer, nomeNorm) {
+    if (!buffer || buffer.length > 5 * 1024 * 1024) throw new Error('Imagem muito grande (max 5MB)');
+    const hash = crypto.createHash('md5').update(String(nomeNorm || Date.now())).digest('hex');
+    const fileName = `ficha_${hash}.jpg`;
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    const filePath = path.join(uploadsDir, fileName);
+    await sharp(buffer, { failOn: 'none' }).rotate().resize({ width: 512, height: 512, fit: 'cover' }).jpeg({ quality: 85 }).toFile(filePath);
+    return `uploads/${fileName}`;
+}
+
+// ============================================================
 // Helper functions
 // ============================================================
 function formatUptime(seconds) {
@@ -1795,7 +1968,7 @@ module.exports = {
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,
     canAdminControl,
     ...muteApi,
-    getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid,
+    getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid, normalizePhoneNumber, extractPhoneFromText,
     normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
     getSenderLoginPhones, isBotOwner, canUseLogin,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
@@ -1808,6 +1981,8 @@ module.exports = {
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     insertDashboardVisit, getActiveUsers, getVisitHistory, cleanupDashboardVisits,
     addFeedback, listFeedback, countFeedback, clearFeedback, FEEDBACK_MAX, FEEDBACK_LIMIT,
+    upsertPessoa, getPessoa, searchPessoas, listPessoas, countPessoas, deletePessoa, updatePessoa, clearPessoaFoto,
+    aniversariantes, pessoasPorCidade, agruparCidades, pessoaAleatoria, saveFichaPhoto,
     flushNow, checkpointWal,
     DEFAULT_CONFIG,
     getDefaultConfig: () => ({ ...DEFAULT_CONFIG })

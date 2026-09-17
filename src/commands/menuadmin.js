@@ -31,8 +31,14 @@ module.exports = {
         const text = `*${botName} — Menu Admin* 🛡️\n_comandos de administração_\n\n` +
             `╭─── *MODERAÇÃO* ───\n` +
             `│ 🚫 *${p}ban* (marque/responda) — remove membro\n` +
+            `│ 👑 *${p}promover* (marque/responda) — vira admin\n` +
+            `│ 📉 *${p}rebaixar* (marque/responda) — tira admin\n` +
+            `│ ➕ *${p}add* <número> — adiciona membro\n` +
+            `│ 🔒 *${p}fechar* / *${p}abrir* — fecha/abre o grupo\n` +
+            `│ 👑 *${p}admins* — lista e marca admins\n` +
             `│ ⛔ *${p}listanegra* [@/nº] — lista negra com auto-ban ao voltar\n` +
             `│ ⚠️ *${p}adv* (marque) — advertência 3/3 = ban\n` +
+            `│ 🔍 *${p}veradv* [@user] — consulta advertências\n` +
             `│ ✅ *${p}limparadv* [@user|all] — limpa advertências\n` +
             `│ 🛡️ *${p}antilink* — ativa/desativa filtro de links\n` +
             `│ 🚨 *${p}antiflood* — ativa/configura antiflood (admin desligado por padrão)\n` +
@@ -47,6 +53,12 @@ module.exports = {
             `╰───────────────\n\n` +
             `╭─── *GRUPO* ───\n` +
             `│ 📊 *${p}infogrupo* — análise do grupo (alias ${p}analise, ${p}grupo)\n` +
+            `│ 📜 *${p}regras* — vê regras (admin: ${p}regras set <texto>)\n` +
+            `│ 🔔 *${p}avisosgrupo* on|off|ver — saída, promoção, rebaixamento e mudanças\n` +
+            `│ 👋 *${p}bemvindo* on|off|msg|teste — só boas-vindas (entrada)\n` +
+            `│ 💡 *${p}splash* status|teste|reset — curiosidade automática (on/off: só dono)\n` +
+            `│ 📊 *${p}enquete* pergunta | op1 ; op2 — votação nativa\n` +
+            `│ 👻 *${p}inativos* [n] — lista fantasmas do mês\n` +
             `│ 📢 *${p}mencionar* [texto] — marca todos\n` +
             `│ 💬 *${p}cita* (responda mensagem) — reescreve marcando todos\n` +
             `│ 🏷️ *${p}nome* <nome> — nome do bot no grupo\n` +

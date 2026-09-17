@@ -48,6 +48,25 @@ async function send(chatId, text, opts = {}) {
     }
 }
 
+async function sendDocument(chatId, buffer, filename, caption, opts = {}) {
+    const api = _getApi();
+    if (!api) return { ok: false, error: 'not_configured' };
+    try {
+        const form = new FormData();
+        form.append('chat_id', String(chatId || _getAllowedChatId()));
+        form.append('document', new Blob([buffer], { type: 'application/zip' }), filename || 'dump.zip');
+        if (caption) {
+            form.append('caption', String(caption).slice(0, 1024));
+            form.append('parse_mode', opts.parseMode || 'Markdown');
+        }
+        const res = await api.post('/sendDocument', form);
+        return { ok: !!res.data?.ok };
+    } catch (e) {
+        console.warn(`⚠️ [telegramBot] sendDocument falhou: ${e.response?.data?.description || e.message}`);
+        return { ok: false, error: e.response?.data?.description || e.message };
+    }
+}
+
 function isAuthorized(chatId) {
     const allowed = _getAllowedChatId();
     if (!allowed) return false;
@@ -141,6 +160,7 @@ async function handleUpdate(update) {
             `/broadcast <texto> — envia para todos os grupos ativos`,
             `foto com legenda /broadcast <texto> — broadcast com imagem`,
             `/logs — últimos logs do terminal`,
+            `/dump — gera e envia backup (bot.db, .env com API keys, uploads)`,
             `/help — esta ajuda`
         ].join('\n');
         await send(chatId, help);
@@ -238,6 +258,24 @@ async function handleUpdate(update) {
         return;
     }
 
+    if (lower === '/dump' || lower.startsWith('/dump ')) {
+        try {
+            await send(chatId, `📦 Gerando backup (inclui .env com API keys)...`);
+            const { buildDumpZip, cleanupDumpZip } = require('./dump');
+            const fs = require('fs');
+            const { zipPath, zipName, includedNames, sizeKb } = buildDumpZip();
+            try {
+                const buf = fs.readFileSync(zipPath);
+                const caption = `📦 Backup OK\n${includedNames.map(n => `• ${n}`).join('\n')}\n💾 ${sizeKb} KB\n⚠️ Contém .env com API keys — mantenha em local seguro.`;
+                const r = await sendDocument(chatId, buf, zipName, caption);
+                if (!r.ok) await send(chatId, `❌ Falha ao enviar dump: ${r.error}`, { parseMode: null });
+            } finally {
+                cleanupDumpZip(zipPath);
+            }
+        } catch (e) { await send(chatId, `❌ Erro dump: ${e.message}`, { parseMode: null }); }
+        return;
+    }
+
     // fallback: eco help
     await send(chatId, `❓ Comando desconhecido: \`${text.slice(0,40)}\`\nUse /help`);
 }
@@ -285,7 +323,7 @@ function start(opts = {}) {
     if (_pollTimer.unref) _pollTimer.unref();
     // primeira chamada imediata
     pollOnce().catch(()=>{});
-    console.log(`🤖 [telegramBot] polling ativo → chat ${String(chat).slice(0,4)}**** cmds: /restart /reconnect /qr /ativar /desativar /broadcast`);
+    console.log(`🤖 [telegramBot] polling ativo → chat ${String(chat).slice(0,4)}**** cmds: /restart /reconnect /qr /ativar /desativar /broadcast /logs /dump`);
     return _pollTimer;
 }
 
@@ -294,4 +332,4 @@ function stop() {
     _pollTimer = null;
 }
 
-module.exports = { start, stop, send, handleUpdate, isAuthorized };
+module.exports = { start, stop, send, sendDocument, handleUpdate, isAuthorized };

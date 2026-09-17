@@ -3,7 +3,7 @@ module.exports = {
     aliases: ['ia', 'grok', 'gemini', 'gpt', 'chatgpt'],
     category: 'ai',
     description: 'Pergunta para a inteligência artificial',
-    async execute(sock, m, { from, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN, abortSignal }) {
         const { react, reactStatus, getMessageText } = utils;
         if (!model) {
             await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
@@ -36,11 +36,13 @@ module.exports = {
             }
 
             let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN); 
-            const result = await model.generateContent(prompt);
+            const result = await model.generateContent(prompt, { signal: abortSignal });
             await sock.sendMessage(from, { text: result.response.text() }, { quoted: m }); 
             return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
-        } catch (e) { 
-            console.error('❌ [IA] Erro:', e);
+        } catch (e) {
+            // ABORTED = o dispatcher (message.js) já avisou o timeout ao usuário; evita resposta zumbi duplicada
+            if (e?.code === 'ABORTED' || abortSignal?.aborted) return lastBotResponse;
+            console.error('❌ [IA] Erro:', e?.response?.data || e.message || e);
             await sock.sendMessage(from, { text: '❌ Comandos de IA indisponíveis no momento.' }, { quoted: m });
             return lastBotResponse;
         }

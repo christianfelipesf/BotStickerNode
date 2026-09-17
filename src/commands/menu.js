@@ -23,6 +23,10 @@ module.exports = {
             `╭─── *GERAL* ───\n` +
             `${B} 🏆 *${p}rank* — top 10 ativos do mês (alias ${p}rankativos)\n` +
             `${B} 👤 *${p}perfil* — foto do perfil\n` +
+            `${B} 📇 *${p}ficha* <Nome> — ficha cadastrada\n` +
+            `${B} 🎂 *${p}aniversariantes* — niver do mês\n` +
+            `${B} 📍 *${p}radar-cidades* — fichas por cidade\n` +
+            `${B} 🎲 *${p}aleatorio* — sorteia uma ficha\n` +
             `${B} 📊 *${p}status* — info do bot\n` +
             `${B} 🤖 *${p}ai* <texto> — conversa com IA\n` +
             `${B} 🌐 *${p}traduzir* <texto> — traduz\n` +

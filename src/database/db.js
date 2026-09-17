@@ -110,7 +110,8 @@ db.exec(`
         prefix    TEXT,
         sticker_pack TEXT,
         sticker_author TEXT,
-        theme     TEXT
+        theme     TEXT,
+        extra     TEXT NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS config (
@@ -249,6 +250,26 @@ db.exec(`
         created_at INTEGER NOT NULL,
         PRIMARY KEY (jid, month)
     );
+
+    CREATE TABLE IF NOT EXISTS pessoas (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome       TEXT NOT NULL,
+        nome_norm  TEXT NOT NULL UNIQUE,
+        nascimento TEXT,
+        cidade     TEXT,
+        descricao  TEXT,
+        status     TEXT,
+        hobby      TEXT,
+        pix        TEXT,
+        instagram  TEXT,
+        linkedin   TEXT,
+        foto_path  TEXT,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pessoas_cidade ON pessoas(cidade);
+    CREATE INDEX IF NOT EXISTS idx_pessoas_nascimento ON pessoas(nascimento);
 `);
 
 // ============================================================
@@ -260,6 +281,7 @@ try { db.exec("ALTER TABLE group_state ADD COLUMN prefix TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_pack TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_author TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN theme TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE group_state ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'"); } catch (_) {}
 
 // Limpeza de órfãos — DEPOIS do CREATE TABLE (antes falhava em banco novo).
 try {

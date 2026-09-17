@@ -54,7 +54,10 @@ const PARTIAL_BLOCKED_COMMANDS = new Set([
     'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
     'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome', 'tema', 'theme',
     'log', 'logs', 'logsterminal', 'terminallog',
-    'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai'
+    'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai',
+    'cadastrar-pessoa', 'cadastrar', 'addpessoa', 'editar-pessoa', 'editar', 'deletar-pessoa', 'delficha',
+    'ficha', 'pessoa', 'listar-pessoas', 'fichas', 'aniversariantes', 'niver', 'radar-cidades', 'radar',
+    'aleatorio', 'sortear', 'contato', 'pix'
 ]);
 const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']);
 
@@ -215,6 +218,16 @@ module.exports = {
             if (botActive && isGroup && !isCommandMsg && !m.key.fromMe) {
                 updateMemberActivity(from, activitySender, senderName);
                 try { recordGroupMessage(from, Date.now()); } catch (_) {}
+                // 💡 Splash cômico a cada N mensagens (contador por grupo).
+                // Comandos e mensagens do bot não contam. Fire-and-forget p/ não atrasar.
+                try {
+                    const splash = require('../services/splash');
+                    splash.handleMessage(sock, from, { prefix: effectivePrefix }).then((fired) => {
+                        if (fired) {
+                            try { safeDashboardLog('action', 'Grupo', '💡 splash curiosidade enviado', senderName, null, null, { toJid: from, messageId: m.key.id, senderJid: sender, fromMe: false }); } catch (_) {}
+                        }
+                    }).catch(() => {});
+                } catch (_) {}
             }
 
             // === Prefix query ===
@@ -354,11 +367,13 @@ module.exports = {
                 ? (Number(process.env.CMD_TIMEOUT_MEDIA_MS) || 210000)
                 : (Number(process.env.CMD_TIMEOUT_MS) || 90000);
             const cancelToken = { cancelled: false };
+            const abortController = new AbortController();
             context.cancelToken = cancelToken;
+            context.abortSignal = abortController.signal;
             try {
                 context.log = cmdLog;
                 const execPromise = cmd.execute(sock, m, context);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => { cancelToken.cancelled = true; reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)); }, CMD_TIMEOUT_MS));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => { cancelToken.cancelled = true; try { abortController.abort(); } catch (_) {} reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)); }, CMD_TIMEOUT_MS));
                 timeoutPromise.catch(()=>{}); // evita unhandled
                 const result = await Promise.race([execPromise, timeoutPromise]);
                 if (result !== undefined) lastBotResponse = result;

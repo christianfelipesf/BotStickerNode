@@ -1,13 +1,12 @@
 const fs = require('fs');
-const path = require('path');
-const AdmZip = require('adm-zip');
+const { buildDumpZip, cleanupDumpZip } = require('../services/dump');
 
 module.exports = {
     name: 'dump',
     category: 'admin',
-    description: 'Gera um backup dos arquivos do banco de dados e configurações',
+    description: 'Gera um backup dos arquivos do banco de dados e configurações (inclui .env com API keys)',
     async execute(sock, m, { from, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, flushNow } = utils;
+        const { react } = utils;
 
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
@@ -18,52 +17,10 @@ module.exports = {
 
         let currentBotResponse = await react(sock, m, '📦', lastBotResponse, GLOBAL_COOLDOWN);
 
-        // Garante que tudo está persistido antes de copiar
-        try { flushNow(); } catch (_) {}
-
-        const zip = new AdmZip();
-        const tempDir = path.join(process.cwd(), 'temp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
-        const zipName = `dump_${Date.now()}.zip`;
-        const zipPath = path.join(tempDir, zipName);
-
+        let zipPath = null;
         try {
-            const filesToInclude = [
-                'bot.db',
-                'bot.db-shm',
-                'bot.db-wal',
-                'package.json'
-            ];
-
-            let includedCount = 0;
-            let missingCount = 0;
-            const includedNames = [];
-
-            filesToInclude.forEach(file => {
-                const filePath = path.join(process.cwd(), file);
-                if (fs.existsSync(filePath)) {
-                    zip.addLocalFile(filePath);
-                    includedNames.push(file);
-                    includedCount++;
-                } else {
-                    missingCount++;
-                }
-            });
-
-            // Incluir diretório uploads (imagens de menu por grupo)
-            const uploadsDir = path.join(process.cwd(), 'uploads');
-            if (fs.existsSync(uploadsDir)) {
-                zip.addLocalFolder(uploadsDir, 'uploads');
-            }
-
-            zip.writeZip(zipPath);
-
-            const sizeKb = Math.round(fs.statSync(zipPath).size / 1024);
-            const caption = `📦 *Backup Gerado com Sucesso!*\n\n` +
-                `📁 *Arquivos incluídos:*\n${includedNames.map(n => `• ${n}`).join('\n')}\n` +
-                `📂 *Pasta:* uploads\n\n` +
-                `💾 *Tamanho:* ${sizeKb} KB`;
+            const { zipPath: builtPath, zipName, caption } = buildDumpZip();
+            zipPath = builtPath;
 
             await sock.sendMessage(from, {
                 document: fs.readFileSync(zipPath),
@@ -73,12 +30,15 @@ module.exports = {
             }, { quoted: m });
 
             fs.unlinkSync(zipPath);
+            zipPath = null;
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
 
         } catch (error) {
             console.error('Erro ao gerar dump:', error);
             await sock.sendMessage(from, { text: `❌ Erro ao gerar dump: ${error.message}` }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+        } finally {
+            if (zipPath) cleanupDumpZip(zipPath);
         }
 
         return currentBotResponse;

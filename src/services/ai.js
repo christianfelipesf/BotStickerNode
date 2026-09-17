@@ -59,6 +59,26 @@ function _buildBackoffs(baseMs) {
     return [base, Math.round(base * 2), Math.round(base * 4), Math.round(base * 8)];
 }
 
+// Timeout por tentativa (ms). Orçamento total do comando é CMD_TIMEOUT_MS (45s):
+// 20s + 2s backoff + 20s = 42s < 45s com retryCount padrão 1.
+const ATTEMPT_TIMEOUT_MS = 20000;
+
+function _sleepAbortable(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(Object.assign(new Error('Comando interrompido por timeout'), { code: 'ABORTED' }));
+        const t = setTimeout(() => { cleanup(); resolve(); }, ms);
+        const onAbort = () => { clearTimeout(t); cleanup(); reject(Object.assign(new Error('Comando interrompido por timeout'), { code: 'ABORTED' })); };
+        function cleanup() { try { signal?.removeEventListener?.('abort', onAbort); } catch (_) {} }
+        try { signal?.addEventListener?.('abort', onAbort, { once: true }); } catch (_) {}
+    });
+}
+
+function _isAbortError(err, signal) {
+    if (signal?.aborted) return true;
+    const code = err?.code;
+    return code === 'ERR_CANCELED' || code === 'ABORTED' || code === 'ECONNABORTED' && signal?.aborted;
+}
+
 function _isRetryableError(err) {
     if (!err) return false;
     const status = err?.response?.status || err?.statusCode;
@@ -76,11 +96,12 @@ function _isAuthError(err) {
 }
 
 // === API call with retry ===
-async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTokens, temperature, retryCount) {
+async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTokens, temperature, retryCount, signal) {
     const retries = Math.max(0, Math.min(3, Number(retryCount) || 1));
     const backoffs = _buildBackoffs(2000);
 
     for (let attempt = 0; attempt <= retries; attempt++) {
+        if (signal?.aborted) throw Object.assign(new Error('Comando interrompido por timeout'), { code: 'ABORTED' });
         try {
             const { data } = await axios.post(`${OPENROUTER_BASE}/chat/completions`, {
                 model: modelName,
@@ -97,7 +118,8 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
                     'X-Title': 'BotStickerNode',
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: ATTEMPT_TIMEOUT_MS,
+                signal
             });
 
             const content = data?.choices?.[0]?.message?.content || '';
@@ -111,6 +133,11 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
             return { text: content, tokensIn: usage.prompt_tokens || 0, tokensOut: usage.completion_tokens || 0, model: modelName, cached: false };
 
         } catch (err) {
+            if (_isAbortError(err, signal)) {
+                usageStats.totalRequests++;
+                usageStats.failedRequests++;
+                throw Object.assign(new Error('Comando interrompido por timeout'), { code: 'ABORTED' });
+            }
             if (_isAuthError(err)) {
                 usageStats.totalRequests++;
                 usageStats.failedRequests++;
@@ -122,7 +149,7 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
                 throw err;
             }
             const wait = backoffs[attempt] || backoffs[backoffs.length - 1];
-            await new Promise(r => setTimeout(r, wait));
+            await _sleepAbortable(wait, signal);
         }
     }
 
@@ -137,7 +164,7 @@ function setupAI(config) {
     }
 
     const apiKey = config.openrouterApiKey;
-    const modelName = config.aiModel || 'openrouter/free';
+    const modelName = config.aiModel || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free';
     const systemInstruction = (config.aiPrompt || "Você é uma IA útil.").replace(/{botName}/g, config.botName || 'Bot');
     const maxTokens = Number(config.aiMaxTokens) || 500;
     const temperature = config.aiTemperature !== undefined ? Number(config.aiTemperature) : 0.7;
@@ -146,10 +173,11 @@ function setupAI(config) {
     const maxPromptLength = Number(config.aiMaxPromptLength) || 2000;
 
     model = {
-        generateContent: async (prompt) => {
+        generateContent: async (prompt, opts = {}) => {
             if (!prompt || typeof prompt !== 'string') {
                 throw new Error('Prompt inválido');
             }
+            const signal = opts?.signal;
 
             const truncatedPrompt = prompt.length > maxPromptLength
                 ? prompt.slice(0, maxPromptLength) + '\n\n[Nota: o prompt foi truncado por exceder o limite de caracteres.]'
@@ -167,7 +195,7 @@ function setupAI(config) {
                 };
             }
 
-            const result = await callWithRetry(apiKey, modelName, systemInstruction, truncatedPrompt, maxTokens, temperature, retryCount);
+            const result = await callWithRetry(apiKey, modelName, systemInstruction, truncatedPrompt, maxTokens, temperature, retryCount, signal);
 
             if (result.text) {
                 setCached(cacheConfig, result.text);

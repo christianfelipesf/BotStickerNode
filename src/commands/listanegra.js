@@ -92,33 +92,30 @@ module.exports = {
             pushTarget(ctx.participant);
         }
 
-        // Números digitados — extrai sequências de 8-15 dígitos do texto completo
+        // Números digitados — normaliza o texto INTEIRO (aceita "+55 13 93631-2912",
+        // "(11) 99999-9999", "11 999999999"). NÃO usa match(/\d{8,15}/g) aqui:
+        // ele quebra número formatado em pedaços (["13","93631","2912"]) e gera JID errado.
+        // Múltiplos números: separar por vírgula, ponto-e-vírgula ou quebra de linha.
         if (fullArgsText) {
-            const numberMatches = fullArgsText.match(/\d{8,15}/g);
-            if (numberMatches) {
-                for (const raw of numberMatches) {
-                    const jid = utils.parseNumberToJid(raw);
+            const cleaned = String(fullArgsText).replace(/(remover|remove|rem|del|tirar|rm|limpar|clear|clean|all|todos|tudo)\b/gi, ' ');
+            const chunks = cleaned.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+            const parts = chunks.length ? chunks : [cleaned];
+            for (const part of parts) {
+                const digits = utils.normalizePhoneNumber
+                    ? utils.normalizePhoneNumber(part)
+                    : utils.parseNumberToJid(part)?.split('@')[0];
+                if (digits) {
+                    const jid = `${digits}@s.whatsapp.net`;
                     if (jid) pushTarget(jid);
                 }
             }
-        }
-        // Fallback: também verifica args token a token caso número com "+" ou formatado tenha sido quebrado
-        for (const a of args) {
-            const lower = String(a).toLowerCase();
-            if (['remover','remove','rem','del','tirar','rm','limpar','clear','clean','all','todos','tudo'].includes(lower)) continue;
-            const digits = String(a).replace(/\D/g, '');
-            if (digits.length >= 8 && digits.length <= 15) {
-                const jid = utils.parseNumberToJid(digits);
-                if (jid) pushTarget(jid);
-            }
-        }
-        // Último fallback: número formatado com espaços/traços/() que foi quebrado (ex: +55 (11) 99999-9999)
-        if (targets.length === 0 && fullArgsText) {
-            const stripped = fullArgsText.replace(/\D/g, '');
-            // evita confundir com keywords: se stripped contém apenas dígitos e tem tamanho válido, trata como um número
-            if (stripped.length >= 8 && stripped.length <= 15) {
-                const jid = utils.parseNumberToJid(stripped);
-                if (jid) pushTarget(jid);
+            // Fallback: vários números separados por espaço ("5511... 5521...").
+            // Só aqui o split por token é seguro (cada token já é só dígitos).
+            if (targets.length === 0) {
+                for (const tok of cleaned.split(/\s+/)) {
+                    const digits = utils.normalizePhoneNumber ? utils.normalizePhoneNumber(tok, { min: 10 }) : null;
+                    if (digits) pushTarget(`${digits}@s.whatsapp.net`);
+                }
             }
         }
 

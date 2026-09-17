@@ -143,6 +143,14 @@ module.exports = {
         };
         let q = fullArgsText.trim();
 
+        // Sem argumento: usa o texto/caption da mensagem marcada (se houver)
+        if (!q) {
+            try {
+                const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+                if (quoted) q = (utils.getMessageText(quoted) || '').trim();
+            } catch (_) {}
+        }
+
         if (!q) return await safeReact(react, sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         // parse lang trailing token: !play <query> [pt|original|en...] default pt

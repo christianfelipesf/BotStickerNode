@@ -37,11 +37,12 @@ const { initLogger } = require('./src/services/logger');
 const trace = require('./src/services/trace');
 const terminalLog = require('./src/services/terminalLog');
 const { loadCommands, commands } = require('./src/commands/loader');
-const { handleGroupParticipantsUpdate } = require('./src/events/group');
+const { handleGroupParticipantsUpdate, handleGroupUpdate } = require('./src/events/group');
 const { handleMessageUpsert } = require('./src/events/message');
 const { setupAI } = require('./src/services/ai');
 const dashboard = require('./src/dashboard/dashboard');
 const news = require('./src/services/news');
+const splash = require('./src/services/splash');
 const subSessions = require('./src/services/subSessions');
 const { startTempCleanup } = require('./src/services/tempCleanup');
 const watchdog = require('./src/services/watchdog');
@@ -68,7 +69,7 @@ try {
 } catch (_) {}
 
 // Expõe serviços para que comandos (ex: set.js) possam controlá-los em runtime.
-global.__botServices = { news, dashboard, watchdog, telegram, telegramBot };
+global.__botServices = { news, splash, dashboard, watchdog, telegram, telegramBot };
 global.__startTime = Date.now();
 
 // Iniciar Dashboard (Modular) - totalmente isolado
@@ -263,6 +264,8 @@ async function startBot() {
                 news.start();
             }
             // news desativado é mostrado no boot summary (não loga aqui)
+            // splash: só guarda o sock; o disparo é por contagem em message.js
+            try { splash.attachSock(sock); } catch (_) {}
         } catch (_) {}
 
         sock.ev.on('creds.update', async (...args) => {
@@ -395,10 +398,15 @@ async function startBot() {
         console.error('🔌 [SOCKET ERROR]:', msg, '| stack0=', stack0);
     });
 
-    // Evento de Participantes do Grupo (Adição/Remoção/Admin)
-    sock.ev.on('group-participants.update', (anu) => {
-        handleGroupParticipantsUpdate(sock, anu);
-    });
+        // Evento de Participantes do Grupo (Adição/Remoção/Admin)
+        sock.ev.on('group-participants.update', (anu) => {
+            handleGroupParticipantsUpdate(sock, anu);
+        });
+
+        // Evento de mudanças do grupo (nome/descrição/foto/configs)
+        sock.ev.on('groups.update', (updates) => {
+            try { handleGroupUpdate(sock, updates); } catch (e) { console.error('Erro no groups.update:', e.message); }
+        });
 
     // Evento de Recebimento de Mensagens — touch watchdog em todo upsert
     sock.ev.on('messages.upsert', (upsert) => {

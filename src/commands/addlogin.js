@@ -28,13 +28,16 @@ module.exports = {
             }
         } catch (_) {}
         if (!candidate && fullArgsText) {
-            const matches = String(fullArgsText).match(/\d{8,15}/g);
-            if (matches && matches.length > 0) candidate = matches[0];
+            // Normaliza o texto inteiro (aceita "+55 13 93631-2912", "(13) 93631-2912").
+            // Não usa match(/\d{8,15}/g): ele quebra formatado em pedaços.
+            candidate = utils.extractPhoneFromText
+                ? utils.extractPhoneFromText(fullArgsText)
+                : String(fullArgsText).replace(/\D/g, '');
         }
         if (!candidate && Array.isArray(args)) {
             for (const a of args) {
-                const d = String(a).replace(/\D/g, '');
-                if (d.length >= 8 && d.length <= 15) { candidate = d; break; }
+                const d = utils.normalizePhoneNumber ? utils.normalizePhoneNumber(a, { min: 10 }) : String(a).replace(/\D/g, '');
+                if (d) { candidate = d; break; }
             }
         }
         // Sem número: usa o contato do privado atual automaticamente

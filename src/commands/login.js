@@ -3,8 +3,11 @@ const principalState = require('../services/principalState');
 
 function normalizePhone(input) {
     if (!input) return null;
-    const raw = String(input).trim();
-    const digits = raw.replace(/\D/g, '');
+    try {
+        const utils = require('../database/utils');
+        if (typeof utils.normalizePhoneNumber === 'function') return utils.normalizePhoneNumber(input);
+    } catch (_) {}
+    const digits = String(input).replace(/\D/g, '');
     if (!digits) return null;
     return digits;
 }
