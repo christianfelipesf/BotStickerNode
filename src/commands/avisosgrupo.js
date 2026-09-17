@@ -11,13 +11,13 @@ const HELP = '🔔 *Avisos do grupo* (só admins)\n\n' +
     'Ex:\n' +
     '!avisosgrupo saida on\n' +
     '!avisosgrupo promover on\n\n' +
-    'Variáveis: @user = marca a pessoa • {grupo} = nome do grupo • {mudancas} = o que mudou (só p/ grupo)';
+    'Variáveis: @user = quem recebeu a ação • {autor} = quem fez a ação (promover/rebaixar) • {grupo} = nome do grupo • {mudancas} = o que mudou (só p/ grupo)';
 
 // Saída, promoção, rebaixamento e mudanças — boas-vindas ficam no !bemvindo.
 const TARGETS = {
     saida: { onKey: 'goodbyeOn', msgKey: 'goodbyeMsg', label: 'Saída (despedida) 👋', defMsg: '👋 @user saiu do grupo. Até mais!' },
-    promover: { onKey: 'promoteOn', msgKey: 'promoteMsg', label: 'Promoção a admin 👑', defMsg: '👑 @user foi promovido a admin do {grupo}! 🎉' },
-    rebaixar: { onKey: 'demoteOn', msgKey: 'demoteMsg', label: 'Rebaixamento 📉', defMsg: '📉 @user foi rebaixado de admin do {grupo}.' },
+    promover: { onKey: 'promoteOn', msgKey: 'promoteMsg', label: 'Promoção a admin 👑', defMsg: '👑 {autor} promoveu @user a admin do {grupo}! 🎉' },
+    rebaixar: { onKey: 'demoteOn', msgKey: 'demoteMsg', label: 'Rebaixamento 📉', defMsg: '📉 {autor} rebaixou @user de admin do {grupo}.' },
     grupo: { onKey: 'groupChangeOn', msgKey: 'groupChangeMsg', label: 'Mudanças do grupo ⚙️', defMsg: '📝 Título atualizado' }
 };
 const ALL_KEYS = ['goodbyeOn', 'promoteOn', 'demoteOn', 'groupChangeOn'];
@@ -35,47 +35,56 @@ const MODE_OF = { saida: 'goodbye', promover: 'promote', rebaixar: 'demote', gru
 
 async function sendPreview(sock, m, utils, from, sender, target) {
     const { getTheme } = require('../services/themes');
-    const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer } = require('../services/welcomeImage');
+    const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid } = require('../services/welcomeImage');
     const T = TARGETS[target];
     const gd = utils.getGroupData(from) || {};
     const msg = (gd[T.msgKey] || '').toString().trim() || T.defMsg;
     let subject = 'o grupo';
     let memberCount = 0;
+    let previewParts = [];
     try {
         const meta = await utils.groupMetadataCached(sock, from).catch(() => null);
         if (meta?.subject) subject = meta.subject;
-        if (Array.isArray(meta?.participants)) memberCount = meta.participants.length;
+        if (Array.isArray(meta?.participants)) { memberCount = meta.participants.length; previewParts = meta.participants; }
     } catch (_) {}
     const fakeChanges = '📝 Novo nome: *Exemplo*\n📄 Nova descrição: exemplo';
-    const text = msg.split('@user').join(`@${sender.split('@')[0]}`).split('{grupo}').join(subject).split('{mudancas}').join(fakeChanges);
+    const previewJid = resolveDisplayJid(sender, previewParts);
+    const isActorMode = target === 'promover' || target === 'rebaixar';
+    const text = msg.split('@user').join(`@${String(previewJid).split('@')[0].split(':')[0]}`).split('{autor}').join(`@${String(previewJid).split('@')[0].split(':')[0]}`).split('{grupo}').join(subject).split('{mudancas}').join(fakeChanges);
     try {
-        const digits = String(sender).split('@')[0].split(':')[0];
+        const digits = String(previewJid).split('@')[0].split(':')[0];
         const pushName = m.pushName || null;
         const isGroup = target === 'grupo';
         const userName = isGroup ? subject.slice(0, 24)
             : ((pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? `@${digits}` : 'Você'));
         const [avatarRaw, groupAvatarRaw] = await Promise.all([
-            isGroup ? Promise.resolve(null) : getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached).catch(() => null),
+            isGroup ? Promise.resolve(null) : getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached, previewParts).catch(() => null),
             getGroupAvatarBuffer(sock, from).catch(() => null)
         ]);
+        // Prévia: o próprio admin como autor da ação (demonstra o layout dual).
+        const previewActorAvatar = (!isGroup && isActorMode)
+            ? await getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached, previewParts).catch(() => null)
+            : null;
         let theme = null;
         try { theme = getTheme(typeof utils.getThemeForJid === 'function' ? utils.getThemeForJid(from) : 'default'); } catch (_) { theme = null; }
         const card = await generateWelcomeImage({
             mode: MODE_OF[target],
             userName,
+            actorName: isActorMode ? userName : null,
             groupName: subject,
             memberCount,
-            message: text.replace(/@\d+/g, '').trim(),
+            message: text.replace(/@\S+/g, '').trim(),
             avatarRaw: isGroup ? groupAvatarRaw : avatarRaw,
+            actorAvatarRaw: previewActorAvatar,
             groupAvatarRaw,
             theme
         });
         if (card) {
-            await sock.sendMessage(from, { image: card, caption: `👁️ *Prévia ${T.label}* — é assim que vai aparecer:\n\n${text}`, mentions: [sender] }, { quoted: m });
+            await sock.sendMessage(from, { image: card, caption: `👁️ *Prévia ${T.label}* — é assim que vai aparecer:\n\n${text}`, mentions: [...new Set([sender, previewJid])] }, { quoted: m });
             return;
         }
     } catch (_) {}
-    await sock.sendMessage(from, { text: `👁️ *Prévia ${T.label}*\n\n${text}`, mentions: [sender] }, { quoted: m });
+    await sock.sendMessage(from, { text: `👁️ *Prévia ${T.label}*\n\n${text}`, mentions: [...new Set([sender, previewJid])] }, { quoted: m });
 }
 
 module.exports = {

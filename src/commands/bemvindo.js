@@ -39,22 +39,24 @@ module.exports = {
         }
         if (sub === 'teste' || sub === 'testar' || sub === 'previa' || sub === 'prévia') {
             const { getTheme } = require('../services/themes');
-            const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer } = require('../services/welcomeImage');
+            const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid } = require('../services/welcomeImage');
             const msg = (gd[T.msgKey] || '').toString().trim() || T.defMsg;
             let subject = 'o grupo';
             let memberCount = 0;
+            let previewParts = [];
             try {
                 const meta = await utils.groupMetadataCached(sock, from).catch(() => null);
                 if (meta?.subject) subject = meta.subject;
-                if (Array.isArray(meta?.participants)) memberCount = meta.participants.length;
+                if (Array.isArray(meta?.participants)) { memberCount = meta.participants.length; previewParts = meta.participants; }
             } catch (_) {}
-            const text = msg.split('@user').join(`@${sender.split('@')[0]}`).split('{grupo}').join(subject);
+            const previewJid = resolveDisplayJid(sender, previewParts);
+            const text = msg.split('@user').join(`@${String(previewJid).split('@')[0].split(':')[0]}`).split('{grupo}').join(subject);
             try {
-                const digits = String(sender).split('@')[0].split(':')[0];
+                const digits = String(previewJid).split('@')[0].split(':')[0];
                 const pushName = m.pushName || null;
                 const userName = (pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? `@${digits}` : 'Você');
                 const [avatarRaw, groupAvatarRaw] = await Promise.all([
-                    getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached).catch(() => null),
+                    getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached, previewParts).catch(() => null),
                     getGroupAvatarBuffer(sock, from).catch(() => null)
                 ]);
                 let theme = null;
@@ -64,16 +66,16 @@ module.exports = {
                     userName,
                     groupName: subject,
                     memberCount,
-                    message: text.replace(/@\d+/g, '').trim(),
+                    message: text.replace(/@\S+/g, '').trim(),
                     avatarRaw,
                     groupAvatarRaw,
                     theme
                 });
                 if (card) {
-                    return await sock.sendMessage(from, { image: card, caption: `👁️ *Prévia ${T.label}* — é assim que vai aparecer:\n\n${text}`, mentions: [sender] }, { quoted: m });
+                    return await sock.sendMessage(from, { image: card, caption: `👁️ *Prévia ${T.label}* — é assim que vai aparecer:\n\n${text}`, mentions: [...new Set([sender, previewJid])] }, { quoted: m });
                 }
             } catch (_) {}
-            return await sock.sendMessage(from, { text: `👁️ *Prévia ${T.label}*\n\n${text}`, mentions: [sender] }, { quoted: m });
+            return await sock.sendMessage(from, { text: `👁️ *Prévia ${T.label}*\n\n${text}`, mentions: [...new Set([sender, previewJid])] }, { quoted: m });
         }
         if (sub === 'on' || sub === 'ativar' || sub === 'ligar') {
             utils.setGroupData(from, { [T.onKey]: true });

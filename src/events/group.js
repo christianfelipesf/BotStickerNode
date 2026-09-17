@@ -1,6 +1,6 @@
 const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo, groupMetadataCached, clearGroupMetadataCache, isBlacklisted, botIsAdmin, recordModEvent, getGroupData, getThemeForJid } = require('../database/utils');
 const { getTheme } = require('../services/themes');
-const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer } = require('../services/welcomeImage');
+const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid, displayNameForEvent } = require('../services/welcomeImage');
 const dashboard = require('../dashboard/dashboard');
 
 const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
@@ -33,28 +33,44 @@ async function resolveTheme(groupJid) {
     } catch (_) { return null; }
 }
 
-async function sendEventCard(sock, { groupJid, mode, userJid, defaultMsg, customMsg, subject, memberCount, theme, groupAvatarRaw, fetchUserAvatar }) {
+async function sendEventCard(sock, { groupJid, mode, userJid, authorJid, defaultMsg, customMsg, subject, memberCount, theme, groupAvatarRaw, fetchUserAvatar, participants }) {
+    const parts = Array.isArray(participants) ? participants : [];
+    // Eventos do grupo trazem @lid (número opaco): resolve para o telefone
+    // para nome, legenda e busca da foto. Sem pushName aqui, é o melhor sinal.
+    const displayJid = resolveDisplayJid(userJid, parts);
+    const mentionTag = `@${String(displayJid).split('@')[0].split(':')[0]}`;
+    // Promoção/rebaixamento: quem FEZ a ação (anu.author) aparece no card e na legenda.
+    const isActorMode = (mode === 'promote' || mode === 'demote') && !!authorJid;
+    const actorDisplayJid = isActorMode ? resolveDisplayJid(authorJid, parts) : null;
+    const actorTag = actorDisplayJid ? `@${String(actorDisplayJid).split('@')[0].split(':')[0]}` : '';
+    const actorName = isActorMode ? displayNameForEvent(authorJid, parts) : null;
     const msg = (customMsg || '').toString().trim() || defaultMsg;
-    const text = msg.split('@user').join(`@${String(userJid).split('@')[0]}`).split('{grupo}').join(subject);
+    const text = msg.split('@user').join(mentionTag).split('{autor}').join(actorTag).split('{grupo}').join(subject);
+    const mentions = [...new Set([userJid, displayJid, authorJid, actorDisplayJid].filter(Boolean))];
     try {
-        const userName = displayNameFor(userJid);
-        const avatarRaw = fetchUserAvatar ? await getUserAvatarBuffer(sock, userJid, groupJid, groupMetadataCached).catch(() => null) : null;
+        const userName = displayNameForEvent(userJid, parts);
+        const [avatarRaw, actorAvatarRaw] = await Promise.all([
+            fetchUserAvatar ? getUserAvatarBuffer(sock, userJid, groupJid, groupMetadataCached, parts).catch(() => null) : Promise.resolve(null),
+            isActorMode ? getUserAvatarBuffer(sock, authorJid, groupJid, groupMetadataCached, parts).catch(() => null) : Promise.resolve(null)
+        ]);
         const card = await generateWelcomeImage({
             mode,
             userName,
+            actorName,
             groupName: subject,
             memberCount,
-            message: text.replace(/@\d+/g, '').trim(),
+            message: text.replace(/@\S+/g, '').trim(),
             avatarRaw,
+            actorAvatarRaw,
             groupAvatarRaw: groupAvatarRaw || null,
             theme
         });
         if (card) {
-            await sock.sendMessage(groupJid, { image: card, caption: text, mentions: [userJid] });
+            await sock.sendMessage(groupJid, { image: card, caption: text, mentions });
             return true;
         }
     } catch (_) {}
-    await sock.sendMessage(groupJid, { text, mentions: [userJid] });
+    await sock.sendMessage(groupJid, { text, mentions });
     return true;
 }
 
@@ -135,16 +151,17 @@ module.exports = {
                 const mode = isJoin ? 'welcome' : isLeave ? 'goodbye' : isPromote ? 'promote' : 'demote';
                 const defaultMsg = isJoin ? '👋 Bem-vindo @user ao {grupo}!'
                     : isLeave ? '👋 @user saiu do grupo. Até mais!'
-                    : isPromote ? '👑 @user foi promovido a admin do {grupo}! 🎉'
-                    : '📉 @user foi rebaixado de admin do {grupo}.';
+                    : isPromote ? '👑 {autor} promoveu @user a admin do {grupo}! 🎉'
+                    : '📉 {autor} rebaixou @user de admin do {grupo}.';
 
                 if (on) {
                     let subject = 'o grupo';
                     let memberCount = 0;
+                    let eventParticipants = [];
                     try {
                         const meta = await groupMetadataCached(sock, anu.id).catch(() => null);
                         if (meta?.subject) subject = meta.subject;
-                        if (Array.isArray(meta?.participants)) memberCount = meta.participants.length;
+                        if (Array.isArray(meta?.participants)) { memberCount = meta.participants.length; eventParticipants = meta.participants; }
                         snapshotGroup(anu.id, meta); // mantém a base do anti-spam atualizada
                     } catch (_) {}
                     const theme = await resolveTheme(anu.id);
@@ -156,8 +173,10 @@ module.exports = {
                             if (isJoin && isBlacklisted(anu.id, p)) continue; // listanegra já tratou
                             await sendEventCard(sock, {
                                 groupJid: anu.id, mode, userJid: p,
+                                authorJid: anu.author || null,
                                 defaultMsg, customMsg, subject, memberCount, theme,
                                 groupAvatarRaw,
+                                participants: eventParticipants,
                                 // Na saída o WhatsApp costuma já ter apagado a foto — busca só no resto.
                                 fetchUserAvatar: !isLeave
                             });
