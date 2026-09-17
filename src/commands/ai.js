@@ -37,13 +37,20 @@ module.exports = {
 
             let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN); 
             const result = await model.generateContent(prompt, { signal: abortSignal });
-            await sock.sendMessage(from, { text: result.response.text() }, { quoted: m }); 
+            const text = String(result.response.text() ?? '').trim();
+            if (!text) throw new Error('Resposta vazia da IA');
+            await sock.sendMessage(from, { text }, { quoted: m }); 
             return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (e) {
             // ABORTED = o dispatcher (message.js) já avisou o timeout ao usuário; evita resposta zumbi duplicada
             if (e?.code === 'ABORTED' || abortSignal?.aborted) return lastBotResponse;
             console.error('❌ [IA] Erro:', e?.response?.data || e.message || e);
-            await sock.sendMessage(from, { text: '❌ Comandos de IA indisponíveis no momento.' }, { quoted: m });
+            const msg = String(e?.message || '');
+            if (/resposta vazia/i.test(msg)) {
+                await sock.sendMessage(from, { text: '❌ A IA retornou resposta vazia. Tente novamente com outra pergunta.' }, { quoted: m });
+            } else {
+                await sock.sendMessage(from, { text: '❌ Comandos de IA indisponíveis no momento.' }, { quoted: m });
+            }
             return lastBotResponse;
         }
     }
