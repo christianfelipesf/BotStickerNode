@@ -1736,7 +1736,7 @@ function getVersion() {
     return _cachedVersion;
 }
 
-function flushNow() { flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); }
+function flushNow() { flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); try { require('./tursoSync').schedulePush(5000); } catch (_) {} }
 
 // ============================================================
 // Group metadata cache & admin helpers

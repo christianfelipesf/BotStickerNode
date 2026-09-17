@@ -52,6 +52,11 @@ const telegramBot = require('./src/services/telegramBot');
 // Inicializar Filtro de Logs
 initLogger();
 
+// Turso (nuvem): pull no boot (nuvem vence) + push periódico. Não trava o boot.
+try { require('./src/database/tursoSync').startAutoSync(); } catch (e) {
+    console.error('⚠️ [turso] falha ao iniciar sync (segue local):', e.message);
+}
+
 // Adiciona [hh:mm:ss] em cada console.log/info/warn/error
 trace.patch();
 
@@ -91,6 +96,11 @@ loadCommands({ verbose: false });
 
 // Limpeza automática de temp/ a cada 30 min (arquivos > 1h)
 startTempCleanup();
+
+// Dump automático diário no Telegram (1x/dia, horário TELEGRAM_DUMP_HOUR)
+try { require('./src/services/dailyDump').startDailyDump(); } catch (e) {
+    console.error('⚠️ [dailyDump] falha ao agendar (bot segue normal):', e.message);
+}
 
 // Restaurar sub-sessões Baileys persistidas SOMENTE depois do principal 🟢.
 // Antes elas subiam em paralelo ao principal e causavam 428/515/401 (conflito Baileys).
