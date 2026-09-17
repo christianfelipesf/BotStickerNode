@@ -39,7 +39,7 @@ module.exports = {
         }
         if (sub === 'teste' || sub === 'testar' || sub === 'previa' || sub === 'prévia') {
             const { getTheme } = require('../services/themes');
-            const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid } = require('../services/welcomeImage');
+            const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid, formatPhoneDisplay } = require('../services/welcomeImage');
             const msg = (gd[T.msgKey] || '').toString().trim() || T.defMsg;
             let subject = 'o grupo';
             let memberCount = 0;
@@ -54,7 +54,7 @@ module.exports = {
             try {
                 const digits = String(previewJid).split('@')[0].split(':')[0];
                 const pushName = m.pushName || null;
-                const userName = (pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? `@${digits}` : 'Você');
+                const userName = (pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? formatPhoneDisplay(digits) : 'Você');
                 const [avatarRaw, groupAvatarRaw] = await Promise.all([
                     getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached, previewParts).catch(() => null),
                     getGroupAvatarBuffer(sock, from).catch(() => null)

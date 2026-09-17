@@ -386,7 +386,7 @@ const DEFAULT_CONFIG = {
     cobaltInstance: '',
     cobaltApiKey: '',
     splashEnabled: true,
-    splashInterval: 40,
+    splashInterval: 60,
     splashWithImage: true,
     splashCooldownMs: 90000
 };
@@ -1581,6 +1581,10 @@ function _escapeLike(s) {
 function upsertPessoa(data = {}) {
     const nome = String(data.nome || '').trim().slice(0, 40);
     if (nome.length < 2) return { ok: false, error: 'Nome muito curto (mín. 2 letras).' };
+    try {
+        const check = require('../services/ficha').isValidPessoaNome(nome);
+        if (check && !check.ok) return { ok: false, error: check.reason };
+    } catch (_) {}
     const nomeNorm = _normPessoa(nome);
     if (!nomeNorm) return { ok: false, error: 'Nome inválido.' };
     try {
@@ -1632,6 +1636,12 @@ function updatePessoa(nome, patch = {}) {
         if (!prev) return { ok: false, error: 'Ficha não encontrada.' };
         const novoNome = patch.nome !== undefined ? String(patch.nome).trim().slice(0, 40) : null;
         if (novoNome !== null && novoNome.length < 2) return { ok: false, error: 'Novo nome muito curto.' };
+        if (novoNome) {
+            try {
+                const check = require('../services/ficha').isValidPessoaNome(novoNome);
+                if (check && !check.ok) return { ok: false, error: check.reason };
+            } catch (_) {}
+        }
         const r = s.update.run(novoNome || null, patch.nascimento !== undefined ? patch.nascimento : null, patch.cidade !== undefined ? patch.cidade : null, patch.descricao !== undefined ? patch.descricao : null, patch.status !== undefined ? patch.status : null, patch.hobby !== undefined ? patch.hobby : null, patch.pix !== undefined ? patch.pix : null, patch.instagram !== undefined ? patch.instagram : null, patch.linkedin !== undefined ? patch.linkedin : null, patch.foto_path !== undefined ? patch.foto_path : null, Date.now(), norm);
         if (novoNome) {
             try {

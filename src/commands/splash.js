@@ -4,7 +4,7 @@ const HELP = '💡 *Splash* — curiosidade automática a cada N mensagens\n\n' 
     '• *on/off* — liga/desliga global (só dono)\n' +
     '• *status* — mostra estado atual\n' +
     '• *teste* — manda 1 curiosidade agora\n' +
-    '• *intervalo 40* — troca o gatilho (10-200, só dono)\n' +
+    '• *intervalo 60* — troca o gatilho (10-200, só dono)\n' +
     '• *reset* — zera o contador deste grupo';
 
 module.exports = {
@@ -24,7 +24,7 @@ module.exports = {
         if (sub === 'status' || sub === 'ver') {
             const cfg = readConfig();
             const on = cfg.splashEnabled !== false;
-            const interval = Math.max(10, Math.min(200, Number(cfg.splashInterval) || 40));
+            const interval = Math.max(10, Math.min(200, Number(cfg.splashInterval) || 60));
             const count = isGroup ? splash.getCount(from) : 0;
             const faltam = isGroup ? Math.max(0, interval - count) : '-';
             return await sock.sendMessage(from, {
@@ -91,7 +91,7 @@ module.exports = {
         if (sub === 'intervalo' || sub === 'interval' || sub === 'set' || sub === 'cada') {
             const n = parseInt(args[1], 10);
             if (!Number.isFinite(n) || n < 10 || n > 200) {
-                return await sock.sendMessage(from, { text: '❌ Use: !splash intervalo <10-200>. Ex: !splash intervalo 40' }, { quoted: m });
+                return await sock.sendMessage(from, { text: '❌ Use: !splash intervalo <10-200>. Ex: !splash intervalo 60' }, { quoted: m });
             }
             const cfg = readConfig();
             cfg.splashInterval = n;

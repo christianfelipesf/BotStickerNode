@@ -10,6 +10,18 @@ function normalizeNome(nome) {
         .slice(0, 40);
 }
 
+// Nome de ficha NÃO pode ser JID/menção nem número de telefone.
+// Ex: "551598989898", "+55 15 99898-9898", "fulano@s.whatsapp.net", "@lid" → inválidos.
+function isValidPessoaNome(nome) {
+    const s = String(nome || '').trim();
+    if (s.length < 2) return { ok: false, reason: 'Nome muito curto (mín. 2 letras).' };
+    if (s.length > 40) return { ok: false, reason: 'Nome muito longo (máx. 40 caracteres).' };
+    if (s.includes('@')) return { ok: false, reason: 'Use o nome da pessoa, não @menção ou JID.' };
+    const letters = (s.match(/\p{L}/gu) || []).length;
+    if (letters < 2) return { ok: false, reason: 'Use o nome da pessoa (com letras), não número de telefone.' };
+    return { ok: true };
+}
+
 function parseNascimento(raw) {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -133,6 +145,7 @@ const FICHA_LIMITS = { nome: 40, nascimento: 10, cidade: 60, descricao: 300, sta
 
 module.exports = {
     normalizeNome,
+    isValidPessoaNome,
     parseNascimento,
     formatNascimento,
     calcIdade,

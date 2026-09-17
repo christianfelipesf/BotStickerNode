@@ -20,7 +20,7 @@ function _cfg() {
 
 function getInterval() {
     const cfg = _cfg();
-    const n = Number(cfg.splashInterval) || 40;
+    const n = Number(cfg.splashInterval) || 60;
     return Math.max(10, Math.min(200, n));
 }
 

@@ -50,7 +50,8 @@ async function toCircularAvatar(buf, size) {
 
 async function placeholderAvatar(name, size) {
     const clean = String(name || '').replace(/^@+/, '').trim();
-    const letter = clean[0]?.toUpperCase() || '?';
+    const alnum = clean.match(/[\p{L}\p{N}]/u);
+    const letter = (alnum ? alnum[0] : '?').toUpperCase();
     let hash = 0;
     for (let i = 0; i < String(name).length; i++) hash = (hash * 31 + String(name).charCodeAt(i)) >>> 0;
     const hues = [260, 200, 160, 340, 30, 45, 280];
@@ -118,8 +119,22 @@ function resolveDisplayJid(target, participants) {
 }
 
 /**
- * Nome exibível da pessoa: @telefone quando resolvível, senão rótulo genérico.
- * Evita vazar o número opaco do @lid no card.
+ * Formata telefone BR para exibição: 5515998989898 → (15) 99898-9898.
+ * Fora do padrão BR, devolve +<dígitos>. Nunca retorna null.
+ */
+function formatPhoneDisplay(raw) {
+    const d = String(raw || '').replace(/\D/g, '');
+    if (!d) return '';
+    let core = d;
+    if (d.startsWith('55') && (d.length === 12 || d.length === 13)) core = d.slice(2);
+    if (/^\d{10}$/.test(core)) return `(${core.slice(0, 2)}) ${core.slice(2, 6)}-${core.slice(6)}`;
+    if (/^\d{11}$/.test(core)) return `(${core.slice(0, 2)}) ${core.slice(2, 7)}-${core.slice(7)}`;
+    return `+${d}`;
+}
+
+/**
+ * Nome exibível da pessoa: telefone formatado quando resolvível,
+ * senão rótulo genérico. Evita vazar o número opaco do @lid no card.
  */
 function displayNameForEvent(target, participants) {
     const jid = resolveDisplayJid(target, participants);
@@ -127,7 +142,7 @@ function displayNameForEvent(target, participants) {
     if (/^\d{8,15}$/.test(digits)) {
         // @lid não resolvido = ID opaco (não é telefone): não exibe o número.
         if (String(target).endsWith('@lid') && jid === target) return 'Novo membro';
-        return `@${digits}`;
+        return formatPhoneDisplay(digits);
     }
     return 'Novo membro';
 }
@@ -316,6 +331,7 @@ module.exports = {
     getUserAvatarBuffer,
     getGroupAvatarBuffer,
     fetchImageBuffer,
+    formatPhoneDisplay,
     resolvePhoneJid,
     resolveDisplayJid,
     displayNameForEvent,

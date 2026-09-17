@@ -23,6 +23,14 @@ module.exports = {
             await sock.sendMessage(from, { text: '❌ Nome muito curto (mín. 2 letras).' }, { quoted: m });
             return await react(sock, m, '❌', current, GLOBAL_COOLDOWN);
         }
+        try {
+            const { isValidPessoaNome } = require('../services/ficha');
+            const check = isValidPessoaNome(nome);
+            if (!check.ok) {
+                await sock.sendMessage(from, { text: `❌ ${check.reason}\n\nEx: *${config.prefix}cadastrar-pessoa Maria Silva | 15/08/2000 | São Paulo - SP | ...*` }, { quoted: m });
+                return await react(sock, m, '❌', current, GLOBAL_COOLDOWN);
+            }
+        } catch (_) {}
         if (countPessoas() >= 500) {
             await sock.sendMessage(from, { text: '❌ Limite de 500 fichas atingido.' }, { quoted: m });
             return await react(sock, m, '❌', current, GLOBAL_COOLDOWN);

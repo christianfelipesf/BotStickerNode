@@ -35,7 +35,7 @@ const MODE_OF = { saida: 'goodbye', promover: 'promote', rebaixar: 'demote', gru
 
 async function sendPreview(sock, m, utils, from, sender, target) {
     const { getTheme } = require('../services/themes');
-    const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid } = require('../services/welcomeImage');
+    const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid, formatPhoneDisplay } = require('../services/welcomeImage');
     const T = TARGETS[target];
     const gd = utils.getGroupData(from) || {};
     const msg = (gd[T.msgKey] || '').toString().trim() || T.defMsg;
@@ -56,7 +56,7 @@ async function sendPreview(sock, m, utils, from, sender, target) {
         const pushName = m.pushName || null;
         const isGroup = target === 'grupo';
         const userName = isGroup ? subject.slice(0, 24)
-            : ((pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? `@${digits}` : 'Você'));
+            : ((pushName && !/^(usuário|usuario)?$/i.test(String(pushName).trim())) ? String(pushName).trim().slice(0, 26) : (/^\d{8,15}$/.test(digits) ? formatPhoneDisplay(digits) : 'Você'));
         const [avatarRaw, groupAvatarRaw] = await Promise.all([
             isGroup ? Promise.resolve(null) : getUserAvatarBuffer(sock, sender, from, utils.groupMetadataCached, previewParts).catch(() => null),
             getGroupAvatarBuffer(sock, from).catch(() => null)
