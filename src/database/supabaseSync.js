@@ -117,6 +117,8 @@ function _coerceForCloud(table, col, v) {
 }
 
 let _syncTimer = null;
+let _autoTimer = null;
+let _localOverride = null; // null = segue .env, true/false = override via Telegram em runtime
 let _pushPending = false;
 let _syncRunning = false;
 let _pullOk = false;
@@ -395,12 +397,84 @@ function _intervalMs() {
     return Math.max(15000, Number(raw) || 60000);
 }
 
-// Kill-switch de emergência: SUPABASE_SYNC_ENABLED=0 força modo 100% local
+// Modo local: BOT_LOCAL_MODE=1 força modo 100% local
 // (sem pull no boot, sem push periódico, sem push via flush).
-// Ausente ou qualquer outro valor = sync normal. Comandos manuais do CLI
-// (db:push/db:pull/db:init) continuam funcionando — são ação explícita.
+// 0, ausente ou qualquer outro valor = sync normal (modo local DESATIVADO).
+// Comandos manuais do CLI (db:push/db:pull/db:init) continuam funcionando — são ação explícita.
+// Legado: SUPABASE_SYNC_ENABLED=0 ainda é aceito como alias (com aviso).
+// Runtime: _localOverride (via Telegram /banco) tem precedência sobre o .env.
 function isSyncKilled() {
-    return String(process.env.SUPABASE_SYNC_ENABLED || '').trim() === '0';
+    if (_localOverride !== null) return _localOverride;
+    const v = String(process.env.BOT_LOCAL_MODE || '').trim();
+    if (v === '1') return true;
+    if (String(process.env.SUPABASE_SYNC_ENABLED || '').trim() === '0') {
+        try { console.warn('⚠️ [supabase] SUPABASE_SYNC_ENABLED=0 é legado — use BOT_LOCAL_MODE=1'); } catch (_) {}
+        return true;
+    }
+    return false;
+}
+
+function _persistLocalModeEnv(enabled) {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const envPath = path.join(process.cwd(), '.env');
+        if (!fs.existsSync(envPath)) return { ok: false, reason: 'no-.env' };
+        let content = fs.readFileSync(envPath, 'utf8');
+        const line = `BOT_LOCAL_MODE=${enabled ? '1' : '0'}`;
+        if (/^BOT_LOCAL_MODE\s*=.*$/m.test(content)) {
+            content = content.replace(/^BOT_LOCAL_MODE\s*=.*$/m, line);
+        } else {
+            if (!content.endsWith('\n')) content += '\n';
+            content += `${line}\n`;
+        }
+        fs.writeFileSync(envPath, content);
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, reason: e?.message || String(e) };
+    }
+}
+
+function stopAutoSync() {
+    try { if (_autoTimer) clearInterval(_autoTimer); } catch (_) {}
+    _autoTimer = null;
+    try { if (_syncTimer) clearTimeout(_syncTimer); } catch (_) {}
+    _syncTimer = null;
+}
+
+// Troca local <-> nuvem em runtime (Telegram /banco). Persiste no .env p/ sobreviver ao restart.
+// local=true  -> para timers, só bot.db (sem pull/push).
+// local=false -> retoma push periódico SEM pull destrutivo (nuvem NÃO sobrescreve o local;
+//                rode `npm run db:pull` se quiser forçar nuvem -> local).
+function setLocalMode(local, { persist = true } = {}) {
+    const enabled = !!local;
+    _localOverride = enabled;
+    try { process.env.BOT_LOCAL_MODE = enabled ? '1' : '0'; } catch (_) {}
+    if (enabled) {
+        stopAutoSync();
+        try { console.log('☁️ [supabase] /banco local — modo local ativado em runtime (só bot.db)'); } catch (_) {}
+    } else {
+        // Retoma sync sem recriar pull destrutivo; pushes voltam a funcionar.
+        _pullOk = true;
+        _pullFailed = false;
+        try {
+            const r = startAutoSync({ onBootPull: false });
+            void r;
+        } catch (_) {}
+        try { console.log('☁️ [supabase] /banco nuvem — sync retomado em runtime (push periódico, sem pull auto)'); } catch (_) {}
+    }
+    let saved = { ok: false, reason: 'skip' };
+    if (persist) saved = _persistLocalModeEnv(enabled);
+    return { ok: true, local: enabled, persisted: saved.ok, persistDetail: saved.reason || null };
+}
+
+function getMode() {
+    return {
+        local: isSyncKilled(),
+        source: _localOverride !== null ? 'runtime' : 'env',
+        env: String(process.env.BOT_LOCAL_MODE || '').trim() || '(ausente)',
+        ...status(),
+    };
 }
 
 function startAutoSync({ onBootPull = true } = {}) {
@@ -409,9 +483,12 @@ function startAutoSync({ onBootPull = true } = {}) {
         return { enabled: false };
     }
     if (isSyncKilled()) {
-        try { console.log('☁️ [supabase] modo local forçado (SUPABASE_SYNC_ENABLED=0) — usando só bot.db, sem pull/push'); } catch (_) {}
+        try { console.log('☁️ [supabase] modo local ativado (BOT_LOCAL_MODE=1) — usando só bot.db, sem pull/push'); } catch (_) {}
         return { enabled: false, localOnly: true };
     }
+    // Evita duplicar o intervalo em trocas runtime (/banco nuvem repetido).
+    try { if (_autoTimer) clearInterval(_autoTimer); } catch (_) {}
+    _autoTimer = null;
     const intervalMs = _intervalMs();
     _pullOk = false;
     _pullFailed = false;
@@ -432,6 +509,7 @@ function startAutoSync({ onBootPull = true } = {}) {
             try { console.error('⚠️ [supabase] push periódico falhou:', e?.message || e); } catch (_) {}
         }
     }, intervalMs);
+    _autoTimer = t;
     try { if (t.unref) t.unref(); } catch (_) {}
     try { console.log(`☁️ [supabase] ativo (pull no boot + push a cada ${Math.round(intervalMs / 1000)}s)`); } catch (_) {}
     return { enabled: true };
@@ -443,4 +521,4 @@ function status() {
 
 function markPullOk() { _pullOk = true; _pullFailed = false; }
 
-module.exports = { pullFromCloud, pushToCloud, schedulePush, startAutoSync, status, SYNC_TABLES, backupCloud, validateBeforePush, markPullOk, isSyncKilled };
+module.exports = { pullFromCloud, pushToCloud, schedulePush, startAutoSync, stopAutoSync, setLocalMode, getMode, status, SYNC_TABLES, backupCloud, validateBeforePush, markPullOk, isSyncKilled };

@@ -1,3 +1,4 @@
+require('dotenv').config();
 const axios = require('axios');
 
 let _pollTimer = null;
@@ -151,7 +152,11 @@ async function handleUpdate(update) {
         const help = [
             `*🤖 Gravity Bot — Comandos Telegram*`,
             ``,
-            `/status — saúde do bot (ws, zumbi, grupos, uptime)`,
+            `/status — saúde do bot (ws, zumbi, grupos, uptime, banco)`,
+            `/modo — mostra banco atual (local x nuvem)`,
+            `/banco <local|nuvem> — alterna entre bot.db local e Supabase`,
+            `/local — atalho p/ \`/banco local\``,
+            `/nuvem — atalho p/ \`/banco nuvem\``,
             `/restart — \`process.exit(1)\` + Docker restart:always`,
             `/reconnect — força \`ws.close()\` → reconecta Baileys`,
             `/qr — mostra status do QR / conexão`,
@@ -167,6 +172,60 @@ async function handleUpdate(update) {
         return;
     }
 
+    // /modo /banco /local /nuvem — alterna banco local x remoto (Supabase)
+    if (lower === '/modo' || lower.startsWith('/modo ') || lower === '/banco' || lower.startsWith('/banco ')
+        || lower === '/local' || lower.startsWith('/local ') || lower === '/nuvem' || lower.startsWith('/nuvem ')
+        || lower === '/remoto' || lower.startsWith('/remoto ') || lower === '/cloud' || lower.startsWith('/cloud ')) {
+        try {
+            const sync = require('../database/supabaseSync');
+            const fmtTs = (ts) => {
+                if (!ts) return 'nunca';
+                try { return new Date(ts).toLocaleString('pt-BR'); } catch (_) { return String(ts); }
+            };
+            const modeText = () => {
+                const m = (typeof sync.getMode === 'function') ? sync.getMode() : { ...sync.status() };
+                const nome = m.local ? '📀 LOCAL (só bot.db)' : '☁️ NUVEM (Supabase)';
+                return [
+                    `*💾 BANCO ATUAL: ${m.local ? 'LOCAL' : 'NUVEM'}*`,
+                    `${nome}`,
+                    `Origem: \`${m.source || 'env'}\` env: \`${m.env || '?'}\``,
+                    `Último pull: ${fmtTs(m.lastPullAt)}`,
+                    `Último push: ${fmtTs(m.lastPushAt)}`,
+                ].join('\n');
+            };
+            const doSwitch = async (toLocal) => {
+                const cur = sync.isSyncKilled();
+                if (cur === toLocal) {
+                    await send(chatId, `${modeText()}\n\n⚠️ Já está em ${toLocal ? '*LOCAL*' : '*NUVEM*'}.`);
+                    return;
+                }
+                try { require('../database/utils').flushNow?.(); } catch (_) {}
+                const r = sync.setLocalMode(toLocal, { persist: true });
+                console.warn(`🔀 [telegramBot] /banco → ${toLocal ? 'LOCAL' : 'NUVEM'} por ${chatId} (persistido: ${r.persisted ? 'sim' : 'não'})`);
+                const extra = toLocal
+                    ? `\n\n✅ Agora só \`bot.db\` local (sem pull/push).\nTroca salva no .env — sobrevive ao restart.`
+                    : `\n\n✅ Sync retomado (push periódico, sem pull automático).\n⚠️ A nuvem NÃO sobrescreveu o local. Para forçar nuvem→local rode \`npm run db:pull\`. Troca salva no .env.`;
+                await send(chatId, `${modeText()}${extra}`);
+            };
+            // só consulta
+            if (lower === '/modo' || lower.startsWith('/modo ')) {
+                await send(chatId, `${modeText()}\n\nUso: \`/banco local\` ou \`/banco nuvem\``);
+                return;
+            }
+            // atalhos diretos
+            if (lower === '/local' || lower.startsWith('/local ')) { await doSwitch(true); return; }
+            if (lower === '/nuvem' || lower.startsWith('/nuvem ') || lower === '/remoto' || lower.startsWith('/remoto ')
+                || lower === '/cloud' || lower.startsWith('/cloud ')) { await doSwitch(false); return; }
+            // /banco [local|nuvem]
+            const alvo = (args[0] || '').toLowerCase();
+            if (!alvo) { await send(chatId, `${modeText()}\n\nUso: \`/banco local\` ou \`/banco nuvem\``); return; }
+            if (['local', 'loc'].includes(alvo)) { await doSwitch(true); return; }
+            if (['nuvem', 'remoto', 'cloud', 'supabase'].includes(alvo)) { await doSwitch(false); return; }
+            await send(chatId, `❌ Uso: \`/banco local\` ou \`/banco nuvem\``);
+        } catch (e) { await send(chatId, `❌ Erro banco: ${e.message}`); }
+        return;
+    }
+
     if (lower === '/status' || lower.startsWith('/status ')) {
         try {
             const wd = require('./watchdog').getState();
@@ -179,10 +238,12 @@ async function handleUpdate(update) {
                 const ms = Date.now() - (global.__startTime || Date.now());
                 const s = Math.floor(ms/1000); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60); return `${h}h ${m}m`;
             })();
+            const dbMode = (() => { try { return require('../database/supabaseSync').isSyncKilled() ? 'LOCAL' : 'NUVEM'; } catch (_) { return '?'; } })();
             const txt = [
                 `*📊 STATUS*`,
                 `Bot: \`${utils.readConfig().botName || '-'}\``,
                 `Conexão: \`${dash?.status || '?'}\` phone: \`${dash?.phone || '-'}\``,
+                `Banco: \`${dbMode}\` (/modo p/ detalhes)`,
                 `WS: \`${wd.wsState || '?'}\` zumbi: \`${wd.isZombie ? 'SIM 🚨' : 'não'}\` idle: ${Math.round(wd.idleMs/1000)}s`,
                 `Grupos: ativos ${ag} + parciais ${pg}`,
                 `Comandos: ${stats.totalCommands||0} restarts: ${stats.totalRestarts||0}`,
@@ -323,7 +384,7 @@ function start(opts = {}) {
     if (_pollTimer.unref) _pollTimer.unref();
     // primeira chamada imediata
     pollOnce().catch(()=>{});
-    console.log(`🤖 [telegramBot] polling ativo → chat ${String(chat).slice(0,4)}**** cmds: /restart /reconnect /qr /ativar /desativar /broadcast /logs /dump`);
+    console.log(`🤖 [telegramBot] polling ativo → chat ${String(chat).slice(0,4)}**** cmds: /modo /banco /local /nuvem /restart /reconnect /qr /ativar /desativar /broadcast /logs /dump`);
     return _pollTimer;
 }
 

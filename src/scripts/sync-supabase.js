@@ -49,7 +49,7 @@ async function main() {
         process.exit(1);
     }
     if (isSyncKilled() && ['--init', '--push', '--pull'].includes(arg)) {
-        console.warn('⚠️ SUPABASE_SYNC_ENABLED=0 (modo local), mas comando manual segue por ação explícita.');
+        console.warn('⚠️ BOT_LOCAL_MODE=1 (modo local), mas comando manual segue por ação explícita.');
     }
     if (arg === '--ping') {
         console.log(await pingSupabase());

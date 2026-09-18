@@ -130,6 +130,10 @@ dist
 
 # Bot Specific
 session/
+session.bak-*
+session.bak-*/
+**/*.bak-*
+**/*.bak-*/
 temp/
 data/
 backups/

@@ -73,6 +73,12 @@ try {
     if (tok && chat) telegram.configure({ token: tok, chatId: chat });
 } catch (_) {}
 
+// Bot Telegram de controle: sobe ANTES e INDEPENDENTE do WhatsApp,
+// para permitir /status /restart /qr /logs /dump mesmo com Baileys offline.
+try { telegramBot.start(); } catch (e) {
+    console.error('⚠️ [telegramBot] falha ao iniciar (WhatsApp segue normal):', e.message);
+}
+
 // Expõe serviços para que comandos (ex: set.js) possam controlá-los em runtime.
 global.__botServices = { news, splash, dashboard, watchdog, telegram, telegramBot };
 global.__startTime = Date.now();
@@ -252,8 +258,7 @@ async function startBot() {
 
         global.__baileysSock = sock;
 
-        // Inicia bot Telegram de controle (polling)
-        try { telegramBot.start(); } catch (_) {}
+        // Telegram já foi iniciado no boot (independente do WhatsApp) — não reinicia aqui.
 
         // Inicia watchdog anti-zumbi
         try {
