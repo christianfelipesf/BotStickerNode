@@ -52,9 +52,9 @@ const telegramBot = require('./src/services/telegramBot');
 // Inicializar Filtro de Logs
 initLogger();
 
-// Turso (nuvem): pull no boot (nuvem vence) + push periódico. Não trava o boot.
-try { require('./src/database/tursoSync').startAutoSync(); } catch (e) {
-    console.error('⚠️ [turso] falha ao iniciar sync (segue local):', e.message);
+// Supabase (nuvem): pull no boot (nuvem vence) + push periódico. Não trava o boot.
+try { require('./src/database/supabaseSync').startAutoSync(); } catch (e) {
+    console.error('⚠️ [supabase] falha ao iniciar sync (segue local):', e.message);
 }
 
 // Adiciona [hh:mm:ss] em cada console.log/info/warn/error

@@ -90,7 +90,11 @@ function getState() {
     const connectedDuration = connectedAt ? (now - connectedAt) : 0;
     const shouldCheck = connectedAt && connectedDuration > threshold;
 
-    const isZombie = shouldCheck && (isStale || (!wsHealthy && cfg.wsCheckEnabled) || queueStalled);
+    // Inatividade pura com ws OPEN é NORMAL (madrugada, grupo quieto) — não é zumbi.
+    // Antes: isStale sozinho derrubava conexão saudável a cada ~6min em loop.
+    // Agora: só é zumbi se ws não-saudável ou fila travada.
+    const wsBroken = !wsHealthy && cfg.wsCheckEnabled;
+    const isZombie = shouldCheck && (wsBroken || queueStalled);
 
     return {
         lastUpsertAt,
@@ -156,6 +160,15 @@ async function _check() {
     const state = getState();
     if (!state.isZombie) {
         // Se estava zumbi e voltou, já foi tratado em touchInbound
+        // Inatividade com ws saudável: só debug esporádico, sem recovery.
+        try {
+            if (state.isStale && state.wsState === 'OPEN' && !state.wasZombie) {
+                if (!global.___wdStaleLoggedAt || Date.now() - global.___wdStaleLoggedAt > 30 * 60 * 1000) {
+                    global.___wdStaleLoggedAt = Date.now();
+                    console.log(`💤 [watchdog] inativo há ${Math.round(state.idleMs / 60000)}min mas ws=OPEN — conexão saudável, sem recovery`);
+                }
+            }
+        } catch (_) {}
         return;
     }
 

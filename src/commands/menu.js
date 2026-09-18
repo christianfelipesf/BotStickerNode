@@ -22,18 +22,15 @@ module.exports = {
         let menuText = `*${currentBotName}* ${theme.header}\n_${theme.tagline}_\n\n` +
             `╭─── *GERAL* ───\n` +
             `${B} 🏆 *${p}rank* — top 10 ativos do mês (alias ${p}rankativos)\n` +
+            `${B} 🌍 *${p}rankglobal* — top global + foto dos grupos\n` +
             `${B} 👤 *${p}perfil* — foto do perfil\n` +
-            `${B} 📇 *${p}ficha* <Nome> — ficha cadastrada\n` +
-            `${B} 🎂 *${p}aniversariantes* — niver do mês\n` +
-            `${B} 📍 *${p}radar-cidades* — fichas por cidade\n` +
-            `${B} 🎲 *${p}aleatorio* — sorteia uma ficha\n` +
             `${B} 📊 *${p}status* — info do bot\n` +
             `${B} 🤖 *${p}ai* <texto> — conversa com IA\n` +
             `${B} 🌐 *${p}traduzir* <texto> — traduz\n` +
             `${B} 📖 *${p}tutorial* — guia de uso\n` +
             `${B} 📝 *${p}resumir* — resume conversa\n` +
-            `${B} 🐛 *${p}bug* <msg> — reportar bug\n` +
-            `${B} 💡 *${p}sugestao* <msg> — enviar sugestão\n` +
+            `${B} 📝 *${p}relatar* bug|sugestao <msg> — reportar (atalhos ${p}bug, ${p}sugestao)\n` +
+            `${B} 🎨 *${p}tema* <nome|reset> — troca o tema (só admin)\n` +
             `╰───────────────\n\n` +
             `╭─── *MÍDIA* ───\n` +
             `${B} 🖼️ *${p}s* — cria sticker\n` +

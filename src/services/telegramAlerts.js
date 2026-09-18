@@ -224,7 +224,7 @@ async function test() {
     return sendAlert(
         formatAlert({
             title: '✅ TESTE TELEGRAM',
-            botName: 'Antigravity Bot',
+            botName: 'Gravity Bot🪐',
             status: 'Alerta de teste OK',
             reason: 'Se recebeu esta mensagem, os alertas estão funcionando!',
             extra: 'Você receberá avisos de: zumbi, desconexão e reconexão.'

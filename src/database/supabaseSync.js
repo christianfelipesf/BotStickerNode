@@ -1,0 +1,446 @@
+// Sincronização local (bot.db) <-> Supabase Postgres (nuvem, fonte da verdade).
+// Mesma estratégia do antigo tursoSync:
+//  - Boot: PULL nuvem -> local (a nuvem vence; sobrescreve o bot.db local).
+//  - Ao salvar / flush / intervalo: PUSH local -> nuvem (upsert em lote via PostgREST).
+// Mantém todo o código síncrono existente intacto.
+require('dotenv').config();
+const { isSupabaseEnabled, supaSelectAll, supaCount, supaUpsert, ensureSupabaseSchema } = require('./supabaseClient');
+
+const SYNC_TABLES = [
+    'messages',
+    'active_groups',
+    'active_groups_partial',
+    'group_state',
+    'config',
+    'stats',
+    'dashboard_groups',
+    'dashboard_group_info',
+    'news_groups',
+    'news_state',
+    'dashboard_logs',
+    'dashboard_visits',
+    'group_blacklist',
+    'feedback',
+    'antiflood_config',
+    'login_allowed',
+    'group_msg_stats',
+    'group_modlog',
+    'rank_monthly_history',
+    'pessoas',
+];
+
+// Coluna(s) de conflito para o upsert (PostgREST ?on_conflict=)
+const CONFLICT_TARGET = {
+    messages: 'id',
+    active_groups: 'jid',
+    active_groups_partial: 'jid',
+    group_state: 'jid',
+    config: 'key',
+    stats: 'key',
+    dashboard_groups: 'jid',
+    dashboard_group_info: 'jid',
+    news_groups: 'jid',
+    news_state: 'key',
+    dashboard_logs: 'id',
+    dashboard_visits: 'id',
+    group_blacklist: 'group_jid,user_jid',
+    feedback: 'id',
+    antiflood_config: 'jid',
+    login_allowed: 'phone',
+    group_msg_stats: 'jid,day,hour',
+    group_modlog: 'id',
+    rank_monthly_history: 'jid,month',
+    pessoas: 'id',
+};
+
+// Tabelas com volume alto: limita o pull/push aos N mais recentes.
+const CAPPED_TABLES = { messages: 2000, dashboard_logs: 2000, dashboard_visits: 500, group_modlog: 2000 };
+// Coluna de ordem para as tabelas com cap (Postgres não tem rowid).
+const ORDER_COL = { messages: 'id', dashboard_logs: 'id', dashboard_visits: 'id', group_modlog: 'id' };
+
+// Coluna temporal das tabelas com cap (comparável entre PCs; id AUTOINCREMENT não é).
+const TIME_COL = { messages: 'time', dashboard_logs: 'timestamp', dashboard_visits: 'timestamp', group_modlog: 'timestamp' };
+
+// Limita a nuvem às `cap` linhas globalmente mais recentes (por coluna temporal).
+// Sem isso o upsert (que nunca apaga) faz a nuvem crescer sem limite e o PULL
+// ressuscita linhas que o bot já aparou localmente.
+async function _trimCloudCap(table, cap) {
+    const tcol = TIME_COL[table];
+    if (!tcol) return 0;
+    const { supaFetch } = require('./supabaseClient');
+    const boundary = await supaFetch(`/${table}?select=${tcol}&order=${tcol}.desc&limit=1&offset=${cap - 1}`);
+    if (!Array.isArray(boundary) || !boundary.length) return 0; // nuvem tem < cap linhas
+    const cutoff = Number(boundary[0]?.[tcol]);
+    if (!isFinite(cutoff)) return 0;
+    await supaFetch(`/${table}?${tcol}=lt.${cutoff}`, { method: 'DELETE' });
+    return 1;
+}
+
+// Coerção de tipos no PUSH (SQLite aceita qualquer tipo em qualquer coluna;
+// o Postgres não). stats.value é TEXT na nuvem por design (mistura inteiros e 'YYYY-MM').
+const TEXT_COLS = { stats: ['value'] };
+const NUMERIC_COLS = {
+    messages: ['id', 'time'],
+    active_groups: ['activated_at'],
+    active_groups_partial: ['activated_at'],
+    group_state: ['antilink'],
+    dashboard_groups: ['enabled', 'updated_at'],
+    dashboard_group_info: ['member_count', 'updated_at'],
+    news_groups: ['enabled', 'activated_at'],
+    news_state: ['updated_at'],
+    dashboard_logs: ['id', 'from_me', 'hidden', 'ephemeral', 'timestamp'],
+    dashboard_visits: ['id', 'timestamp'],
+    group_blacklist: ['added_at'],
+    feedback: ['id', 'created_at'],
+    antiflood_config: ['enabled', 'include_admins', 'max_msgs', 'window_secs', 'updated_at'],
+    login_allowed: ['added_at'],
+    group_msg_stats: ['hour', 'count'],
+    group_modlog: ['id', 'timestamp'],
+    rank_monthly_history: ['total', 'created_at'],
+    pessoas: ['id', 'created_at', 'updated_at'],
+};
+
+function _coerceForCloud(table, col, v) {
+    if (v === undefined) return null;
+    if (v === null) return null;
+    if ((TEXT_COLS[table] || []).includes(col)) {
+        return typeof v === 'string' ? v : String(v);
+    }
+    if ((NUMERIC_COLS[table] || []).includes(col)) {
+        if (typeof v === 'number') return v;
+        if (typeof v === 'boolean') return v ? 1 : 0;
+        if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) return Number(v);
+        return v; // deixa o Postgres recusar com erro claro em vez de corromper silenciosamente
+    }
+    if (typeof v === 'boolean') return v ? 1 : 0;
+    return v;
+}
+
+let _syncTimer = null;
+let _pushPending = false;
+let _syncRunning = false;
+let _pullOk = false;
+let _pullFailed = false;
+let _pullRefusedLogged = false;
+let _lastPullAt = 0;
+let _lastPushAt = 0;
+let _lastPushRefused = null;
+
+function _localDb() {
+    return require('./db').db;
+}
+
+function _tableColumns(localDb, table) {
+    try {
+        const rows = localDb.prepare(`PRAGMA table_info("${table}")`).all();
+        return rows.map(r => r.name).filter(Boolean);
+    } catch (_) { return []; }
+}
+
+function _tableExists(localDb, table) {
+    try {
+        const r = localDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+        return !!r;
+    } catch (_) { return false; }
+}
+
+function _countLocal(localDb, table) {
+    try {
+        if (!_tableExists(localDb, table)) return 0;
+        const r = localDb.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get();
+        return Number(r?.c) || 0;
+    } catch (_) { return -1; }
+}
+
+async function _countCloud(table) {
+    try {
+        return await supaCount(table);
+    } catch (_) {
+        return -1;
+    }
+}
+
+function _localIntegrity() {
+    try {
+        const row = _localDb().prepare('PRAGMA integrity_check').get();
+        const v = row && (row.integrity_check || Object.values(row)[0]);
+        return String(v || '').toLowerCase() === 'ok' ? { ok: true } : { ok: false, reason: String(v).slice(0, 200) };
+    } catch (e) {
+        return { ok: false, reason: e?.message || String(e) };
+    }
+}
+
+function _quarantineLocal(reason) {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const { dbPath } = require('./db');
+        try { _localDb().pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h${pad(d.getMinutes())}`;
+        const dest = path.join(path.dirname(dbPath), `bot.db.quarentena-${stamp}.db`);
+        fs.copyFileSync(dbPath, dest);
+        try { console.error(`🚧 [supabase] DB local em QUARENTENA (cópia): ${dest} — motivo: ${reason}`); } catch (_) {}
+        return dest;
+    } catch (e) {
+        try { console.error('🚧 [supabase] falha ao quarentenar DB local:', e?.message || e); } catch (_) {}
+        return null;
+    }
+}
+
+async function validateBeforePush() {
+    const localDb = _localDb();
+    const integ = _localIntegrity();
+    if (!integ.ok) {
+        _quarantineLocal(`integrity_check: ${integ.reason}`);
+        return { ok: false, reason: `integrity_check falhou: ${integ.reason}` };
+    }
+    const localCfg = _countLocal(localDb, 'config');
+    const localGs = _countLocal(localDb, 'group_state');
+    if (localCfg < 0 || localGs < 0) return { ok: false, reason: 'erro ao ler tabelas locais' };
+    if (localCfg === 0) {
+        return { ok: false, reason: 'db local vazio (config=0) — push recusado; rode --push --force se for intencional' };
+    }
+    const cloudCfg = await _countCloud('config');
+    const cloudGs = await _countCloud('group_state');
+    if (cloudCfg > 0 && localCfg < Math.ceil(cloudCfg * 0.5)) {
+        return { ok: false, reason: `db local suspeito (config local=${localCfg} < 50% da nuvem=${cloudCfg}) — push recusado` };
+    }
+    if (cloudGs > 0 && localGs === 0) {
+        return { ok: false, reason: `db local suspeito (group_state local=0, nuvem=${cloudGs}) — push recusado` };
+    }
+    return { ok: true };
+}
+
+async function backupCloud({ log = console } = {}) {
+    if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
+    await ensureSupabaseSchema(SYNC_TABLES);
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.join(process.cwd(), 'backups');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h${pad(d.getMinutes())}`;
+    const file = path.join(dir, `supabase-${stamp}.json`);
+    const dump = { at: new Date().toISOString(), tables: {} };
+    for (const table of SYNC_TABLES) {
+        const cap = CAPPED_TABLES[table];
+        dump.tables[table] = await supaSelectAll(table, {
+            order: cap ? (ORDER_COL[table] || null) : null,
+            desc: true,
+            limit: cap || 20000,
+        });
+    }
+    fs.writeFileSync(file, JSON.stringify(dump));
+    try { log.log(`💾 [supabase] backup da nuvem em ${path.basename(file)}`); } catch (_) {}
+    return { ok: true, file };
+}
+
+function _backupLocalFile(tag) {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const { dbPath } = require('./db');
+        if (!fs.existsSync(dbPath)) return null;
+        try { _localDb().pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}h${pad(d.getMinutes())}`;
+        const dest = path.join(process.cwd(), 'backups', `bot-pre-${tag}-${stamp}.db`);
+        const dir = path.dirname(dest);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.copyFileSync(dbPath, dest);
+        return dest;
+    } catch (_) { return null; }
+}
+
+// Normaliza tipos vindos do Postgres para o SQLite local (int 0/1, etc).
+function _normRow(table, row, cols) {
+    const o = {};
+    for (const c of cols) {
+        let v = row[c];
+        if (v === undefined) v = null;
+        o[c] = v;
+    }
+    return o;
+}
+
+async function pullFromCloud({ log = console } = {}) {
+    if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
+    if (_syncRunning) return { ok: false, reason: 'busy' };
+    _syncRunning = true;
+    try {
+        await ensureSupabaseSchema(SYNC_TABLES);
+        _backupLocalFile('pull');
+        const localDb = _localDb();
+        let tables = 0, rows = 0;
+        for (const table of SYNC_TABLES) {
+            if (!_tableExists(localDb, table)) continue;
+            const cols = _tableColumns(localDb, table);
+            if (!cols.length) continue;
+            const cap = CAPPED_TABLES[table];
+            const cloudRows = await supaSelectAll(table, {
+                order: cap ? (ORDER_COL[table] || null) : null,
+                desc: true,
+                limit: cap || 20000,
+            });
+            const del = localDb.prepare(`DELETE FROM "${table}"`);
+            const placeholders = cols.map(() => '?').join(',');
+            const quoted = cols.map(c => `"${c}"`).join(',');
+            const ins = localDb.prepare(`INSERT OR REPLACE INTO "${table}" (${quoted}) VALUES (${placeholders})`);
+            const list = cloudRows.map(r => _normRow(table, r, cols));
+            if (cap) list.reverse();
+            const tx = localDb.transaction((arr) => {
+                del.run();
+                for (const r of arr) ins.run(cols.map(c => (r[c] === undefined ? null : r[c])));
+            });
+            tx(list);
+            tables++;
+            rows += list.length;
+        }
+        try { localDb.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+        _lastPullAt = Date.now();
+        _pullOk = true;
+        _pullFailed = false;
+        try { log.log(`☁️ [supabase] PULL ok: ${rows} linhas em ${tables} tabelas (nuvem → local)`); } catch (_) {}
+        return { ok: true, tables, rows };
+    } catch (e) {
+        _pullFailed = true;
+        throw e;
+    } finally {
+        _syncRunning = false;
+    }
+}
+
+async function pushToCloud({ log = console, force = false, requirePull = true } = {}) {
+    if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
+    if (requirePull && !_pullOk && !force && process.env.SUPABASE_REQUIRE_PULL !== '0' && process.env.TURSO_REQUIRE_PULL !== '0') {
+        _lastPushRefused = { at: Date.now(), reason: 'pull-pending' };
+        if (!_pullRefusedLogged) {
+            _pullRefusedLogged = true;
+            try { (log.log || log)(`⏳ [supabase] push adiado: aguardando 1º PULL do boot (nuvem vence)`); } catch (_) {}
+        }
+        _pushPending = true;
+        return { ok: false, reason: 'pull-pending' };
+    }
+    if (_syncRunning) { _pushPending = true; return { ok: false, reason: 'busy' }; }
+    _syncRunning = true;
+    try {
+        await ensureSupabaseSchema(SYNC_TABLES);
+        const check = await validateBeforePush();
+        if (!check.ok && !force) {
+            _lastPushRefused = { at: Date.now(), reason: check.reason };
+            try { console.error(`🛡️ [supabase] PUSH RECUSADO: ${check.reason}`); } catch (_) {}
+            return { ok: false, reason: check.reason };
+        }
+        if (!check.ok && force) {
+            try { console.warn(`⚠️ [supabase] validação ignorada via --force: ${check.reason}`); } catch (_) {}
+        }
+        const localDb = _localDb();
+        let tables = 0, rows = 0;
+        for (const table of SYNC_TABLES) {
+            if (!_tableExists(localDb, table)) continue;
+            const cols = _tableColumns(localDb, table);
+            if (!cols.length) continue;
+            const cap = CAPPED_TABLES[table];
+            const orderCol = ORDER_COL[table];
+            const localRows = cap && orderCol && cols.includes(orderCol)
+                ? localDb.prepare(`SELECT * FROM "${table}" ORDER BY "${orderCol}" DESC LIMIT ${cap}`).all().reverse()
+                : localDb.prepare(`SELECT * FROM "${table}"`).all();
+            if (!localRows.length) { tables++; continue; }
+            // Postgres: coerção explícita (SQLite é flexível, Postgres não).
+            const payload = localRows.map(r => {
+                const o = {};
+                for (const c of cols) {
+                    o[c] = _coerceForCloud(table, c, r[c]);
+                }
+                return o;
+            });
+            const n = await supaUpsert(table, payload, CONFLICT_TARGET[table]);
+            rows += n;
+            tables++;
+            // Tabela com cap: apara a nuvem às `cap` mais recentes (por tempo, válido entre PCs).
+            if (cap && TIME_COL[table]) {
+                try { await _trimCloudCap(table, cap); } catch (e) {
+                    try { console.warn(`⚠️ [supabase] trim ${table} falhou (segue):`, e?.message || e); } catch (_) {}
+                }
+            }
+        }
+        _lastPushAt = Date.now();
+        _pullRefusedLogged = false;
+        try { log.log(`☁️ [supabase] PUSH ok: ${rows} linhas em ${tables} tabelas (local → nuvem)`); } catch (_) {}
+        return { ok: true, tables, rows };
+    } finally {
+        _syncRunning = false;
+        if (_pushPending) { _pushPending = false; schedulePush(2000); }
+    }
+}
+
+function schedulePush(delayMs = 5000) {
+    if (!isSupabaseEnabled() || isSyncKilled()) return;
+    if (_syncTimer) return;
+    _syncTimer = setTimeout(async () => {
+        _syncTimer = null;
+        try { await pushToCloud(); } catch (e) {
+            try { console.error('⚠️ [supabase] push agendado falhou:', e?.message || e); } catch (_) {}
+        }
+    }, delayMs);
+    try { if (_syncTimer.unref) _syncTimer.unref(); } catch (_) {}
+}
+
+function _intervalMs() {
+    const raw = process.env.SUPABASE_SYNC_INTERVAL_MS || process.env.TURSO_SYNC_INTERVAL_MS || '60000';
+    return Math.max(15000, Number(raw) || 60000);
+}
+
+// Kill-switch de emergência: SUPABASE_SYNC_ENABLED=0 força modo 100% local
+// (sem pull no boot, sem push periódico, sem push via flush).
+// Ausente ou qualquer outro valor = sync normal. Comandos manuais do CLI
+// (db:push/db:pull/db:init) continuam funcionando — são ação explícita.
+function isSyncKilled() {
+    return String(process.env.SUPABASE_SYNC_ENABLED || '').trim() === '0';
+}
+
+function startAutoSync({ onBootPull = true } = {}) {
+    if (!isSupabaseEnabled()) {
+        try { console.log('☁️ [supabase] desativado (sem SUPABASE_URL/SECRET_KEY) — usando bot.db local'); } catch (_) {}
+        return { enabled: false };
+    }
+    if (isSyncKilled()) {
+        try { console.log('☁️ [supabase] modo local forçado (SUPABASE_SYNC_ENABLED=0) — usando só bot.db, sem pull/push'); } catch (_) {}
+        return { enabled: false, localOnly: true };
+    }
+    const intervalMs = _intervalMs();
+    _pullOk = false;
+    _pullFailed = false;
+    const bootPullOff = process.env.SUPABASE_SYNC_ON_BOOT === '0' || process.env.TURSO_SYNC_ON_BOOT === '0';
+    if (onBootPull && !bootPullOff) {
+        setImmediate(async () => {
+            try {
+                await pullFromCloud();
+            } catch (e) {
+                try { console.error('⚠️ [supabase] pull do boot falhou (PUSH bloqueado até próximo pull; segue com bot.db local):', e?.message || e); } catch (_) {}
+            }
+        });
+    } else {
+        _pullOk = true;
+    }
+    const t = setInterval(async () => {
+        try { await pushToCloud({ log: { log: () => {} } }); } catch (e) {
+            try { console.error('⚠️ [supabase] push periódico falhou:', e?.message || e); } catch (_) {}
+        }
+    }, intervalMs);
+    try { if (t.unref) t.unref(); } catch (_) {}
+    try { console.log(`☁️ [supabase] ativo (pull no boot + push a cada ${Math.round(intervalMs / 1000)}s)`); } catch (_) {}
+    return { enabled: true };
+}
+
+function status() {
+    return { enabled: isSupabaseEnabled(), localOnly: isSyncKilled(), lastPullAt: _lastPullAt, lastPushAt: _lastPushAt, pullOk: _pullOk, pullFailed: _pullFailed, lastPushRefused: _lastPushRefused };
+}
+
+function markPullOk() { _pullOk = true; _pullFailed = false; }
+
+module.exports = { pullFromCloud, pushToCloud, schedulePush, startAutoSync, status, SYNC_TABLES, backupCloud, validateBeforePush, markPullOk, isSyncKilled };

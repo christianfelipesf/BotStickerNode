@@ -123,13 +123,11 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
                 `│ 👤 *De:* ${displayReveal}\n` +
                 `│ 🤖 *Por:* ${botNameForReveal}\n` +
                 `│ 💬 *Legenda:* ${captionLegenda}\n` +
-                `│ ⚡ *Status:* Concluído\n` +
                 `╰───────────────`;
         } else {
             revealCaption = `╭─── *🔓 MÍDIA REVELADA* ───\n` +
                 `│ 👤 *De:* ${displayReveal}\n` +
                 `│ 🤖 *Por:* ${botNameForReveal}\n` +
-                `│ ⚡ *Status:* Concluído\n` +
                 `╰───────────────`;
         }
         const opts = { mentions: [sender], quoted: m };
@@ -179,7 +177,7 @@ function buildConvertedCaption(senderJid, botName, senderName, fallbackPn) {
     }
     // Se display é @numero, mantém @; se é nome, sem @
     const line = `│ 👤 *Solicitado por:* ${display}`;
-    return `╭─── *📱 MÍDIA CONVERTIDA* ───\n${line}\n│ 🤖 *Por:* ${bot}\n│ ⚡ *Status:* Concluído\n╰───────────────`;
+    return `╭─── *📱 MÍDIA CONVERTIDA* ───\n${line}\n│ 🤖 *Por:* ${bot}\n╰───────────────`;
 }
 
 async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
@@ -313,7 +311,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                     ? (mediaMessage.videoMessage.mimetype || 'video/mp4')
                     : (mediaMessage.imageMessage?.mimetype || 'image/jpeg');
                 // pack/author: 1) explícito via !s pack/autor, 2) per-grupo se configurado, 3) fallback requester/bot
-                // Antes buscava getStickerPackForJid que sempre retorna "Antigravity Bot🪐" (global default) e mascarava pushName
+                // Antes buscava getStickerPackForJid que sempre retorna "Gravity Bot🪐" (global default) e mascarava pushName
                 let pack = explicitOpts.pack || null;
                 let author = explicitOpts.author || null;
                 let packSource = explicitOpts.pack ? 'explicit' : null;

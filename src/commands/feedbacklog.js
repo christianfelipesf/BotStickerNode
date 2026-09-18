@@ -62,7 +62,7 @@ module.exports = {
 
         let body = '';
         if (all.length === 0) {
-            body = '(nenhum feedback registrado ainda — use !bug <msg> ou !sugestao <msg>)';
+            body = '(nenhum feedback registrado ainda — use !relatar bug <msg> ou !relatar sugestao <msg>)';
         } else {
             const blocks = all.map((r, idx) => {
                 const d = new Date(r.created_at || Date.now());

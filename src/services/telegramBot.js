@@ -149,7 +149,7 @@ async function handleUpdate(update) {
     // /help /start
     if (lower === '/start' || lower === '/help' || lower.startsWith('/help ')) {
         const help = [
-            `*🤖 Antigravity Bot — Comandos Telegram*`,
+            `*🤖 Gravity Bot — Comandos Telegram*`,
             ``,
             `/status — saúde do bot (ws, zumbi, grupos, uptime)`,
             `/restart — \`process.exit(1)\` + Docker restart:always`,
