@@ -1,10 +1,10 @@
-const HELP = '💡 *Splash* — curiosidade automática a cada N mensagens\n\n' +
+const HELP = '💡 *Splash* — curiosidade automática (anti-spam: 1x a cada 6h + mín. 60 msgs)\n\n' +
     '❌ Use:\n' +
     '!splash on|off|status|teste|intervalo <n>|reset\n\n' +
     '• *on/off* — liga/desliga global (só dono)\n' +
     '• *status* — mostra estado atual\n' +
-    '• *teste* — manda 1 curiosidade agora\n' +
-    '• *intervalo 60* — troca o gatilho (10-200, só dono)\n' +
+    '• *teste* — manda 1 curiosidade agora (não conta no limite de 6h)\n' +
+    '• *intervalo 60* — troca o gatilho (60-200, só dono)\n' +
     '• *reset* — zera o contador deste grupo';
 
 module.exports = {
@@ -24,12 +24,25 @@ module.exports = {
         if (sub === 'status' || sub === 'ver') {
             const cfg = readConfig();
             const on = cfg.splashEnabled !== false;
-            const interval = Math.max(10, Math.min(200, Number(cfg.splashInterval) || 60));
+            const interval = Math.max(60, Math.min(200, Number(cfg.splashInterval) || 60));
+            const cooldownMs = typeof splash.getCooldownMs === 'function' ? splash.getCooldownMs() : 21600000;
+            const cooldownH = (cooldownMs / 3600000).toFixed(cooldownMs % 3600000 === 0 ? 0 : 1);
             const count = isGroup ? splash.getCount(from) : 0;
             const faltam = isGroup ? Math.max(0, interval - count) : '-';
+            let tempoTxt = '';
+            if (isGroup && typeof splash.getTimeRemainingMs === 'function') {
+                const rest = splash.getTimeRemainingMs(from);
+                if (rest > 0) {
+                    const h = Math.floor(rest / 3600000);
+                    const min = Math.ceil((rest % 3600000) / 60000);
+                    tempoTxt = `\n• Próximo aviso em: *${h}h ${min}min* (limite 1x/${cooldownH}h por grupo)`;
+                } else if (faltam === 0) {
+                    tempoTxt = '\n• Pronto para enviar na próxima mensagem ✅';
+                }
+            }
             return await sock.sendMessage(from, {
-                text: `💡 *Splash*\n\n• Estado global: ${on ? '🟢 ligado' : '🔴 desligado'}\n• A cada: *${interval}* mensagens\n` +
-                    (isGroup ? `• Neste grupo: ${count}/${interval} (faltam ${faltam})\n` : '') +
+                text: `💡 *Splash* (anti-spam)\n\n• Estado global: ${on ? '🟢 ligado' : '🔴 desligado'}\n• Regra: *1x a cada ${cooldownH}h* + mín. *${interval}* mensagens\n` +
+                    (isGroup ? `• Neste grupo: ${count}/${interval} (faltam ${faltam})${tempoTxt}\n` : '') +
                     `\n_Comandos: !splash teste | !splash on | !splash off_`
             }, { quoted: m });
         }
@@ -40,6 +53,15 @@ module.exports = {
                     const { isActiveGroup } = utils;
                     if (!isActiveGroup(from)) {
                         return await sock.sendMessage(from, { text: '🤐 Bot desativado neste grupo. Peça a um admin para usar !ativar.' }, { quoted: m });
+                    }
+                } catch (_) {}
+                // Freio manual: 1 teste a cada 30s por grupo (não mexe na janela de 6h do automático).
+                try {
+                    if (typeof splash.checkTesteCooldown === 'function') {
+                        const wait = splash.checkTesteCooldown(from);
+                        if (wait > 0) {
+                            return await sock.sendMessage(from, { text: `⏳ Aguarde *${Math.ceil(wait / 1000)}s* para testar de novo (anti-spam).` }, { quoted: m });
+                        }
                     }
                 } catch (_) {}
             }
@@ -63,7 +85,7 @@ module.exports = {
             } catch (_) {}
             splash.reset(from);
             await react(sock, m, '✅', lastBotResponse, GLOBAL_COOLDOWN);
-            return await sock.sendMessage(from, { text: '✅ Contador do splash zerado neste grupo.' }, { quoted: m });
+            return await sock.sendMessage(from, { text: '✅ Contador do splash zerado neste grupo.\n_O limite de 1x/6h continua valendo (reset não fura a janela anti-spam)._' }, { quoted: m });
         }
 
         // --- on/off/intervalo: só dono do bot (global) ---
@@ -90,8 +112,8 @@ module.exports = {
         }
         if (sub === 'intervalo' || sub === 'interval' || sub === 'set' || sub === 'cada') {
             const n = parseInt(args[1], 10);
-            if (!Number.isFinite(n) || n < 10 || n > 200) {
-                return await sock.sendMessage(from, { text: '❌ Use: !splash intervalo <10-200>. Ex: !splash intervalo 60' }, { quoted: m });
+            if (!Number.isFinite(n) || n < 60 || n > 200) {
+                return await sock.sendMessage(from, { text: '❌ Use: !splash intervalo <60-200>. Ex: !splash intervalo 60' }, { quoted: m });
             }
             const cfg = readConfig();
             cfg.splashInterval = n;

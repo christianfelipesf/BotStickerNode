@@ -38,7 +38,7 @@ const SCHEMA_SQL = `
         jid       TEXT PRIMARY KEY,
         muted     TEXT NOT NULL DEFAULT '[]',
         warnings  TEXT NOT NULL DEFAULT '{}',
-        antilink  INTEGER NOT NULL DEFAULT 0,
+        antilink  INTEGER NOT NULL DEFAULT 1,
         activity  TEXT NOT NULL DEFAULT '{}',
         bot_name  TEXT,
         menu_image TEXT,
@@ -129,7 +129,7 @@ const SCHEMA_SQL = `
     CREATE INDEX IF NOT EXISTS idx_feedback_kind_created ON feedback(kind, created_at DESC);
     CREATE TABLE IF NOT EXISTS antiflood_config (
         jid             TEXT PRIMARY KEY,
-        enabled         INTEGER NOT NULL DEFAULT 0,
+        enabled         INTEGER NOT NULL DEFAULT 1,
         include_admins  INTEGER NOT NULL DEFAULT 0,
         max_msgs        INTEGER NOT NULL DEFAULT 5,
         window_secs     INTEGER NOT NULL DEFAULT 8,

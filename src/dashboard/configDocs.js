@@ -52,10 +52,10 @@
         instagramCookies: 'Cookies do Instagram (formato Netscape) para baixar mídias. Cole o conteúdo do cookies.txt aqui.',
         cobaltInstance: 'URL da instância Cobalt (self-host, ex.: http://localhost:9000). Vazio = fallback Cobalt desligado. Instâncias públicas têm bot-protection.',
         cobaltApiKey: 'Api-Key da instância Cobalt (se ela exigir autenticação). Vazio = sem auth.',
-        splashEnabled: 'Liga/desliga global do splash de curiosidades (1 a cada N mensagens).',
-        splashInterval: 'A cada quantas mensagens o splash aparece (10-200, padrão 40).',
+        splashEnabled: 'Liga/desliga global do splash de curiosidades (anti-spam: 1x/6h + mín. 60 msgs).',
+        splashInterval: 'Mínimo de mensagens para o splash aparecer (60-200, padrão 60).',
         splashWithImage: 'Envia o splash com card de imagem (true) ou só texto (false).',
-        splashCooldownMs: 'Tempo mínimo (ms) entre dois splashes no mesmo grupo (anti-flood).'
+        splashCooldownMs: 'Janela anti-spam entre dois splashes no mesmo grupo (ms, mín. 6h=21600000, máx. 24h).'
     };
 
     D.configDocs = DOCS;

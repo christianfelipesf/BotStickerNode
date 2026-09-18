@@ -103,7 +103,7 @@ db.exec(`
         jid       TEXT PRIMARY KEY,
         muted     TEXT NOT NULL DEFAULT '[]',
         warnings  TEXT NOT NULL DEFAULT '{}',
-        antilink  INTEGER NOT NULL DEFAULT 0,
+        antilink  INTEGER NOT NULL DEFAULT 1,
         activity  TEXT NOT NULL DEFAULT '{}',
         bot_name  TEXT,
         menu_image TEXT,
@@ -211,7 +211,7 @@ db.exec(`
 
     CREATE TABLE IF NOT EXISTS antiflood_config (
         jid             TEXT PRIMARY KEY,
-        enabled         INTEGER NOT NULL DEFAULT 0,
+        enabled         INTEGER NOT NULL DEFAULT 1,
         include_admins  INTEGER NOT NULL DEFAULT 0,
         max_msgs        INTEGER NOT NULL DEFAULT 5,
         window_secs     INTEGER NOT NULL DEFAULT 8,
@@ -282,6 +282,20 @@ try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_pack TEXT"); } catch (
 try { db.exec("ALTER TABLE group_state ADD COLUMN sticker_author TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN theme TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE group_state ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'"); } catch (_) {}
+
+// Antispam/antilink ON por padrão — migração única (idempotente via flag em config).
+// Grupos que estavam com OFF explícito voltam a ON uma vez; admin pode desligar de novo.
+try {
+    const flagRow = db.prepare("SELECT value FROM config WHERE key = 'antispam_default_on_v1'").get();
+    if (!flagRow || flagRow.value !== '1') {
+        const a = db.prepare('UPDATE group_state SET antilink = 1 WHERE antilink = 0').run();
+        const b = db.prepare('UPDATE antiflood_config SET enabled = 1 WHERE enabled = 0').run();
+        db.prepare("INSERT INTO config (key, value) VALUES ('antispam_default_on_v1', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run();
+        console.log(`🛡️ [database] antispam padrão ON: antilink ${a.changes} grupo(s), antiflood ${b.changes} grupo(s)`);
+    }
+} catch (e) {
+    console.error('[database] migração antispam_default_on_v1 falhou:', e?.message || e);
+}
 
 // Limpeza de órfãos — DEPOIS do CREATE TABLE (antes falhava em banco novo).
 try {

@@ -298,17 +298,17 @@ const _afUpsert = db.prepare(`
 const _afDelete = db.prepare('DELETE FROM antiflood_config WHERE jid = ?');
 
 function getAntifloodConfig(jid) {
-    if (!jid || !jid.endsWith('@g.us')) return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
+    if (!jid || !jid.endsWith('@g.us')) return { enabled: true, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
     try {
         const row = _afGet.get(jid);
-        if (!row) return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
+        if (!row) return { enabled: true, includeAdmins: false, maxMsgs: 5, windowSecs: 8 };
         return {
-            enabled: !!row.enabled,
+            enabled: row.enabled === null || row.enabled === undefined ? true : !!row.enabled,
             includeAdmins: !!row.include_admins,
             maxMsgs: Math.max(2, Math.min(20, Number(row.max_msgs) || 5)),
             windowSecs: Math.max(3, Math.min(60, Number(row.window_secs) || 8))
         };
-    } catch (_) { return { enabled: false, includeAdmins: false, maxMsgs: 5, windowSecs: 8 }; }
+    } catch (_) { return { enabled: true, includeAdmins: false, maxMsgs: 5, windowSecs: 8 }; }
 }
 
 function setAntifloodConfig(jid, patch = {}) {
@@ -388,7 +388,7 @@ const DEFAULT_CONFIG = {
     splashEnabled: true,
     splashInterval: 60,
     splashWithImage: true,
-    splashCooldownMs: 90000
+    splashCooldownMs: 21600000
 };
 
 let _configCache = null;
@@ -494,7 +494,7 @@ function writeGroupState(jid, patch = {}) {
     if (!jid) throw new Error('writeGroupState: jid obrigatório');
     const cur = _gsGet.get(jid) || {};
     const pick = (col, fb) => (patch[col] !== undefined ? patch[col] : (cur[col] !== undefined ? cur[col] : fb));
-    const antilink = patch.antilink !== undefined ? (patch.antilink ? 1 : 0) : (cur.antilink ?? 0);
+    const antilink = patch.antilink !== undefined ? (patch.antilink ? 1 : 0) : (cur.antilink ?? 1);
     _gsUpsert.run(
         jid,
         pick('muted', '[]'),
@@ -930,7 +930,7 @@ function getGroupData(jid) {
             return { botName: row.bot_name || undefined, menuImage: row.menu_image || undefined, prefix: row.prefix || undefined, stickerPack: row.sticker_pack || undefined, stickerAuthor: row.sticker_author || undefined, theme: row.theme || undefined, ...parsed, ...(parsed.extra || {}) };
         }
     } catch (_) {}
-    return {};
+    return { antilink: true };
 }
 
 function setGroupData(jid, data) {
@@ -1249,6 +1249,90 @@ function clearMonthlyRank(jid) {
         try { _activityBuffer.delete(jid); } catch (_) {}
         return true;
     } catch (_) { return false; }
+}
+
+// ============================================================
+// Rank GLOBAL mensal — agrega todos os grupos (top conversadores + top grupos)
+// ============================================================
+function _collectAllGroupActivities() {
+    if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+    _flushActivity();
+    let rows = [];
+    try { rows = _gsAll.all(); } catch (_) { rows = []; }
+    const perGroup = []; // [{ jid, members: {senderJid: {name,count}} }]
+    for (const r of rows) {
+        const gjid = r.jid;
+        if (!gjid || !String(gjid).endsWith('@g.us')) continue;
+        let act = {};
+        try { act = safeJson(r.activity, {}); } catch (_) { act = {}; }
+        const g = act[gjid] || {};
+        const members = {};
+        for (const [senderJid, v] of Object.entries(g)) {
+            const cnt = Number(v?.count) || 0;
+            if (cnt <= 0) continue;
+            members[senderJid] = { name: String(v?.name || 'Usuário').trim().slice(0, 30) || 'Usuário', count: cnt };
+        }
+        // merge buffer pendente (caso algo tenha entrado entre flush e leitura)
+        try {
+            const buf = _activityBuffer.get(gjid);
+            if (buf) {
+                for (const [sender, info] of buf.entries()) {
+                    let key = sender;
+                    try { key = normalizeJid(sender); } catch (_) {}
+                    if (!members[key]) members[key] = { name: info.name, count: 0 };
+                    members[key] = { name: members[key].name || info.name, count: (Number(members[key].count) || 0) + (Number(info.count) || 0) };
+                }
+            }
+        } catch (_) {}
+        const total = Object.values(members).reduce((s, v) => s + (Number(v.count) || 0), 0);
+        if (total > 0) perGroup.push({ jid: gjid, members, total });
+    }
+    return perGroup;
+}
+
+function getGlobalMonthlyRank(limit = 10) {
+    try {
+        const perGroup = _collectAllGroupActivities();
+        const byDigits = new Map();
+        for (const g of perGroup) {
+            for (const [senderJid, v] of Object.entries(g.members)) {
+                const digits = String(senderJid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+                const dkey = digits.length >= 8 ? `d:${digits.slice(-11)}` : `j:${senderJid}`;
+                const cnt = Number(v.count) || 0;
+                const nm = String(v.name || '').trim();
+                const cur = byDigits.get(dkey);
+                if (!cur) {
+                    byDigits.set(dkey, { jid: senderJid, name: nm || 'Usuário', count: cnt, groups: new Set([g.jid]) });
+                } else {
+                    cur.count += cnt;
+                    cur.groups.add(g.jid);
+                    if (nm && /^(usuário|usuario)?$/i.test(cur.name) && !/^(usuário|usuario)?$/i.test(nm)) cur.name = nm;
+                }
+            }
+        }
+        const list = Array.from(byDigits.values()).map(x => ({
+            jid: x.jid,
+            name: String(x.name || 'Usuário').trim().slice(0, 30) || 'Usuário',
+            count: Number(x.count) || 0,
+            groups: x.groups ? x.groups.size : 0
+        })).filter(x => x.count > 0);
+        list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'));
+        const lim = Math.max(1, Math.min(50, Number(limit) || 10));
+        return list.slice(0, lim);
+    } catch (_) { return []; }
+}
+
+function getTopGroupsByActivity(limit = 3) {
+    try {
+        const perGroup = _collectAllGroupActivities();
+        perGroup.sort((a, b) => b.total - a.total);
+        const lim = Math.max(1, Math.min(20, Number(limit) || 3));
+        return perGroup.slice(0, lim).map(g => ({
+            jid: g.jid,
+            total: g.total,
+            members: Object.keys(g.members).length
+        }));
+    } catch (_) { return []; }
 }
 
 // Salva foto do mês que está encerrando antes de zerar — a contagem nunca se perde,
@@ -1969,7 +2053,7 @@ module.exports = {
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
-    updateMemberActivity, getTopMember, getMonthlyRank, clearMonthlyRank, clearAllMonthlyRanks, checkMonthlyReset, _getCurrentMonthKey, _getMonthLabelBr,
+    updateMemberActivity, getTopMember, getMonthlyRank, getGlobalMonthlyRank, getTopGroupsByActivity, clearMonthlyRank, clearAllMonthlyRanks, checkMonthlyReset, _getCurrentMonthKey, _getMonthLabelBr,
     snapshotMonthlyRanks, getRankHistory, backupDatabase,
     recordGroupMessage, recordModEvent, getGroupAnalytics,
     getCachedParticipantName, getGroupParticipantName,

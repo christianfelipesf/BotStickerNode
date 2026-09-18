@@ -1,13 +1,65 @@
-// splash.js — curiosidade cômica automática a cada N mensagens por grupo.
+// splash.js — curiosidade cômica automática por grupo (anti-spam).
+// Regra: no máximo 1 a cada 6 horas E no mínimo 60 mensagens desde o último envio.
+// Depois que aparece dentro da janela de 6h, não aparece mais até vencer o prazo,
+// mesmo que o grupo passe das 60 mensagens.
 // Estilo "tela de loading": texto curto + card com imagem (reusa menuImage).
 // Contador em memória (Map por jid), rotação sem repetir em sequência.
 const CURIOSIDADES = require('../data/curiosidades');
+const fs = require('fs');
+const path = require('path');
 
 let sockRef = null;
+
+// Anti-spam: 1x a cada 6h + mínimo de 60 mensagens por grupo.
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const MIN_MESSAGES = 60;
 
 // jid -> { count, idx, lastSentAt }
 const counters = new Map();
 const MAX_GROUPS = 1000;
+
+// Persistência do anti-spam (lastSentAt/count) para sobreviver a restart.
+// Sem isso, reiniciar o bot zeraria a janela de 6h e daria spam.
+const STATE_FILE = path.join(__dirname, '..', '..', 'data', 'splash-state.json');
+let _stateLoaded = false;
+let _saveTimer = null;
+
+function _loadState() {
+    if (_stateLoaded) return;
+    _stateLoaded = true;
+    try {
+        if (!fs.existsSync(STATE_FILE)) return;
+        const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8') || '{}');
+        for (const [jid, v] of Object.entries(raw)) {
+            if (!jid || !String(jid).endsWith('@g.us')) continue;
+            counters.set(jid, {
+                count: Math.max(0, Number(v.count) || 0),
+                idx: Number.isFinite(Number(v.idx)) ? Number(v.idx) : 0,
+                lastSentAt: Math.max(0, Number(v.lastSentAt) || 0)
+            });
+            if (counters.size >= MAX_GROUPS) break;
+        }
+    } catch (_) {}
+}
+
+function _saveState() {
+    try {
+        const dir = path.dirname(STATE_FILE);
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const obj = {};
+        for (const [jid, e] of counters) obj[jid] = { count: e.count, idx: e.idx, lastSentAt: e.lastSentAt };
+        fs.writeFileSync(STATE_FILE, JSON.stringify(obj), 'utf8');
+    } catch (_) {}
+}
+
+function _scheduleSave() {
+    if (_saveTimer) return;
+    _saveTimer = setTimeout(() => { _saveTimer = null; try { _saveState(); } catch (_) {} }, 2000);
+    if (_saveTimer.unref) _saveTimer.unref();
+}
+
+try { _loadState(); } catch (_) {}
 
 function attachSock(sock) { sockRef = sock; }
 
@@ -20,8 +72,9 @@ function _cfg() {
 
 function getInterval() {
     const cfg = _cfg();
-    const n = Number(cfg.splashInterval) || 60;
-    return Math.max(10, Math.min(200, n));
+    const n = Number(cfg.splashInterval) || MIN_MESSAGES;
+    // Mínimo de 60 mensagens por grupo (anti-spam), teto 200.
+    return Math.max(MIN_MESSAGES, Math.min(200, n));
 }
 
 function isEnabled() {
@@ -37,11 +90,17 @@ function withImage() {
 function getCooldownMs() {
     const cfg = _cfg();
     const n = Number(cfg.splashCooldownMs);
-    if (Number.isFinite(n) && n >= 0) return Math.min(3600000, n);
-    return 90000;
+    // Padrão e piso: 6h. Teto: 24h. Valores antigos menores (ex: 90s)
+    // são elevados para 6h para respeitar o anti-spam.
+    if (!Number.isFinite(n) || n < SIX_HOURS_MS) return SIX_HOURS_MS;
+    return Math.min(MAX_COOLDOWN_MS, n);
 }
 
+function getMinMessages() { return MIN_MESSAGES; }
+function getMaxPerWindow() { return 1; }
+
 function _entry(jid) {
+    _loadState();
     let e = counters.get(jid);
     if (!e) {
         // Offset inicial por hash do jid: grupos diferentes começam
@@ -73,13 +132,52 @@ function pickRandom() {
 }
 
 function getCount(jid) {
+    _loadState();
     const e = counters.get(jid);
     return e ? e.count : 0;
 }
 
+function getLastSentAt(jid) {
+    _loadState();
+    const e = counters.get(jid);
+    return e ? (e.lastSentAt || 0) : 0;
+}
+
+function getTimeRemainingMs(jid) {
+    const last = getLastSentAt(jid);
+    if (!last) return 0;
+    return Math.max(0, getCooldownMs() - (Date.now() - last));
+}
+
+// Anti-spam do !splash teste (manual): 30s por grupo. O teste NÃO consome a
+// janela de 6h do automático, mas sem esse freio um duplo-toque inundava o grupo.
+const _testeLast = new Map(); // jid -> timestamp
+const TESTE_COOLDOWN_MS = 30 * 1000;
+function checkTesteCooldown(jid) {
+    if (!jid) return 0;
+    const now = Date.now();
+    const last = _testeLast.get(jid) || 0;
+    if (now - last < TESTE_COOLDOWN_MS) return last + TESTE_COOLDOWN_MS - now;
+    _testeLast.set(jid, now);
+    return 0;
+}
+
 function reset(jid) {
-    if (jid) counters.delete(jid);
+    _loadState();
+    // ATENÇÃO: reset zera SÓ o contador de mensagens, NÃO o cooldown de 6h.
+    // Apagar o lastSentAt aqui permitiria 2 envios automáticos em <6h
+    // (ex: auto às 10h + reset às 11h + 60 msgs = 2º auto às 11h). Por isso preserva.
+    if (jid) {
+        const e = counters.get(jid);
+        if (e) {
+            e.count = 0;
+            // mantém e.lastSentAt e e.idx
+        } else {
+            counters.delete(jid);
+        }
+    }
     else counters.clear();
+    try { _saveState(); } catch (_) {}
 }
 
 function buildCaption(curiosidade, prefix, botName) {
@@ -146,22 +244,32 @@ async function sendSplash(sock, jid, { curiosidade, prefix, quoted } = {}) {
 }
 
 // Chamado a cada mensagem normal de grupo (não-comando, não-bot).
+// Regra anti-spam: dispara no máximo 1x por janela (padrão 6h) E só se o grupo
+// tiver pelo menos `interval` (mínimo 60) mensagens desde o último envio.
+// Depois que aparece na janela, não aparece mais até a janela vencer.
 // Retorna true se disparou o splash.
 async function handleMessage(sock, jid, { prefix } = {}) {
     if (!jid || !String(jid).endsWith('@g.us')) return false;
     if (!isEnabled()) return false;
     const e = _entry(jid);
     e.count += 1;
+    _scheduleSave();
     const interval = getInterval();
     if (e.count < interval) return false;
-    // Cooldown anti-flood: grupo hiper-ativo não recebe 2 cards em segundos.
+    // Janela anti-spam: já apareceu nas últimas 6h? segura no teto e não envia.
     const now = Date.now();
     if (now - (e.lastSentAt || 0) < getCooldownMs()) {
-        e.count = interval; // segura no teto até o cooldown passar
+        e.count = interval; // segura no teto até a janela passar
+        _scheduleSave();
         return false;
     }
     e.count = 0;
     e.lastSentAt = now;
+    // Persistência IMEDIATA (síncrona): o debounce de 2s (_scheduleSave) deixava
+    // uma janela onde crash/restart entre o envio e o save perdia o lastSentAt
+    // e liberava um 2º envio dentro da janela de 6h. Contador usa debounce, cooldown não.
+    try { _saveState(); } catch (_) {}
+    _scheduleSave();
     try {
         const cfg = _cfg();
         const ok = await sendSplash(sock || sockRef, jid, { prefix: prefix || cfg.prefix });
@@ -184,8 +292,18 @@ module.exports = {
     pickRandom,
     buildCaption,
     getCount,
+    getLastSentAt,
+    getTimeRemainingMs,
+    checkTesteCooldown,
+    TESTE_COOLDOWN_MS,
     reset,
     isEnabled,
     getInterval,
+    getCooldownMs,
+    getMinMessages,
+    getMaxPerWindow,
+    SIX_HOURS_MS,
+    MAX_COOLDOWN_MS,
+    MIN_MESSAGES,
     _counters: counters
 };

@@ -98,8 +98,8 @@ module.exports = {
                 if (p === 'maxMediaDurationSeconds' && (n < 30 || n > 36000)) { await sock.sendMessage(from, { text: `❌ Duração inválida (30-36000s)` }, { quoted: m }); return lastBotResponse; }
                 if (p === 'maxDownloadSizeMB' && (n < 1 || n > 500)) { await sock.sendMessage(from, { text: `❌ Tamanho inválido (1-500 MB)` }, { quoted: m }); return lastBotResponse; }
                 if (p === 'clearDefaultLimit' && (n < 1 || n > 100)) { await sock.sendMessage(from, { text: `❌ Limite inválido (1-100)` }, { quoted: m }); return lastBotResponse; }
-                if (p === 'splashInterval' && (n < 10 || n > 200)) { await sock.sendMessage(from, { text: `❌ Intervalo inválido (10-200)` }, { quoted: m }); return lastBotResponse; }
-                if (p === 'splashCooldownMs' && (n < 0 || n > 3600000)) { await sock.sendMessage(from, { text: `❌ Cooldown inválido (0-3600000ms)` }, { quoted: m }); return lastBotResponse; }
+                if (p === 'splashInterval' && (n < 60 || n > 200)) { await sock.sendMessage(from, { text: `❌ Intervalo inválido (60-200)` }, { quoted: m }); return lastBotResponse; }
+                if (p === 'splashCooldownMs' && (n < 21600000 || n > 86400000)) { await sock.sendMessage(from, { text: `❌ Cooldown inválido (21600000-86400000ms = 6h-24h)` }, { quoted: m }); return lastBotResponse; }
                 config[p] = n;
             }
             else if (p === 'newsPollIntervalMinutes' || p === 'newsPollIntervalMs') {

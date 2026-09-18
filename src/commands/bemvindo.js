@@ -35,7 +35,18 @@ module.exports = {
         if (sub === 'ver' || sub === 'status') {
             const on = !!gd[T.onKey];
             const msg = (gd[T.msgKey] || '').toString();
-            return await sock.sendMessage(from, { text: `👋 *Bem-vindo*\n\n• ${T.label}: ${on ? '🟢 ativa' : '🔴 desligada'}\n${msg ? `Mensagem:\n${msg}` : `(padrão: ${T.defMsg})`}\n\n_Saída e outros avisos: !avisosgrupo ver_` }, { quoted: m });
+            let cdTxt = '';
+            try {
+                const { getWelcomeRemainingMs } = require('../events/group');
+                const rest = getWelcomeRemainingMs(from);
+                if (rest > 0) {
+                    const min = Math.ceil(rest / 60000);
+                    cdTxt = `\n⏳ Cooldown: *~${min}min* restantes (anti-spam 40min)`;
+                } else if (on) {
+                    cdTxt = '\n✅ Pronta para enviar na próxima entrada (cooldown 40min livre)';
+                }
+            } catch (_) {}
+            return await sock.sendMessage(from, { text: `👋 *Bem-vindo*\n\n• ${T.label}: ${on ? '🟢 ativa' : '🔴 desligada'}${cdTxt}\n${msg ? `Mensagem:\n${msg}` : `(padrão: ${T.defMsg})`}\n\n_Saída e outros avisos: !avisosgrupo ver_` }, { quoted: m });
         }
         if (sub === 'teste' || sub === 'testar' || sub === 'previa' || sub === 'prévia') {
             const { getTheme } = require('../services/themes');

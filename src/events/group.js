@@ -10,6 +10,56 @@ const safeRemember = (...args) => { try { dashboard.rememberGroupInfo(...args); 
 // que costuma repetir subject/desc mesmo sem mudança real.
 const _groupSnapshot = new Map(); // jid -> { subject: string|null, desc: string|null }
 
+// === Cooldown de boas-vindas: 40min por grupo (anti-spam) ===
+// Se muita gente entra em sequência (ou alguém entra/sai repetidamente),
+// o bot manda no máximo 1 leva de boas-vindas a cada 40min por grupo.
+// Persistido em disco para sobreviver a restart (senão reiniciar zeraria a janela e spammava).
+const fs = require('fs');
+const path = require('path');
+const WELCOME_COOLDOWN_MS = 40 * 60 * 1000;
+const _welcomeLast = new Map(); // jid -> timestamp do último envio
+const WELCOME_STATE_FILE = path.join(__dirname, '..', '..', 'data', 'welcome-state.json');
+let _welcomeLoaded = false;
+
+function _loadWelcomeState() {
+    if (_welcomeLoaded) return;
+    _welcomeLoaded = true;
+    try {
+        if (!fs.existsSync(WELCOME_STATE_FILE)) return;
+        const raw = JSON.parse(fs.readFileSync(WELCOME_STATE_FILE, 'utf8') || '{}');
+        for (const [jid, ts] of Object.entries(raw)) {
+            if (!jid || !String(jid).endsWith('@g.us')) continue;
+            const t = Number(ts) || 0;
+            if (t > 0) _welcomeLast.set(jid, t);
+        }
+    } catch (_) {}
+}
+
+function _saveWelcomeState() {
+    try {
+        const dir = path.dirname(WELCOME_STATE_FILE);
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const obj = {};
+        for (const [jid, ts] of _welcomeLast) obj[jid] = ts;
+        fs.writeFileSync(WELCOME_STATE_FILE, JSON.stringify(obj), 'utf8');
+    } catch (_) {}
+}
+
+try { _loadWelcomeState(); } catch (_) {}
+
+function getWelcomeRemainingMs(jid) {
+    try { _loadWelcomeState(); } catch (_) {}
+    const last = _welcomeLast.get(jid) || 0;
+    if (!last) return 0;
+    return Math.max(0, WELCOME_COOLDOWN_MS - (Date.now() - last));
+}
+
+function markWelcomeSent(jid) {
+    try { _loadWelcomeState(); } catch (_) {}
+    _welcomeLast.set(jid, Date.now());
+    try { _saveWelcomeState(); } catch (_) {}
+}
+
 function snapshotGroup(jid, meta) {
     try {
         if (!jid || !meta) return;
@@ -62,6 +112,46 @@ async function sendEventCard(sock, { groupJid, mode, userJid, authorJid, default
             message: text.replace(/@\S+/g, '').trim(),
             avatarRaw,
             actorAvatarRaw,
+            groupAvatarRaw: groupAvatarRaw || null,
+            theme
+        });
+        if (card) {
+            await sock.sendMessage(groupJid, { image: card, caption: text, mentions });
+            return true;
+        }
+    } catch (_) {}
+    await sock.sendMessage(groupJid, { text, mentions });
+    return true;
+}
+
+// Lote de boas-vindas: N entradas no mesmo evento viram 1 única mensagem
+// com todas as menções (menos spam que N cards). Usa o avatar/nome do
+// primeiro para o card, mas menciona todos no texto.
+async function sendWelcomeBatch(sock, { groupJid, userJids, defaultMsg, customMsg, subject, memberCount, theme, groupAvatarRaw, participants }) {
+    const parts = Array.isArray(participants) ? participants : [];
+    const tags = userJids.map((u) => {
+        const d = resolveDisplayJid(u, parts);
+        return `@${String(d).split('@')[0].split(':')[0]}`;
+    });
+    const allTags = tags.join(' ');
+    const msg = (customMsg || '').toString().trim() || defaultMsg;
+    // @user vira a lista de todos; sem @user, anexa a lista no fim.
+    let text = msg.split('{grupo}').join(subject);
+    if (text.includes('@user')) text = text.split('@user').join(allTags);
+    else text = `${text}\n${allTags}`;
+    const displayJids = userJids.map((u) => resolveDisplayJid(u, parts));
+    const mentions = [...new Set([...userJids, ...displayJids].filter(Boolean))];
+    try {
+        const firstName = displayNameForEvent(userJids[0], parts);
+        let avatarRaw = null;
+        try { avatarRaw = await getUserAvatarBuffer(sock, userJids[0], groupJid, groupMetadataCached, parts).catch(() => null); } catch (_) {}
+        const card = await generateWelcomeImage({
+            mode: 'welcome',
+            userName: userJids.length > 1 ? `${firstName} +${userJids.length - 1}` : firstName,
+            groupName: subject,
+            memberCount,
+            message: text.replace(/@\S+/g, '').trim(),
+            avatarRaw,
             groupAvatarRaw: groupAvatarRaw || null,
             theme
         });
@@ -155,32 +245,75 @@ module.exports = {
                     : '📉 {autor} rebaixou @user de admin do {grupo}.';
 
                 if (on) {
-                    let subject = 'o grupo';
-                    let memberCount = 0;
-                    let eventParticipants = [];
-                    try {
-                        const meta = await groupMetadataCached(sock, anu.id).catch(() => null);
-                        if (meta?.subject) subject = meta.subject;
-                        if (Array.isArray(meta?.participants)) { memberCount = meta.participants.length; eventParticipants = meta.participants; }
-                        snapshotGroup(anu.id, meta); // mantém a base do anti-spam atualizada
-                    } catch (_) {}
-                    const theme = await resolveTheme(anu.id);
-                    // Foto do grupo como fundo do card (igual !menu) — busca 1x por evento.
-                    let groupAvatarRaw = null;
-                    try { groupAvatarRaw = await getGroupAvatarBuffer(sock, anu.id).catch(() => null); } catch (_) {}
-                    for (const p of anu.participants) {
+                    // Anti-spam boas-vindas: 1 leva a cada 40min por grupo.
+                    // Entradas dentro da janela são ignoradas (sem mensagem) para não spammar
+                    // quando entra muita gente em sequência ou alguém entra/sai repetidamente.
+                    let welcomeOnCooldown = false;
+                    if (isJoin) {
+                        const rest = getWelcomeRemainingMs(anu.id);
+                        if (rest > 0) {
+                            const min = Math.ceil(rest / 60000);
+                            console.log(`🤫 [welcome] cooldown ativo em ${anu.id} (faltam ~${min}min) — ${anu.participants.length} entrada(s) ignorada(s).`);
+                            safeDashboardLog('event', 'Grupo', `🤫 Boas-vindas ignoradas (cooldown ~${min}min)`, null, null, null, { toJid: anu.id, fromMe: true });
+                            // Não retorna: cai para o log do dashboard abaixo normalmente.
+                            // Marca como tratado para pular o envio.
+                            welcomeOnCooldown = true;
+                        }
+                    }
+                    if (!welcomeOnCooldown) {
+                        let subject = 'o grupo';
+                        let memberCount = 0;
+                        let eventParticipants = [];
                         try {
-                            if (isJoin && isBlacklisted(anu.id, p)) continue; // listanegra já tratou
-                            await sendEventCard(sock, {
-                                groupJid: anu.id, mode, userJid: p,
-                                authorJid: anu.author || null,
-                                defaultMsg, customMsg, subject, memberCount, theme,
-                                groupAvatarRaw,
-                                participants: eventParticipants,
-                                // Na saída o WhatsApp costuma já ter apagado a foto — busca só no resto.
-                                fetchUserAvatar: !isLeave
-                            });
+                            const meta = await groupMetadataCached(sock, anu.id).catch(() => null);
+                            if (meta?.subject) subject = meta.subject;
+                            if (Array.isArray(meta?.participants)) { memberCount = meta.participants.length; eventParticipants = meta.participants; }
+                            snapshotGroup(anu.id, meta); // mantém a base do anti-spam atualizada
                         } catch (_) {}
+                        const theme = await resolveTheme(anu.id);
+                        // Foto do grupo como fundo do card (igual !menu) — busca 1x por evento.
+                        let groupAvatarRaw = null;
+                        try { groupAvatarRaw = await getGroupAvatarBuffer(sock, anu.id).catch(() => null); } catch (_) {}
+                        if (isJoin) {
+                            // Lote único: N entradas no mesmo evento (ou rajada) viram 1 mensagem
+                            // com todas as menções, em vez de N mensagens. Conta como 1 envio p/ o cooldown.
+                            const targets = anu.participants.filter((p) => { try { return !isBlacklisted(anu.id, p); } catch (_) { return true; } });
+                            if (targets.length === 1) {
+                                try {
+                                    await sendEventCard(sock, {
+                                        groupJid: anu.id, mode, userJid: targets[0],
+                                        authorJid: anu.author || null,
+                                        defaultMsg, customMsg, subject, memberCount, theme,
+                                        groupAvatarRaw,
+                                        participants: eventParticipants,
+                                        fetchUserAvatar: true
+                                    });
+                                } catch (_) {}
+                            } else if (targets.length > 1) {
+                                try {
+                                    await sendWelcomeBatch(sock, {
+                                        groupJid: anu.id, userJids: targets,
+                                        defaultMsg, customMsg, subject, memberCount, theme,
+                                        groupAvatarRaw, participants: eventParticipants
+                                    });
+                                } catch (_) {}
+                            }
+                            if (targets.length > 0) markWelcomeSent(anu.id);
+                        } else {
+                            for (const p of anu.participants) {
+                                try {
+                                    await sendEventCard(sock, {
+                                        groupJid: anu.id, mode, userJid: p,
+                                        authorJid: anu.author || null,
+                                        defaultMsg, customMsg, subject, memberCount, theme,
+                                        groupAvatarRaw,
+                                        participants: eventParticipants,
+                                        // Na saída o WhatsApp costuma já ter apagado a foto — busca só no resto.
+                                        fetchUserAvatar: !isLeave
+                                    });
+                                } catch (_) {}
+                            }
+                        }
                     }
                 }
             } catch (e) {
@@ -292,5 +425,9 @@ module.exports = {
                 console.error('Erro no group.update:', e.message);
             }
         }
-    }
+    },
+    // Exportados p/ !bemvindo ver/status e testes.
+    getWelcomeRemainingMs,
+    markWelcomeSent,
+    WELCOME_COOLDOWN_MS
 };

@@ -1,7 +1,7 @@
 module.exports = {
     name: 'antiflood',
     aliases: ['flood', 'anti-flood', 'antispam'],
-    description: 'Ativa/configura antiflood por grupo (com opção para incluir admins)',
+    description: 'Ativa/configura antiflood por grupo (padrão ativado; só age se o bot for admin)',
     category: 'admin',
     async execute(sock, m, { from, isGroup, sender, args, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         if (!isGroup) {
@@ -21,8 +21,8 @@ module.exports = {
         // status/info
         if (['status', 'info', 'config', 'ver'].includes(sub)) {
             const txt = `🛡️ *Antiflood — ${from.endsWith('@g.us') ? 'este grupo' : ''}*\n\n` +
-                `• *Ativo:* ${cfg.enabled ? '✅ sim' : '❌ não (padrão desativado)'}\n` +
-                `• *Inclui admins:* ${cfg.includeAdmins ? '✅ sim' : '❌ não (padrão desativado)'}\n` +
+                `• *Ativo:* ${cfg.enabled ? '✅ sim' : '❌ não'} (padrão ativado)\n` +
+                `• *Inclui admins:* ${cfg.includeAdmins ? '✅ sim' : '❌ não'} (padrão desativado)\n` +
                 `• *Limite:* ${cfg.maxMsgs} msgs / ${cfg.windowSecs}s\n\n` +
                 `💡 *Uso:*\n` +
                 `• \`${utils.getPrefixForJid(from)}antiflood\` — liga/desliga\n` +
@@ -37,7 +37,7 @@ module.exports = {
         if (['admin', 'adm', 'admins', 'moderadores'].includes(sub)) {
             const next = utils.toggleAntifloodAdmin(from);
             await utils.react(sock, m, '🛡️', lastBotResponse, GLOBAL_COOLDOWN);
-            await sock.sendMessage(from, { text: `🛡️ Antiflood para *admins* ${next ? 'ativado ✅' : 'desativado ❌'} (padrão desativado).` }, { quoted: m });
+            await sock.sendMessage(from, { text: `🛡️ Antiflood para *admins* ${next ? 'ativado ✅' : 'desativado ❌'} (padrão: não inclui admins).` }, { quoted: m });
             return lastBotResponse;
         }
 
