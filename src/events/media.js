@@ -1,17 +1,34 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
-const DOWNLOAD_TIMEOUT = 30000;
+const DOWNLOAD_TIMEOUT = Number(process.env.MEDIA_DOWNLOAD_TIMEOUT_MS) || 30000;
 
-function downloadWithTimeout(msg, opts) {
-    let timeout;
-    const dl = downloadMediaMessage(msg, 'buffer', {}, opts).catch(e => { clearTimeout(timeout); throw e; });
-    // evita unhandled rejection quando race vence no timeout
-    dl.catch(() => {});
-    return Promise.race([
-        dl.finally(() => clearTimeout(timeout)),
-        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Download timeout')), DOWNLOAD_TIMEOUT); })
-    ]);
+const { withTimeout } = require('../services/timeout');
+
+function downloadWithTimeout(msg, opts, timeoutMs = DOWNLOAD_TIMEOUT) {
+    // Baileys downloadMediaMessage não aceita AbortSignal — o download órfão
+    // não pode ser cancelado de verdade. O que corrigimos aqui vs. versão
+    // anterior (Promise.race + dl.catch(()=>{})):
+    // 1) timer sempre limpo (sem leak), 2) erro tipado TimeoutError,
+    // 3) rejeição da perdedora preservada (sem engolir 404/rate-limit),
+    // 4) warn quando o órfão termina após o timeout (vazamento visível).
+    const label = `download-mídia ${msg?.key?.id || '?'}`;
+    let timedOut = false;
+    const dl = downloadMediaMessage(msg, 'buffer', {}, opts).then(
+        (buf) => {
+            if (timedOut) console.warn(`⚠️ [REVELAR] ${label} concluiu após timeout (órfão, ${buf?.length || 0} bytes descartados)`);
+            if (!buf || buf.length === 0) throw new Error('download-vazio');
+            return buf;
+        },
+        (e) => {
+            const clean = String(e?.message || e).slice(0, 150);
+            if (timedOut) console.warn(`⚠️ [REVELAR] ${label} falhou após timeout (órfão): ${clean}`);
+            throw new Error(`download-falhou: ${clean}`);
+        }
+    );
+    const wrapped = withTimeout(dl, timeoutMs, label);
+    wrapped.catch(() => { timedOut = true; });
+    return wrapped;
 }
 const {
     getMediaMessage, react, reactStatus, isViewOnce,
@@ -161,7 +178,7 @@ function buildConvertedCaption(senderJid, botName, senderName, fallbackPn) {
         display = display;
     }
     // Se display é @numero, mantém @; se é nome, sem @
-    const line = display.startsWith('@') ? `│ 👤 *Solicitado por:* ${display}` : `│ 👤 *Solicitado por:* ${display}`;
+    const line = `│ 👤 *Solicitado por:* ${display}`;
     return `╭─── *📱 MÍDIA CONVERTIDA* ───\n${line}\n│ 🤖 *Por:* ${bot}\n│ ⚡ *Status:* Concluído\n╰───────────────`;
 }
 

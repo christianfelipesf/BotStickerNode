@@ -21,6 +21,18 @@ const processedMessages = new Set();
 const DEDUP_MAX = 5000;
 setInterval(() => processedMessages.clear(), 10 * 60 * 1000).unref();
 
+function _evictDedupIfNeeded() {
+    // Antes: clear() total perdia a janela de dedup (duplicata reprocessada).
+    // Agora: remove só os mais antigos (Set preserva ordem de inserção).
+    if (processedMessages.size > DEDUP_MAX) {
+        let n = 1000;
+        for (const k of processedMessages) {
+            processedMessages.delete(k);
+            if (--n <= 0) break;
+        }
+    }
+}
+
 // ============================================================
 // Recent message buffer (for !limpar)
 // ============================================================
@@ -137,7 +149,29 @@ module.exports = {
         if (type !== 'notify' && !messages?.some(msg => msg?.key?.fromMe)) return;
         const _evtStart = Date.now();
         try {
-            const m = messages[0];
+            // B1: antes só messages[0] — lote Baileys com N msgs perdia N-1.
+            // Agora itera sequencialmente (ordem preservada, sem concorrência).
+            for (const m of (messages || [])) {
+                try {
+                    await _handleSingleMessage(sock, m, { commands, config, startTime });
+                } catch (e) {
+                    console.error(`[${trace.ts()}] [evt] mensagem ${m?.key?.id || '?'} ERRO: ${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''}`);
+                }
+            }
+        } catch (e) {
+            console.error(`[${trace.ts()}] [evt] messages.upsert ERRO: ${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''} (após ${Date.now()-_evtStart}ms)`);
+            console.error('Erro ao processar mensagem:', e);
+        }
+    },
+    trackRecentMessage,
+    getRecentMessages,
+    notifyPartialReaction,
+    isPartialActive
+};
+
+// Processa UMA mensagem (extraído p/ suportar lote Baileys sem duplicar lógica).
+async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
+    if (!m?.key) return;
             const dedupKey = `${m.key.remoteJid || ''}:${m.key.id || ''}`;
             if (!m.message || processedMessages.has(dedupKey)) return;
 
@@ -150,7 +184,7 @@ module.exports = {
             }
             if (messageTime < Math.floor(startTime / 1000) + 2) return;
 
-            if (processedMessages.size > DEDUP_MAX) processedMessages.clear();
+            _evictDedupIfNeeded();
             processedMessages.add(dedupKey);
 
             const from = m.key.remoteJid;
@@ -366,16 +400,10 @@ module.exports = {
             const CMD_TIMEOUT_MS = cmd.category === 'mídia'
                 ? (Number(process.env.CMD_TIMEOUT_MEDIA_MS) || 210000)
                 : (Number(process.env.CMD_TIMEOUT_MS) || 90000);
-            const cancelToken = { cancelled: false };
-            const abortController = new AbortController();
-            context.cancelToken = cancelToken;
-            context.abortSignal = abortController.signal;
             try {
                 context.log = cmdLog;
-                const execPromise = cmd.execute(sock, m, context);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => { cancelToken.cancelled = true; try { abortController.abort(); } catch (_) {} reject(new Error(`timeout ${CMD_TIMEOUT_MS}ms`)); }, CMD_TIMEOUT_MS));
-                timeoutPromise.catch(()=>{}); // evita unhandled
-                const result = await Promise.race([execPromise, timeoutPromise]);
+                const { runCommandWithTimeout } = require('../services/commandRunner');
+                const result = await runCommandWithTimeout(cmd, sock, m, context, CMD_TIMEOUT_MS);
                 if (result !== undefined) lastBotResponse = result;
                 const elapsed = Date.now() - t0;
                 cmdLog('fim', `ok em ${elapsed}ms`);
@@ -384,7 +412,7 @@ module.exports = {
                 }
             } catch (cmdErr) {
                 const elapsed = Date.now() - t0;
-                const isTimeout = String(cmdErr?.message || '').includes('timeout');
+                const isTimeout = cmdErr?.code === 'ETIMEDOUT' || cmdErr?.name === 'TimeoutError' || String(cmdErr?.message || '').includes('timeout') || String(cmdErr?.message || '').includes('excedeu timeout');
                 if (isTimeout) {
                     console.warn(`⏱️ [CMD-TIMEOUT] ${effectivePrefix}${commandName} travou após ${elapsed}ms — liberando handler (anti-zumbi)`);
                     cmdLog('TIMEOUT', `travou após ${elapsed}ms`);
@@ -407,14 +435,4 @@ module.exports = {
                     }
                 }
             }
-
-        } catch (e) {
-            console.error(`[${trace.ts()}] [evt] messages.upsert ERRO: ${e.message} | stack[0]=${(e.stack||'').split('\n')[1]?.trim() || ''} (após ${Date.now()-_evtStart}ms)`);
-            console.error('Erro ao processar mensagem:', e);
-        }
-    },
-    trackRecentMessage,
-    getRecentMessages,
-    notifyPartialReaction,
-    isPartialActive
-};
+} // fim _handleSingleMessage

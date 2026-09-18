@@ -64,7 +64,7 @@ async function placeholderAvatar(name, size = AVATAR_SIZE) {
  * @param {string} opts.monthKey - "2026-09" para debug
  * @param {Array<Buffer>} opts._avatarBuffers - interno: já circulares (opcional)
  */
-async function generateRankImage({ groupName, botName, monthLabel, ranking, monthKey, theme }) {
+async function generateRankImage({ groupName, botName, monthLabel, ranking, monthKey, theme, groupAvatar }) {
     const top = Array.isArray(ranking) ? ranking.slice(0, 10) : [];
     const C = (theme && theme.colors) ? { ...COLORS, ...theme.colors } : COLORS;
     const rankTitle = (theme && theme.rankTitle) || 'RANK MENSAL — TOP 10 ATIVOS';
@@ -76,6 +76,13 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
     const PAD = 32;
     const FOOTER_H = 70;
     const H = HEADER_H + Math.max(top.length, 1) * ROW_H + FOOTER_H + PAD;
+    const GROUP_AVATAR_SIZE = 110;
+    const hasGroupAvatar = Buffer.isBuffer(groupAvatar) && groupAvatar.length > 100;
+    // Com foto do grupo: avatar circular à esquerda, título deslocado p/ direita.
+    // Sem foto: mantém layout antigo (troféu emoji + título em x=110).
+    const titleX = hasGroupAvatar ? 170 : 110;
+    const groupAvatarCX = PAD + GROUP_AVATAR_SIZE / 2;
+    const groupAvatarCY = 78;
 
     // Guarda avatares crus para gerar depois do scale (precisa do scale do density)
     const rawAvatars = top.map(u => (u.avatar && Buffer.isBuffer(u.avatar) ? u.avatar : null));
@@ -123,11 +130,11 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
     const headerSvg = `
         <rect x="0" y="0" width="${W}" height="${HEADER_H}" rx="0" fill="${C.headerBg}"/>
         <rect x="0" y="0" width="${W}" height="6" fill="${C.accent}"/>
-        <!-- ícone troféu -->
-        <text x="${PAD}" y="85" font-family="sans-serif" font-size="56">${escapeXml(rankIcon)}</text>
-        <text x="110" y="70" font-family="sans-serif" font-size="38" font-weight="900" fill="${C.text}">${escapeXml(rankTitle)}</text>
-        <text x="110" y="105" font-family="sans-serif" font-size="22" font-weight="600" fill="${C.sub}">${escapeXml(truncate(groupName || 'Grupo', 42))} • ${escapeXml(monthLabel || '')}</text>
-        <text x="110" y="135" font-family="sans-serif" font-size="16" fill="${C.sub}">${escapeXml(botName || 'Bot')} • reseta todo dia 1 • ${escapeXml(monthKey || '')}</text>
+        ${hasGroupAvatar ? `<circle cx="${groupAvatarCX}" cy="${groupAvatarCY}" r="${GROUP_AVATAR_SIZE / 2 + 3}" fill="none" stroke="${C.accent}" stroke-width="3"/>` : `<!-- ícone troféu -->
+        <text x="${PAD}" y="85" font-family="sans-serif" font-size="56">${escapeXml(rankIcon)}</text>`}
+        <text x="${titleX}" y="70" font-family="sans-serif" font-size="38" font-weight="900" fill="${C.text}">${escapeXml(rankTitle)}</text>
+        <text x="${titleX}" y="105" font-family="sans-serif" font-size="22" font-weight="600" fill="${C.sub}">${escapeXml(truncate(groupName || 'Grupo', 42))} • ${escapeXml(monthLabel || '')}</text>
+        <text x="${titleX}" y="135" font-family="sans-serif" font-size="16" fill="${C.sub}">${escapeXml(botName || 'Bot')} • reseta todo dia 1 • ${escapeXml(monthKey || '')}</text>
         <!-- badge mês -->
         <rect x="${W - 240}" y="32" width="208" height="42" rx="21" fill="${C.accent}"/>
         <text x="${W - 136}" y="60" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="800" fill="#fff">${escapeXml((monthLabel || '').toUpperCase().slice(0,22))}</text>
@@ -163,10 +170,24 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
     if (!scale || !isFinite(scale) || scale <= 0) scale = 144 / 72;
 
     // Compõe avatares circulares - precisa escalar coordenadas e tamanho para bater com o buffer density
+    const composites = [];
+    // Foto do grupo no cabeçalho (igual ao rankglobal faz com os top 3 grupos)
+    if (hasGroupAvatar) {
+        try {
+            const gSize = Math.max(1, Math.round(GROUP_AVATAR_SIZE * scale));
+            const circ = await toCircularAvatar(groupAvatar, gSize);
+            if (circ) {
+                const left = Math.round((groupAvatarCX - GROUP_AVATAR_SIZE / 2) * scale);
+                const topPos = Math.round((groupAvatarCY - GROUP_AVATAR_SIZE / 2) * scale);
+                composites.push({ input: circ, left, top: topPos });
+            }
+        } catch (e) {
+            console.warn('⚠️ [rankImage] falha composite foto grupo:', e.message);
+        }
+    }
     if (top.length > 0) {
         try {
             const avatarSizeScaled = Math.max(1, Math.round(AVATAR_SIZE * scale));
-            const composites = [];
             for (let i = 0; i < top.length; i++) {
                 const raw = rawAvatars[i];
                 const name = avatarNames[i];
@@ -181,10 +202,14 @@ async function generateRankImage({ groupName, botName, monthLabel, ranking, mont
                 const topPos = Math.round(avatarY * scale);
                 composites.push({ input: circ, left, top: topPos });
             }
-            if (composites.length) buf = await sharp(buf).composite(composites).png().toBuffer();
         } catch (e) {
             console.warn('⚠️ [rankImage] falha composite avatares:', e.message);
         }
+    }
+    try {
+        if (composites.length) buf = await sharp(buf).composite(composites).png().toBuffer();
+    } catch (e) {
+        console.warn('⚠️ [rankImage] falha composite geral:', e.message);
     }
 
     // Mantém 1080px (máximo útil) mas com JPEG otimizado — antes era 3300px por density 220

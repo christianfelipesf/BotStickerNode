@@ -40,6 +40,24 @@ module.exports = {
 
         const ranking = getMonthlyRank(from, 10);
 
+        // Foto do grupo p/ cabeçalho (igual ao rankglobal faz com os top 3 grupos)
+        let groupAvatar = null;
+        try {
+            const url = await sock.profilePictureUrl(from, 'image').catch(() => null);
+            if (url) {
+                const res = await axios.get(url, {
+                    responseType: 'arraybuffer',
+                    timeout: 5000,
+                    maxContentLength: 2 * 1024 * 1024,
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                }).catch(() => null);
+                if (res?.data) {
+                    const buf = Buffer.from(res.data);
+                    if (buf.length >= 100 && buf.length <= 2 * 1024 * 1024) groupAvatar = buf;
+                }
+            }
+        } catch (_) { groupAvatar = null; }
+
         // Busca fotos de perfil para os top 10 (resolve @lid -> @s.whatsapp.net quando necessário)
         let rankingWithAvatar = ranking;
         if (ranking.length > 0) {
@@ -151,7 +169,8 @@ module.exports = {
                 monthLabel,
                 ranking: rankingWithAvatar,
                 monthKey,
-                theme
+                theme,
+                groupAvatar
             });
             await sock.sendMessage(from, { image: imgBuffer, caption }, { quoted: m });
             currentBotResponse = await react(sock, m, theme.ok || '✅', currentBotResponse, GLOBAL_COOLDOWN);
