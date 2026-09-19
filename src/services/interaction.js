@@ -23,7 +23,12 @@ const INTERACTION_TYPES = [
     'cutucar',
     'cuddle',
     'chorar',
-    'highfive'
+    'highfive',
+    'lancar_fogo',
+    'lancar_agua',
+    'lancar_pedra',
+    'lancar_laser',
+    'lancar_raio'
 ];
 
 function getInteractionDir(tipo) {

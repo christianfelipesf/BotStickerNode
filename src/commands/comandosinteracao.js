@@ -23,6 +23,7 @@ _comandos de roleplay_\n
 │ 👉 *${p}cutucar* @user — cutuca
 │ 🥺 *${p}cuddle* @user — aconchega
 │ 🙌 *${p}highfive* @user — high five
+│ ✨ *${p}lancar* <poder> @user — lança poder (fogo, agua, pedra, laser, raio)
 ╰───────────────
 
 💡 *Uso:* marque com @ ou responda a mensagem da pessoa.

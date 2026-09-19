@@ -66,6 +66,30 @@ function classifyPing(ms) {
     return '🐢 Lento';
 }
 
+function withTimeout(promise, ms, label) {
+    return Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => resolve({ ok: false, reason: `timeout ${ms}ms (${label})` }), ms)),
+    ]);
+}
+
+// Ping da nuvem (Supabase) com medição de latência em ms.
+async function checkSupabasePing() {
+    const t0 = process.hrtime.bigint();
+    try {
+        const { isSupabaseEnabled, pingSupabase } = require('../database/supabaseClient');
+        if (!isSupabaseEnabled()) return { configured: false };
+        const ping = await withTimeout(pingSupabase(), 8000, 'supabase');
+        const t1 = process.hrtime.bigint();
+        const ms = Math.round(Number(t1 - t0) / 1e6);
+        return { configured: true, ping, ms };
+    } catch (e) {
+        const t1 = process.hrtime.bigint();
+        const ms = Math.round(Number(t1 - t0) / 1e6);
+        return { configured: true, ping: { ok: false, reason: (e?.message || String(e)).slice(0, 120) }, ms };
+    }
+}
+
 module.exports = {
     name: 'status',
     aliases: [],
@@ -89,6 +113,29 @@ module.exports = {
         const uptime = formatUptime((Date.now() - startTime) / 1000);
         const plataforma = process.platform === 'win32' ? 'Windows' : 'Linux';
 
+        // --- Banco de dados: apenas modo (local/remoto) + ping da nuvem ---
+        const B = theme.bullet || '│';
+        let syncMode = null;
+        try {
+            const sync = require('../database/supabaseSync');
+            syncMode = (typeof sync.getMode === 'function') ? sync.getMode() : sync.status();
+        } catch (_) { syncMode = null; }
+        const supa = await checkSupabasePing();
+
+        const isLocal = !supa.configured || !!(syncMode && syncMode.local);
+        const modoLinha = `${B} 📦 *Modo:* ${isLocal ? '📀 LOCAL' : '☁️ REMOTO'}`;
+
+        let nuvemLinha;
+        if (!supa.configured) {
+            nuvemLinha = `${B} ☁️ *Ping nuvem:* desativado`;
+        } else if (supa.ping && supa.ping.ok) {
+            const w = supa.ping.warning ? ` ⚠️ ${supa.ping.warning}` : '';
+            nuvemLinha = `${B} ☁️ *Ping nuvem:* ${supa.ms}ms ✅${w}`;
+        } else {
+            const r = ((supa.ping && (supa.ping.reason || supa.ping.warning)) || 'sem resposta');
+            nuvemLinha = `${B} ☁️ *Ping nuvem:* falha (${String(r).slice(0, 100)}) ${theme.err || '❌'}`;
+        }
+
         const googleLinha = google.ok
             ? `${theme.bullet || '│'} 🌐 *Google:* ${google.ms}ms ${classifyPing(google.ms)}`
             : `${theme.bullet || '│'} 🌐 *Google:* falha (${google.error || 'sem resposta'}) ${theme.err || '❌'}`;
@@ -109,6 +156,10 @@ module.exports = {
             `${theme.bullet || '│'} 🆔 *Versão:* ${version}\n` +
             `${theme.bullet || '│'} ⌨️ *Comandos:* ${stats.totalCommands}\n` +
             `${theme.bullet || '│'} 🔄 *Reinícios:* ${stats.restarts}\n` +
+            `╰───────────────\n\n` +
+            `╭─── *BANCO DE DADOS* ───\n` +
+            `${modoLinha}\n` +
+            `${nuvemLinha}\n` +
             `╰───────────────`;
         pingText = themeBullets(pingText, theme);
 
