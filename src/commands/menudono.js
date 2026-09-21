@@ -19,7 +19,7 @@ module.exports = {
         const text = `*${botName} — Menu Dono* 👑\n_comandos ocultos do !menu_\n\n` +
             `╭─── *ATIVAÇÃO* ───\n` +
             `│ ✅ *${p}ativar* / *${p}desativar* — liga/desliga bot no grupo\n` +
-            `│ ⚙️ *${p}ativarp* / *${p}desativarp* — modo parcial (só mídia)\n` +
+            `│ ⚙️ *${p}ativarp* / *${p}desativarp* — modo parcial (mídia + interação + tts, 10s, sem moderação)\n` +
             `╰───────────────\n\n` +
             `╭─── *DASHBOARD* ───\n` +
             `│ 📊 *${p}dashboard* / *${p}dash* — ativa/desativa log do grupo\n` +

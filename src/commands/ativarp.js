@@ -3,7 +3,7 @@ const safeDashboardLog = (...args) => { try { require('../dashboard/dashboard').
 module.exports = {
     name: 'ativarp',
     category: 'grupos',
-    description: 'Liga o bot no grupo em modo parcial (apenas comandos de mídia; espera 10s antes de responder)',
+    description: 'Liga o bot no grupo em modo parcial (mídia + interação + tts; espera 10s antes de responder)',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, activatePartial, getPartialWaitMs, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
         if (!isGroup) return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
@@ -27,6 +27,7 @@ module.exports = {
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 
+        const already = (() => { try { return utils.isPartialActive(from); } catch (_) { return false; } })();
         const success = activatePartial(from);
         const waitSec = Math.round(getPartialWaitMs() / 1000);
         console.log(`🟡 [BOT-PARCIAL] ativado em ${from} por @${senderNorm.split('@')[0]} (wait=${waitSec}s)`);
@@ -39,7 +40,7 @@ module.exports = {
         }
         try {
             await sock.sendMessage(from, {
-                text: `🟡 *Ativamento Parcial* ativado!\n\n⏱️ Tempo de espera: ${waitSec}s\n🎬 Comandos permitidos: mídia (!s, !play, !toimg, !tts, !download, etc.)\n🚫 Comandos admin ficarão mudos.\n\n💡 O bot só responde se nenhum outro bot reagir em ${waitSec}s.\n\nPara voltar ao modo total, use ${utils.readConfig ? `${utils.readConfig().prefix}` : '!'}ativar.`
+                text: `🟡 *Ativamento Parcial* ativado!${already ? ' (já estava ativo)' : ''}\n\n⏱️ Tempo de espera: ${waitSec}s\n🎬 Comandos permitidos: mídia + interação (!s, !play, !toimg, !download, !abraco, etc.) + voz (!tts)\n🚫 Demais comandos (admin/geral) são ignorados em silêncio.\n🛡️ Moderação (mute/antilink/antiflood) fica pausada no parcial.\n\n💡 O bot só responde se nenhum outro bot reagir em ${waitSec}s.\n\nPara voltar ao modo total, use ${utils.readConfig ? `${utils.readConfig().prefix}` : '!'}ativar.`
             }, { quoted: m });
         } catch (err) {
             console.error('❌ [BOT-PARCIAL] falhou ao enviar mensagem de ativamento:', err.message);

@@ -30,7 +30,7 @@
         dashboardHistoryHours: 'Horas de histórico do chat carregadas ao abrir o painel.',
         adminCanControl: 'Permite admins dos grupos controlarem o bot (experimental).',
         clearDefaultLimit: 'Qtde. padrão de mensagens apagadas pelo !limpar.',
-        partialWaitMs: 'Espera (ms) no modo parcial antes de responder se ninguém respondeu.',
+        partialWaitMs: 'Espera (ms) no modo parcial antes de responder se nenhum outro bot reagir (padrão 10000; 0=responde direto). Parcial libera mídia + interação + !tts; resto é ignorado em silêncio e moderação fica pausada.',
         newsSubreddits: 'Lista de subreddits monitorados pelo serviço de notícias.',
         newsPollIntervalMinutes: 'Intervalo (min) entre coletas de posts novos.',
         newsUserAgent: 'User-Agent HTTP usado nas requisições ao Reddit.',

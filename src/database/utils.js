@@ -363,7 +363,7 @@ const DEFAULT_CONFIG = {
     dashboardHistoryHours: 12,
     adminCanControl: true,
     clearDefaultLimit: 10,
-    partialWaitMs: 2000,
+    partialWaitMs: 10000,
     newsSubreddits: ['ShitpostBR', 'pics'],
     newsPollIntervalMinutes: 15,
     newsUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -523,15 +523,20 @@ function isActiveGroup(jid) {
 }
 
 function activateGroup(jid) {
-    try { _agpDelete.run(jid); } catch (_) {}
-    const r = _agInsert.run(jid, Date.now());
-    return r.changes > 0;
+    if (!jid) return false;
+    try { if (isPartialActive(jid)) { try { _agpDelete.run(jid); } catch (_) {} } } catch (_) {}
+    try { if (_agHas.get(jid)) return true; } catch (_) {}
+    try {
+        const r = _agInsert.run(jid, Date.now());
+        return r.changes > 0 || isActiveGroup(jid);
+    } catch (e) { return isActiveGroup(jid); }
 }
 
 function deactivateGroup(jid) {
+    if (!jid) return false;
     const r = _agDelete.run(jid);
     const rp = r.changes === 0 ? _agpDelete.run(jid) : { changes: 0 };
-    if (r.changes === 0 && rp.changes === 0) return false;
+    if (r.changes === 0 && rp.changes === 0) return true; // idempotente: já desligado conta como sucesso
     try {
         const row = _gsGet.get(jid);
         if (row && row.menu_image) {
@@ -583,17 +588,18 @@ function activatePartial(jid) {
     if (!jid) return false;
     try {
         try { _agDelete.run(jid); } catch (_) {}
+        try { if (_agpHas.get(jid)) return true; } catch (_) {}
         const r = _agpInsert.run(jid, Date.now());
-        return r.changes > 0;
+        return r.changes > 0 || isPartialActive(jid);
     } catch (e) {
         console.error('❌ Falha ao ativar modo parcial:', e.message);
-        return false;
+        return isPartialActive(jid);
     }
 }
 
 function deactivatePartial(jid) {
     if (!jid) return false;
-    try { return _agpDelete.run(jid).changes > 0; } catch (e) { return false; }
+    try { _agpDelete.run(jid); return true; } catch (e) { return false; }
 }
 
 function listPartialGroups() {
@@ -602,7 +608,7 @@ function listPartialGroups() {
 
 function getPartialWaitMs() {
     try { const v = Number(readConfig().partialWaitMs); if (Number.isFinite(v) && v >= 0) return v; } catch (_) {}
-    return 2000;
+    return 10000;
 }
 
 function setPartialWaitMs(ms) {

@@ -57,84 +57,21 @@ function getRecentMessages(jid, limit) {
 }
 
 // ============================================================
-// Partial Activation
+// Partial Activation (lógica em ./partial.js — módulo sem deps, testável)
 // ============================================================
-const partialPending = new Map();
-const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia']);
-const PARTIAL_BLOCKED_COMMANDS = new Set([
-    'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
-    'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
-    'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome', 'tema', 'theme',
-    'log', 'logs', 'logsterminal', 'terminallog',
-    'menu', 'help', 'comandos', 'status', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai',
-    'cadastrar-pessoa', 'cadastrar', 'addpessoa', 'editar-pessoa', 'editar', 'deletar-pessoa', 'delficha',
-    'ficha', 'pessoa', 'listar-pessoas', 'fichas', 'aniversariantes', 'niver', 'radar-cidades', 'radar',
-    'aleatorio', 'sortear', 'contato', 'pix'
-]);
-const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']);
-
-function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
-
-function _isPartialAllowed(cmd) {
-    if (!cmd) return false;
-    if (PARTIAL_BLOCKED_COMMANDS.has(cmd.name)) return false;
-    if (Array.isArray(cmd.aliases)) for (const a of cmd.aliases) if (PARTIAL_BLOCKED_COMMANDS.has(a)) return false;
-    return PARTIAL_ALLOWED_CATEGORIES.has(cmd.category);
-}
-
-function registerPartialPending(jid, msgId, commandName, botJid) {
-    if (!jid || !msgId) return;
-    const k = _partialKey(jid, msgId);
-    if (partialPending.has(k)) return;
-    let resolveFn;
-    const promise = new Promise(resolve => { resolveFn = resolve; });
-    partialPending.set(k, { resolve: resolveFn, botJid, commandName, jid, isGroup: jid?.endsWith('@g.us'), createdAt: Date.now() });
-    return promise;
-}
-
-function cancelPartialPending(jid, msgId) {
-    const k = _partialKey(jid, msgId);
-    const entry = partialPending.get(k);
-    if (entry && entry.timer) clearTimeout(entry.timer);
-    partialPending.delete(k);
-    if (entry && entry.resolve) entry.resolve({ reacted: true });
-}
-
-function notifyPartialReaction(jid, msgId, reactorJid) {
-    const k = _partialKey(jid, msgId);
-    const entry = partialPending.get(k);
-    if (!entry) return false;
-    try {
-        const reactorNorm = (reactorJid || '').split('@')[0].split(':')[0];
-        const botNorm = (entry.botJid || '').split('@')[0].split(':')[0];
-        if (reactorNorm && botNorm && reactorNorm === botNorm) return false;
-    } catch (_) {}
-    cancelPartialPending(jid, msgId);
-    return true;
-}
-
-function setPartialTimer(jid, msgId, ms) {
-    const k = _partialKey(jid, msgId);
-    const entry = partialPending.get(k);
-    if (!entry) return;
-    entry.timer = setTimeout(() => {
-        const cur = partialPending.get(k);
-        if (!cur) return;
-        partialPending.delete(k);
-        try { cur.resolve({ reacted: false }); } catch (_) {}
-    }, Math.max(0, ms || 0));
-}
-
-setInterval(() => {
-    const cutoff = Date.now() - 5 * 60 * 1000;
-    for (const [k, entry] of partialPending.entries()) {
-        if (entry.createdAt && entry.createdAt < cutoff) {
-            try { if (entry.timer) clearTimeout(entry.timer); } catch (_) {}
-            partialPending.delete(k);
-            try { entry.resolve && entry.resolve({ reacted: false }); } catch (_) {}
-        }
-    }
-}, 60 * 1000).unref();
+const {
+    partialPending,
+    PARTIAL_ALLOWED_CATEGORIES,
+    PARTIAL_ALLOWED_COMMANDS,
+    PARTIAL_BLOCKED_COMMANDS,
+    PARTIAL_BYPASS_COMMANDS,
+    registerPartialPending,
+    cancelPartialPending,
+    notifyPartialReaction,
+    cancelPartialPendingForGroup,
+    setPartialTimer,
+    isPartialAllowed: _isPartialAllowed
+} = require('./partial');
 
 // ============================================================
 // Constants
@@ -166,6 +103,15 @@ module.exports = {
     trackRecentMessage,
     getRecentMessages,
     notifyPartialReaction,
+    cancelPartialPending,
+    cancelPartialPendingForGroup,
+    registerPartialPending,
+    setPartialTimer,
+    isPartialAllowed: _isPartialAllowed,
+    PARTIAL_ALLOWED_CATEGORIES,
+    PARTIAL_ALLOWED_COMMANDS,
+    PARTIAL_BLOCKED_COMMANDS,
+    PARTIAL_BYPASS_COMMANDS,
     isPartialActive
 };
 
@@ -213,7 +159,7 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (await handleReaction(sock, m, from, sender, senderName)) {
                 try {
                     const tgt = m.message?.reactionMessage?.key?.id || m.message?.ephemeralMessage?.message?.reactionMessage?.key?.id;
-                    if (isGroup && tgt) notifyPartialReaction(from, tgt, sender);
+                    if (isGroup && tgt) notifyPartialReaction(from, tgt, sender, !!m.key.fromMe);
                 } catch (_) {}
                 return;
             }
@@ -324,15 +270,23 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                     } catch (_) {}
                     return;
                 } else {
-                    const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+                    // waitMs<=0: executa direto (sem pendência que ficaria órfã até o sweep).
                     const waitMs = getPartialWaitMs();
-                    const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
-                    if (pendingPromise && waitMs > 0) {
-                        setPartialTimer(from, m.key.id, waitMs);
-                        const result = await pendingPromise;
-                        if (result && result.reacted) {
-                            console.log(`🤐 [PARCIAL] outro bot reagiu a !${commandName} em ${from}, ignorando`);
-                            return;
+                    if (waitMs > 0) {
+                        const botJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+                        const pendingPromise = registerPartialPending(from, m.key.id, commandName, botJid);
+                        if (pendingPromise) {
+                            setPartialTimer(from, m.key.id, waitMs);
+                            const result = await pendingPromise;
+                            if (result && result.reacted) {
+                                console.log(`🤐 [PARCIAL] outro bot reagiu a !${commandName} em ${from}, ignorando`);
+                                return;
+                            }
+                            // Grupo pode ter saído do parcial durante a espera.
+                            if (!isPartialActive(from)) {
+                                console.log(`🤐 [PARCIAL] grupo saiu do parcial durante espera de !${commandName}, ignorando`);
+                                return;
+                            }
                         }
                     }
                 }

@@ -28,6 +28,7 @@ module.exports = {
         }
 
         const success = deactivatePartial(from);
+        try { require('../events/partial').cancelPartialPendingForGroup(from); } catch (_) {}
         console.log(`🟡 [BOT-PARCIAL] desativado em ${from} por @${senderNorm.split('@')[0]}`);
         try {
             const gm = await sock.groupMetadata(from).catch(() => ({ subject: 'Grupo' }));

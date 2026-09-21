@@ -26,6 +26,7 @@ module.exports = {
         }
 
         const success = deactivateGroup(from);
+        try { require('../events/partial').cancelPartialPendingForGroup(from); } catch (_) {}
         console.log(`🔴 [BOT] desativado em ${from} por @${senderNorm.split('@')[0]}`);
         return await reactStatus(sock, m, from, success, '🔴', '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
     }
