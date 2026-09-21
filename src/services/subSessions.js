@@ -200,6 +200,17 @@ function sessionFolder(ownerJid) {
     return dir;
 }
 
+// Creds pareadas de verdade? Fresh initAuthCreds tem registered=false e sem .me.
+// Fantasma (QR nunca escaneado) não deve ser restaurado no boot.
+function hasPairedCreds(dir) {
+    try {
+        const raw = fs.readFileSync(path.join(dir, 'creds.json'), 'utf8');
+        const c = JSON.parse(raw);
+        if (c && (c.registered === true || c.me)) return true;
+    } catch (_) {}
+    return false;
+}
+
 function getSubsGroupsEnabled() {
     try {
         const cfg = readConfig();
@@ -969,6 +980,12 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
             if (normalizedPhone && dir && dir.includes('_pair_')) {
                 try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
             }
+            // qr-exhausted sem nunca ter conectado = creds frescas inúteis
+            // (fantasma de restore ou !login não escaneado). Apaga a pasta final
+            // para não virar loop cleanup-qr-exhausted a cada boot.
+            if (reason === 'qr-exhausted' && !session._wasConnected && !normalizedPhone && dir) {
+                try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+            }
             // Pasta final só é apagada em falha definitiva de auth, nunca em timeout/retry.
             if ((reason === 'unauthorized' || reason === 'logged-out' || String(reason).startsWith('auth-failed')) && !normalizedPhone) {
                 try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
@@ -1290,14 +1307,30 @@ async function restoreFromDisk(onConnected) {
         }
         const dirs = fs.readdirSync(SUB_SESSIONS_DIR, { withFileTypes: true }).filter(d => d.isDirectory());
         const restored = [];
+        const seenOwners = new Set();
         connlog('boot', 'restore-inicio', `dirs=${dirs.length}`);
         for (const d of dirs) {
-            if (d.name.includes('_pair_')) continue;
+            // Só pastas finais exatas (hash 16 hex). Pula _pair_* temporárias
+            // e .bak-* de quarentena (creds rejeitadas 401/logged-out) —
+            // senão o mesmo dono restaura 2-3x, cada retry mata o anterior
+            // e o último vira fantasma em loop cleanup-qr-exhausted.
+            if (!/^[0-9a-f]{16}$/.test(d.name)) continue;
             const metaPath = path.join(SUB_SESSIONS_DIR, d.name, META_FILE);
             if (!fs.existsSync(metaPath)) continue;
             let meta;
             try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch (_) { continue; }
             if (!meta || !meta.ownerJid) continue;
+            if (seenOwners.has(meta.ownerJid)) continue;
+            // Fantasma: nunca conectou (sem phone) + creds frescas não-pareadas
+            // (registered=false, sem me) = QR que ninguém vai escanear no restore.
+            // Restaurar isso gera cleanup-qr-exhausted a cada boot + spam no dono.
+            // Apaga e pula. (Se as creds estiverem pareadas, tenta mesmo sem phone.)
+            if (!meta.phoneNumber && !hasPairedCreds(path.join(SUB_SESSIONS_DIR, d.name))) {
+                connlog(meta.ownerJid, 'restore-skip', `dir=${d.name} fantasma sem-phone → removido`);
+                try { fs.rmSync(path.join(SUB_SESSIONS_DIR, d.name), { recursive: true, force: true }); } catch (_) {}
+                continue;
+            }
+            seenOwners.add(meta.ownerJid);
             try {
                 connlog(meta.ownerJid, 'restore-try', `dir=${d.name} phone=${meta.phoneNumber || '?'}`);
                 // Avisa o dono no privado do principal que o bot reiniciou e vai reconectar.

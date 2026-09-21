@@ -34,7 +34,7 @@ module.exports = {
             try {
                 const all = fs.readdirSync(subDir);
                 for (const n of all) {
-                    if (n === ownerHash || n.startsWith(ownerHash + '_pair_') || n.startsWith(ownerHash + '_pair')) {
+                    if (n === ownerHash || n.startsWith(ownerHash + '_pair_') || n.startsWith(ownerHash + '_pair') || n.startsWith(ownerHash + '.bak-')) {
                         targetDirs.push(path.join(subDir, n));
                     }
                 }
