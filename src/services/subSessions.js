@@ -415,8 +415,22 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
     const targetJid = from || m.key.remoteJid;
 
     if (commandName === 'logoff' || commandName === 'sair' || commandName === 'logout') {
+        // Só o dono da sessão pode derrubá-la — senão qualquer pessoa no
+        // grupo encerra a sub alheia com um "!sair".
+        const senderJid = m.key.participant || targetJid;
+        const sDigits = _digitsOf(senderJid);
+        const oDigits = _digitsOf(session.ownerJid);
+        const isOwner = (sDigits && oDigits && sDigits === oDigits) ||
+            (_userOf(senderJid) && _userOf(senderJid) === _userOf(session.ownerJid));
+        if (!isOwner) {
+            await reactSilent(sock, m, '❌');
+            return true;
+        }
         await reactSilent(sock, m, '✅');
-        return 'handled_internally';
+        try { await sendSilent(sock, targetJid, '🚪 *Sub-sessão encerrada.*\nUse !login para criar uma nova.', m); } catch (_) {}
+        // Desconecta de verdade: antes só reagia ✅ e a sessão continuava viva.
+        setImmediate(() => { try { logout(session.ownerJid); } catch (_) {} });
+        return true;
     }
 
     if (commandName === 'prefixo' || commandName === 'prefix') {
@@ -431,11 +445,17 @@ async function dispatchBasicCommand(session, sock, m, text, from) {
     }
 
     if (commandName === 'setprefix') {
-        const newPrefix = fullArgsText.trim().slice(0, 3);
-        if (!newPrefix) {
+        // Prefixo: 1 símbolo não-alfanumérico. Sem isso, "!setprefix a"
+        // faz toda mensagem com "a..." virar comando (reação ❌ em massa)
+        // e "*" colide com as caixas do próprio bot ("*Sub-sessão*"),
+        // gerando eco (bot reage à própria resposta, emitOwnEvents:true).
+        const raw = fullArgsText.trim().split(/ +/)[0] || '';
+        const VALID_PREFIX_RE = /^[!#$%&+\-./:;=?@^~]$/;
+        if (!VALID_PREFIX_RE.test(raw)) {
             await reactSilent(sock, m, '❌');
             return true;
         }
+        const newPrefix = raw;
         session.prefix = newPrefix;
         try { persistSessionMeta(session); } catch (_) {}
         const okBox = `*Sub-sessão — Prefixo* ⌨️\n_atualizado_\n\n` +
