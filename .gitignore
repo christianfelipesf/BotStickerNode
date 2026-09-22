@@ -136,6 +136,11 @@ session.bak-*/
 **/*.bak-*/
 temp/
 data/
+# Exceção: curiosidades do splash fazem parte do bot e vão pro git.
+# (Ordem importa: re-inclui o dir, ignora o conteúdo, re-inclui o arquivo.)
+!src/data/
+src/data/*
+!src/data/curiosidades.js
 backups/
 
 # yarn v2
