@@ -528,8 +528,16 @@ function writeGroupState(jid, patch = {}) {
 // Active Groups
 // ============================================================
 const _agHas = db.prepare('SELECT 1 FROM active_groups WHERE jid = ?');
-const _agInsert = db.prepare('INSERT OR IGNORE INTO active_groups (jid, activated_at) VALUES (?, ?)');
+const _agUpsert = db.prepare('INSERT INTO active_groups (jid, activated_at) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET activated_at = excluded.activated_at');
 const _agDelete = db.prepare('DELETE FROM active_groups WHERE jid = ?');
+
+// Mudança total<->parcial precisa chegar à nuvem ANTES do próximo restart:
+// o PULL do boot (nuvem vence, DELETE+INSERT local) ressuscita o modo antigo
+// se a nuvem ainda tiver a linha velha. O push periódico (60s) é lento demais
+// e morre junto no restart — por isso agenda push rápido aqui.
+function _scheduleMembershipPush() {
+    try { require('./supabaseSync').schedulePush(3000); } catch (_) {}
+}
 
 function isActiveGroup(jid) {
     try { return !!_agHas.get(jid); } catch (e) { return false; }
@@ -538,11 +546,12 @@ function isActiveGroup(jid) {
 function activateGroup(jid) {
     if (!jid) return false;
     try { if (isPartialActive(jid)) { try { _agpDelete.run(jid); } catch (_) {} } } catch (_) {}
-    try { if (_agHas.get(jid)) return true; } catch (_) {}
-    try {
-        const r = _agInsert.run(jid, Date.now());
-        return r.changes > 0 || isActiveGroup(jid);
-    } catch (e) { return isActiveGroup(jid); }
+    // UPSERT com timestamp: re-ativar atualiza activated_at. O reconcile do PULL
+    // usa o mais recente p/ desempatar total x parcial (sem isso o !ativar de
+    // hoje não deixava rastro e o parcial mais antigo "vencia" no boot).
+    try { _agUpsert.run(jid, Date.now()); } catch (e) { return isActiveGroup(jid); }
+    _scheduleMembershipPush();
+    return isActiveGroup(jid);
 }
 
 function deactivateGroup(jid) {
@@ -550,6 +559,7 @@ function deactivateGroup(jid) {
     const r = _agDelete.run(jid);
     const rp = r.changes === 0 ? _agpDelete.run(jid) : { changes: 0 };
     if (r.changes === 0 && rp.changes === 0) return true; // idempotente: já desligado conta como sucesso
+    _scheduleMembershipPush();
     try {
         const row = _gsGet.get(jid);
         if (row && row.menu_image) {
@@ -589,7 +599,7 @@ function listActiveGroups() {
 // Partial Groups
 // ============================================================
 const _agpHas = db.prepare('SELECT 1 FROM active_groups_partial WHERE jid = ?');
-const _agpInsert = db.prepare('INSERT OR IGNORE INTO active_groups_partial (jid, activated_at) VALUES (?, ?)');
+const _agpUpsert = db.prepare('INSERT INTO active_groups_partial (jid, activated_at) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET activated_at = excluded.activated_at');
 const _agpDelete = db.prepare('DELETE FROM active_groups_partial WHERE jid = ?');
 
 function isPartialActive(jid) {
@@ -601,9 +611,10 @@ function activatePartial(jid) {
     if (!jid) return false;
     try {
         try { _agDelete.run(jid); } catch (_) {}
-        try { if (_agpHas.get(jid)) return true; } catch (_) {}
-        const r = _agpInsert.run(jid, Date.now());
-        return r.changes > 0 || isPartialActive(jid);
+        // UPSERT com timestamp (mesmo motivo do activateGroup: desempate no PULL).
+        try { _agpUpsert.run(jid, Date.now()); } catch (_) {}
+        _scheduleMembershipPush();
+        return isPartialActive(jid);
     } catch (e) {
         console.error('❌ Falha ao ativar modo parcial:', e.message);
         return isPartialActive(jid);
@@ -612,7 +623,36 @@ function activatePartial(jid) {
 
 function deactivatePartial(jid) {
     if (!jid) return false;
-    try { _agpDelete.run(jid); return true; } catch (e) { return false; }
+    try { _agpDelete.run(jid); _scheduleMembershipPush(); return true; } catch (e) { return false; }
+}
+
+// Reconcilia total x parcial após o PULL da nuvem: o push antigo era só-upsert
+// (nunca apagava), então a nuvem pode ter o mesmo jid nas DUAS tabelas —
+// estado impossível pelos comandos (mutuamente exclusivos). Vence o
+// activated_at mais recente; empate → total (evita "bot mudo" por engano).
+function reconcileActivePartial(dbHandle) {
+    const dbh = dbHandle || db;
+    try {
+        const dupes = dbh.prepare(`
+            SELECT a.jid AS jid, a.activated_at AS a_at, p.activated_at AS p_at
+            FROM active_groups a JOIN active_groups_partial p ON p.jid = a.jid
+        `).all();
+        if (!dupes || !dupes.length) return { ok: true, fixed: 0 };
+        const delA = dbh.prepare('DELETE FROM active_groups WHERE jid = ?');
+        const delP = dbh.prepare('DELETE FROM active_groups_partial WHERE jid = ?');
+        let fixed = 0;
+        for (const r of dupes) {
+            const aAt = Number(r.a_at) || 0;
+            const pAt = Number(r.p_at) || 0;
+            if (pAt > aAt) delA.run(r.jid);
+            else delP.run(r.jid);
+            fixed++;
+        }
+        try { console.warn(`⚠️ [sync] reconcile: ${fixed} grupo(s) em total+parcial (nuvem com linha velha) — venceu o mais recente`); } catch (_) {}
+        return { ok: true, fixed };
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+    }
 }
 
 function listPartialGroups() {
@@ -2064,6 +2104,7 @@ module.exports = {
     readConfig, writeConfig, readStats, incrementRestart, incrementCommand,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
+    reconcileActivePartial,
     getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, writeGroupState, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
     getThemeForJid, setGroupTheme, clearGroupTheme,

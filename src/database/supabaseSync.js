@@ -302,6 +302,12 @@ async function pullFromCloud({ log = console } = {}) {
             tables++;
             rows += list.length;
         }
+        // Total x parcial são mutuamente exclusivos, mas a nuvem pode ter o mesmo
+        // jid nas duas tabelas (push antigo era só-upsert e nunca apagava).
+        // Sem isso, o boot ressuscita o modo errado. Vence o mais recente.
+        try { require('./utils').reconcileActivePartial(localDb); } catch (e) {
+            try { log.log(`⚠️ [supabase] reconcile total/parcial falhou (segue): ${e?.message || e}`); } catch (_) {}
+        }
         try { localDb.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
         _lastPullAt = Date.now();
         _pullOk = true;
@@ -315,6 +321,13 @@ async function pullFromCloud({ log = console } = {}) {
         _syncRunning = false;
     }
 }
+
+// Tabelas de modo (total/parcial): PUSH faz full-replace (DELETE na nuvem +
+// INSERT do local) em vez de upsert puro. Motivo: o upsert nunca apaga, então
+// !desativar / !ativar / !ativarp deixavam a linha velha na nuvem e o PULL do
+// boot (DELETE+INSERT local) ressuscitava o modo antigo. São tabelas minúsculas
+// (só jids), então o replace é barato.
+const MEMBERSHIP_REPLACE_TABLES = new Set(['active_groups', 'active_groups_partial']);
 
 async function pushToCloud({ log = console, force = false, requirePull = true } = {}) {
     if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
@@ -351,7 +364,13 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
             const localRows = cap && orderCol && cols.includes(orderCol)
                 ? localDb.prepare(`SELECT * FROM "${table}" ORDER BY "${orderCol}" DESC LIMIT ${cap}`).all().reverse()
                 : localDb.prepare(`SELECT * FROM "${table}"`).all();
-            if (!localRows.length) { tables++; continue; }
+            if (MEMBERSHIP_REPLACE_TABLES.has(table)) {
+                // Propaga DESATIVAÇÕES e trocas total<->parcial: limpa a nuvem e
+                // grava o estado local (vazio = "ninguém nesse modo", válido).
+                const { supaFetch } = require('./supabaseClient');
+                await supaFetch(`/${table}?activated_at=gte.0`, { method: 'DELETE' });
+                if (!localRows.length) { tables++; continue; }
+            } else if (!localRows.length) { tables++; continue; }
             // Postgres: coerção explícita (SQLite é flexível, Postgres não).
             const payload = localRows.map(r => {
                 const o = {};
