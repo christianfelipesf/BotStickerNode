@@ -248,13 +248,22 @@ async function startBot() {
             logger: pino({ level: 'fatal' }),
             printQRInTerminal: false,
             auth: state,
-            browser: [config.botName, 'Chrome', '120.0.0.0'],
+            // Modo Humanizado: browser genérico de PC real. Usar o nome do bot
+            // aqui (ex: "Gravity Bot") é assinatura clássica de automação.
+            browser: ['Windows', 'Chrome', '124.0.0.0'],
+            syncFullHistory: false,
+            fireInitQueries: true,
             keepAliveIntervalMs: 25000,
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
             retryRequestDelayMs: 2000,
-            markOnlineOnConnect: true
+            // Humanizado LIGADO (default): não fica "online" fixo no connect.
+            // Humano aparece online só ao digitar/responder (via presence).
+            markOnlineOnConnect: readConfig().humanMode === false
         });
+
+        // Camada anti-ban: digitação, delay humano e throttle em todos os envios
+        try { require('./src/services/humanize').wrapSocketForHumanMode(sock); } catch (_) {}
 
         global.__baileysSock = sock;
 

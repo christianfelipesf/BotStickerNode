@@ -96,19 +96,40 @@ async function downloadTelegramFile(fileId) {
     }
 }
 
+// Confirmação em 2 passos p/ broadcast (anti-ban): 1ª chamada mostra
+// contagem + ETA e pede /broadcast confirmar; 2ª executa com delay seguro.
+const _pendingBroadcast = new Map(); // chatId -> { kind:'text'|'image', text, imgBuf, expiresAt }
+const BROADCAST_CONFIRM_MS = 5 * 60 * 1000;
+
 async function fanOutBroadcast(chatId, makePayload, label) {
     const utils = require('../database/utils');
-    const groups = utils.listActiveGroups();
+    const safe = require('./safeBroadcast');
+    const cfg = utils.readConfig();
+    const groups = utils.listActiveGroups().filter(j => j.endsWith('@g.us'));
     if (!groups.length) { await send(chatId, `⚠️ Nenhum grupo ativo`); return; }
     const sock = global.__baileysSock;
     if (!sock) { await send(chatId, `❌ Baileys desconectado`); return; }
-    await send(chatId, `📢 Broadcast ${label || ''}para ${groups.length} grupos...`);
-    let sent = 0, failed = 0;
-    for (const jid of groups) {
-        try { await sock.sendMessage(jid, makePayload(jid)); sent++; } catch (_) { failed++; }
-        await new Promise(r => setTimeout(r, 1500));
-    }
-    await send(chatId, `✅ Broadcast ok: ${sent} enviados, ${failed} falhas`);
+    if (safe.isBroadcastRunning()) { await send(chatId, `⏳ Já existe um broadcast em andamento. Aguarde terminar.`); return; }
+    const eta = safe.estimateTotal(groups.length, cfg);
+    await send(chatId,
+        `📢 Broadcast ${label || ''}para *${groups.length} grupos*\n` +
+        `⏱️ Tempo estimado: ~${safe.formatEta(eta)} (delay ${Math.round((cfg.broadcastMinDelayMs||30000)/1000)}–${Math.round((cfg.broadcastMaxDelayMs||60000)/1000)}s/grupo)\n` +
+        `⚠️ O WhatsApp bane por spam: envio idêntico e rápido = ban temporário.\n` +
+        `O bot vai enviar devagar, um por vez, e parar sozinho em rate-limit.`);
+    let lastLog = 0;
+    const res = await safe.runSafeBroadcast(sock, groups, makePayload, {
+        cfg,
+        onProgress: async (p) => {
+            const now = Date.now();
+            if (p.phase === 'sent' && (now - lastLog > 60000 || p.index + 1 === p.total)) {
+                lastLog = now;
+                try { await send(chatId, `📊 ${p.index + 1}/${p.total} (✓${p.sent} ✗${p.failed})`); } catch (_) {}
+            }
+        }
+    });
+    let msg = `✅ Broadcast ok: ${res.sent} enviados, ${res.failed} falhas (${res.total} grupos)`;
+    if (res.stopped) msg += `\n⛔ Parado: ${res.stopped}`;
+    await send(chatId, msg);
 }
 
 async function handleUpdate(update) {
@@ -134,10 +155,29 @@ async function handleUpdate(update) {
         }
         const spaceIdx = caption.indexOf(' ');
         const legenda = spaceIdx === -1 ? '' : caption.slice(spaceIdx + 1).trim();
+        if (legenda.toLowerCase() === 'confirmar') {
+            const pend = _pendingBroadcast.get(String(chatId));
+            if (!pend || Date.now() > pend.expiresAt) { await send(chatId, `⚠️ Nada pendente. Envie a foto com \`/broadcast <texto>\` primeiro.`); return; }
+            _pendingBroadcast.delete(String(chatId));
+            const buf = pend.imgBuf;
+            await fanOutBroadcast(chatId, () => (pend.text ? { image: buf, caption: pend.text } : { image: buf }), 'com imagem ');
+            return;
+        }
         await send(chatId, `⬇️ Baixando imagem...`);
         const dl = await downloadTelegramFile(photo.file_id);
         if (!dl.ok) { await send(chatId, `❌ Falha ao baixar imagem: ${dl.error}`, { parseMode: null }); return; }
-        await fanOutBroadcast(chatId, () => (legenda ? { image: dl.buffer, caption: legenda } : { image: dl.buffer }), 'com imagem ');
+        try {
+            const utils = require('../database/utils');
+            const safe = require('./safeBroadcast');
+            const cfg = utils.readConfig();
+            const n = utils.listActiveGroups().filter(j => j.endsWith('@g.us')).length;
+            _pendingBroadcast.set(String(chatId), { kind: 'image', text: legenda, imgBuf: dl.buffer, expiresAt: Date.now() + BROADCAST_CONFIRM_MS });
+            await send(chatId,
+                `⚠️ *CONFIRMAR BROADCAST COM IMAGEM*\n` +
+                `📢 ${n} grupo(s) • ~${safe.formatEta(safe.estimateTotal(n, cfg))}\n` +
+                `❗ Envio em massa pode gerar *ban temporário*.\n` +
+                `Confirme com foto+legenda \`/broadcast confirmar\` (5 min).`);
+        } catch (e) { await send(chatId, `❌ Erro: ${e.message}`); }
         return;
     }
 
@@ -162,7 +202,7 @@ async function handleUpdate(update) {
             `/qr — mostra status do QR / conexão`,
             `/ativar <jid> — ativa grupo (ex: 120363...@g.us)`,
             `/desativar <jid> — desativa grupo`,
-            `/broadcast <texto> — envia para todos os grupos ativos`,
+            `/broadcast <texto> — pede confirmação, depois \`/broadcast confirmar\` (envio lento anti-ban)`,
             `foto com legenda /broadcast <texto> — broadcast com imagem`,
             `/logs — últimos logs do terminal`,
             `/dump — gera e envia backup (bot.db, .env com API keys, uploads)`,
@@ -303,7 +343,25 @@ async function handleUpdate(update) {
         const broadcastText = text.slice(text.indexOf(' ') + 1).trim();
         if (!broadcastText) { await send(chatId, `❌ Uso: \`/broadcast <texto>\``); return; }
         try {
-            await fanOutBroadcast(chatId, () => ({ text: broadcastText }));
+            if (broadcastText.toLowerCase() === 'confirmar') {
+                const pend = _pendingBroadcast.get(String(chatId));
+                if (!pend || Date.now() > pend.expiresAt) { await send(chatId, `⚠️ Nada pendente. Use \`/broadcast <texto>\` primeiro.`); return; }
+                _pendingBroadcast.delete(String(chatId));
+                await fanOutBroadcast(chatId, () => ({ text: pend.text }));
+                return;
+            }
+            const utils = require('../database/utils');
+            const safe = require('./safeBroadcast');
+            const cfg = utils.readConfig();
+            const n = utils.listActiveGroups().filter(j => j.endsWith('@g.us')).length;
+            if (!n) { await send(chatId, `⚠️ Nenhum grupo ativo`); return; }
+            _pendingBroadcast.set(String(chatId), { kind: 'text', text: broadcastText, expiresAt: Date.now() + BROADCAST_CONFIRM_MS });
+            await send(chatId,
+                `⚠️ *CONFIRMAR BROADCAST*\n` +
+                `📢 ${n} grupo(s) • ~${safe.formatEta(safe.estimateTotal(n, cfg))} (devagar p/ evitar ban)\n` +
+                `📝 \`${broadcastText.slice(0, 200)}\`\n\n` +
+                `❗ Envio em massa idêntico é o que causa *ban temporário*.\n` +
+                `Confirme com \`/broadcast confirmar\` (5 min) ou aguarde expirar.`);
         } catch (e) { await send(chatId, `❌ Erro broadcast: ${e.message}`); }
         return;
     }

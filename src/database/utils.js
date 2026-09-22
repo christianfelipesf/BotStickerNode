@@ -388,7 +388,20 @@ const DEFAULT_CONFIG = {
     splashEnabled: true,
     splashInterval: 60,
     splashWithImage: true,
-    splashCooldownMs: 21600000
+    splashCooldownMs: 21600000,
+    // --- Modo Humanizado / Anti-ban (default LIGADO) ---
+    humanMode: true,
+    humanMinDelayMs: 1200,
+    humanMaxDelayMs: 3500,
+    humanMsPerChar: 35,
+    humanMaxTypingMs: 8000,
+    humanPresence: true,
+    humanReadReceipt: true,
+    humanThrottleMs: 1500,
+    // --- Broadcast seguro (anti-ban): delay longo entre grupos ---
+    broadcastMinDelayMs: 30000,
+    broadcastMaxDelayMs: 60000,
+    broadcastVaryText: true
 };
 
 let _configCache = null;

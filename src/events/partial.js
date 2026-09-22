@@ -22,7 +22,7 @@ const PARTIAL_BLOCKED_COMMANDS = new Set([
 ]);
 // Bypass passa mesmo em parcial (controle + status). 'status' NÃO está no
 // BLOCKED de propósito — bypass vence e evita armadilha de manutenção.
-const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']);
+const PARTIAL_BYPASS_COMMANDS = new Set(['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'statusp', 'dashboard', 'dash', 'painel']);
 
 function _partialKey(jid, msgId) { return `${jid}:${msgId}`; }
 

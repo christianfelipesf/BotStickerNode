@@ -233,7 +233,7 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (!cmd) return;
 
             // === Activation control commands always work ===
-            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel', 'dashdel', 'dashremover', 'dashremove'];
+            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'statusp', 'dashboard', 'dash', 'painel', 'dashdel', 'dashremover', 'dashremove'];
             const isPartActive = isGroup && isPartialActive(from);
             if (isGroup && !botActive && !isPartActive && !activationControlCmds.includes(cmd.name)) {
                 return;
@@ -346,6 +346,14 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             };
             cmdLog('início', `${senderName} → ${effectivePrefix}${commandName}${fullArgsText ? ` args="${fullArgsText.slice(0,80)}"` : ''}`);
 
+            // === Humanização pré-resposta (digitando + lido, como gente) ===
+            // Só para comandos reais; reações/cooldown já saíram antes.
+            try {
+                const humanize = require('../services/humanize');
+                if (humanize.isHumanMode(effectiveConfig)) {
+                    await humanize.preReply(sock, from, m, { config: effectiveConfig });
+                }
+            } catch (_) {}
             // === Command execution (com timeout anti-zumbi) === p/ mídia o yt-dlp
             // sozinho pode levar até 180s + fallback; timeout menor matava !play
             // antes do fallback terminar. cancelToken permite ao comando

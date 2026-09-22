@@ -926,7 +926,7 @@ async function _doStartLogin(ownerJid, { onQr, onConnected, onClosed, _silent = 
             logger: pino({ level: 'warn' }),
             printQRInTerminal: false,
             auth: state,
-            browser: normalizedPhone ? ['Desktop', 'Chrome', '4.0.0'] : ['Gravity Bot🪐', 'Chrome', '120.0.0.0'],
+            browser: ['Windows', 'Chrome', '124.0.0.0'],
             markOnlineOnConnect: false,
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 60_000,

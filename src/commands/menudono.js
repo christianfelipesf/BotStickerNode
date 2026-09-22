@@ -55,6 +55,10 @@ module.exports = {
             `│ 🔧 *${p}setprefix* <prefix> / *${p}set* — configs\n` +
             `│ 📦 *${p}dump* / *${p}grupos* — diagnóstico\n` +
             `╰───────────────\n\n` +
+            `╭─── *ANTI-BAN* ───\n` +
+            `│ 🤖 *${p}humanizar* on/off/status — modo humano (só dono, salvo no banco)\n` +
+            `│ ⏱️ *${p}set* broadcastMinDelayMs/MaxDelayMs — delay entre grupos\n` +
+            `╰───────────────\n\n` +
             `╭─── *TRANSMISSÃO* ───\n` +
             `│ 📣 *${p}transmitir* / *${p}transmitirall* — broadcast\n` +
             `╰───────────────`;

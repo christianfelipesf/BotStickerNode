@@ -45,10 +45,11 @@ describe('modo parcial — filtro de comandos', () => {
     });
 
     it('bypass contém controle+status e BLOCKED não contém status', () => {
-        for (const c of ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'dashboard', 'dash', 'painel']) {
+        for (const c of ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'statusp', 'dashboard', 'dash', 'painel']) {
             assert.ok(msg.PARTIAL_BYPASS_COMMANDS.has(c), `bypass deveria conter ${c}`);
         }
         assert.ok(!msg.PARTIAL_BLOCKED_COMMANDS.has('status'), 'status não pode estar no BLOCKED (bypass vence)');
+        assert.ok(!msg.PARTIAL_BLOCKED_COMMANDS.has('statusp'), 'statusp não pode estar no BLOCKED (bypass vence)');
     });
 });
 

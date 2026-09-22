@@ -49,7 +49,7 @@ module.exports = {
             `╰───────────────\n\n` +
             `╭─── *OUTROS* ───\n` +
             `${B} 📖 *${p}menuadmin* — comandos de admin\n` +
-            `${B} 👑 *${p}menudono* — comandos do dono\n` +
+            `${B} 👑 *${p}menudono* — comandos do dono (inclui 🤖 anti-ban)\n` +
             `╰───────────────`;
         menuText = themeBullets(menuText, theme);
 
