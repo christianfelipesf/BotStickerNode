@@ -198,8 +198,12 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (botActive && isGroup && !isCommandMsg && !m.key.fromMe) {
                 updateMemberActivity(from, activitySender, senderName);
                 try { recordGroupMessage(from, Date.now()); } catch (_) {}
-                // 💡 Splash cômico a cada N mensagens (contador por grupo).
-                // Comandos e mensagens do bot não contam. Fire-and-forget p/ não atrasar.
+            }
+            // 💡 Splash cômico a cada N mensagens (contador por grupo).
+            // Dispara no modo total E no parcial (no parcial o splash usa o
+            // pool filtrado + card amarelo). Comandos e mensagens do bot não
+            // contam. Fire-and-forget p/ não atrasar.
+            if ((botActive || (isGroup && isPartialActive(from))) && isGroup && !isCommandMsg && !m.key.fromMe) {
                 try {
                     const splash = require('../services/splash');
                     splash.handleMessage(sock, from, { prefix: effectivePrefix }).then((fired) => {

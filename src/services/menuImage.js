@@ -54,8 +54,10 @@ async function placeholderAvatar(name, size) {
  * @param {string} opts.badge - ex: "HELL"
  * @param {Object} opts.theme - entrada do catálogo themes.js (usa .colors)
  * @param {Buffer} opts.avatarRaw - foto do grupo (opcional)
+ * @param {boolean} opts.noCover - quando true, pula a foto de fundo + véu escuro
+ *   (usado no card amarelo do modo parcial: fundo sólido claro + texto escuro).
  */
-async function generateMenuImage({ title, headerEmoji, groupName, memberLabel, tagline, footer, badge, theme, avatarRaw }) {
+async function generateMenuImage({ title, headerEmoji, groupName, memberLabel, tagline, footer, badge, theme, avatarRaw, noCover }) {
     const W = OUT_W;
     const H = OUT_H;
     const C = (theme && theme.colors) ? theme.colors : {};
@@ -64,6 +66,9 @@ async function generateMenuImage({ title, headerEmoji, groupName, memberLabel, t
     const accent = C.accent || '#6c5ce7';
     const text = C.text || '#ffffff';
     const sub = C.sub || '#a0a0b2';
+    // Cor do texto do badge: branco sobre colorido escuro funciona, mas sobre
+    // fundo claro (ex: amarelo do parcial) precisa de texto escuro.
+    const badgeText = C.badgeText || '#fff';
 
     const AV = 180;
     const avX = 64;
@@ -91,8 +96,8 @@ async function generateMenuImage({ title, headerEmoji, groupName, memberLabel, t
 
     let buf = await sharp(Buffer.from(baseSvg)).png().toBuffer();
 
-    // foto do grupo como fundo esmaecido
-    if (avatarRaw && Buffer.isBuffer(avatarRaw)) {
+    // foto do grupo como fundo esmaecido (pulada no modo noCover: fundo sólido claro)
+    if (!noCover && avatarRaw && Buffer.isBuffer(avatarRaw)) {
         try {
             const cover = await sharp(avatarRaw, { failOn: 'none' }).rotate().resize({ width: W, height: H, fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
             buf = await sharp(buf).composite([{ input: cover, opacity: 0.22 }]).png().toBuffer();
@@ -110,7 +115,7 @@ async function generateMenuImage({ title, headerEmoji, groupName, memberLabel, t
         <text x="${txX}" y="255" font-family="sans-serif" font-size="28" font-weight="700" fill="${text}">${groupSafe}${memberSafe ? ` • ${memberSafe}` : ''}</text>
         <text x="${txX}" y="305" font-family="sans-serif" font-size="21" fill="${sub}">${tagSafe}</text>
         ${footerSafe ? `<text x="${txX}" y="345" font-family="sans-serif" font-size="18" fill="${sub}">${footerSafe}</text>` : ''}
-        ${badgeSafe ? `<rect x="${W - 260}" y="40" width="212" height="48" rx="24" fill="${accent}"/><text x="${W - 154}" y="72" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="800" fill="#fff">${badgeSafe}</text>` : ''}
+        ${badgeSafe ? `<rect x="${W - 260}" y="40" width="212" height="48" rx="24" fill="${accent}"/><text x="${W - 154}" y="72" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="800" fill="${badgeText}">${badgeSafe}</text>` : ''}
         <rect x="32" y="${H - 14}" width="${W - 64}" height="2" fill="${accent}" opacity="0.5"/>
     </svg>`;
 

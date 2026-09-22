@@ -5,10 +5,46 @@
 // Estilo "tela de loading": texto curto + card com imagem (reusa menuImage).
 // Contador em memória (Map por jid), rotação sem repetir em sequência.
 const CURIOSIDADES = require('../data/curiosidades');
+const CURIOSIDADES_PARCIAL = (CURIOSIDADES && CURIOSIDADES.CURIOSIDADES_PARCIAL) || [];
 const fs = require('fs');
 const path = require('path');
 
 let sockRef = null;
+
+// Paleta do card no modo parcial: amarelo sólido + texto escuro (nada de
+// branco sobre amarelo — ilegível). Passada como theme sintético para
+// generateMenuImage (não entra no catálogo themes.js, então !tema não lista).
+// Contraste alvo: texto/fundo ≥ 7:1, badge ≥ 5:1.
+const SPLASH_PARCIAL_THEME = {
+    id: 'parcial',
+    colors: {
+        bg0: '#ffd23f',
+        bg1: '#f59e0b',
+        accent: '#7c4a00',
+        text: '#231a00',
+        sub: '#503c00',
+        badgeText: '#ffd23f'
+    }
+};
+
+// Grupo está em modo parcial? (lazy require como _cfg(): evita ciclo,
+// já que database/utils não depende deste módulo em load-time.)
+function isPartialSplashJid(jid) {
+    if (!jid || !String(jid).endsWith('@g.us')) return false;
+    try {
+        return !!require('../database/utils').isPartialActive(jid);
+    } catch (_) { return false; }
+}
+
+// Offset inicial por hash do jid: grupos diferentes começam em curiosidades
+// diferentes em vez de todos na #0.
+function _initialIdx(jid, len) {
+    if (!len) return 0;
+    let hash = 0;
+    const s = String(jid || '');
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return hash % len;
+}
 
 // Anti-spam: 1x a cada 6h + mínimo de 60 mensagens por grupo.
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -36,6 +72,7 @@ function _loadState() {
             counters.set(jid, {
                 count: Math.max(0, Number(v.count) || 0),
                 idx: Number.isFinite(Number(v.idx)) ? Number(v.idx) : 0,
+                idxParcial: Number.isFinite(Number(v.idxParcial)) ? Number(v.idxParcial) : _initialIdx(jid, CURIOSIDADES_PARCIAL.length || 1),
                 lastSentAt: Math.max(0, Number(v.lastSentAt) || 0)
             });
             if (counters.size >= MAX_GROUPS) break;
@@ -48,7 +85,7 @@ function _saveState() {
         const dir = path.dirname(STATE_FILE);
         try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
         const obj = {};
-        for (const [jid, e] of counters) obj[jid] = { count: e.count, idx: e.idx, lastSentAt: e.lastSentAt };
+        for (const [jid, e] of counters) obj[jid] = { count: e.count, idx: e.idx, idxParcial: e.idxParcial || 0, lastSentAt: e.lastSentAt };
         fs.writeFileSync(STATE_FILE, JSON.stringify(obj), 'utf8');
     } catch (_) {}
 }
@@ -103,23 +140,33 @@ function _entry(jid) {
     _loadState();
     let e = counters.get(jid);
     if (!e) {
-        // Offset inicial por hash do jid: grupos diferentes começam
-        // em curiosidades diferentes em vez de todos na #0.
-        let hash = 0;
-        const s = String(jid || '');
-        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
-        e = { count: 0, idx: CURIOSIDADES.length ? hash % CURIOSIDADES.length : 0, lastSentAt: 0 };
+        e = {
+            count: 0,
+            idx: CURIOSIDADES.length ? _initialIdx(jid, CURIOSIDADES.length) : 0,
+            idxParcial: CURIOSIDADES_PARCIAL.length ? _initialIdx(jid, CURIOSIDADES_PARCIAL.length) : 0,
+            lastSentAt: 0
+        };
         if (counters.size >= MAX_GROUPS && !counters.has(jid)) {
             const oldest = counters.keys().next().value;
             counters.delete(oldest);
         }
         counters.set(jid, e);
     }
+    // Entradas antigas (persistidas antes do pool parcial) não têm idxParcial.
+    if (!Number.isFinite(Number(e.idxParcial))) {
+        e.idxParcial = CURIOSIDADES_PARCIAL.length ? _initialIdx(jid, CURIOSIDADES_PARCIAL.length) : 0;
+    }
     return e;
 }
 
 function pickNext(jid) {
     const e = _entry(jid);
+    // Modo parcial: pool filtrado (só comandos liberados no parcial).
+    if (isPartialSplashJid(jid) && CURIOSIDADES_PARCIAL.length) {
+        const texto = CURIOSIDADES_PARCIAL[e.idxParcial % CURIOSIDADES_PARCIAL.length];
+        e.idxParcial = (e.idxParcial + 1) % CURIOSIDADES_PARCIAL.length;
+        return texto;
+    }
     if (!CURIOSIDADES.length) return '';
     const texto = CURIOSIDADES[e.idx % CURIOSIDADES.length];
     e.idx = (e.idx + 1) % CURIOSIDADES.length;
@@ -180,14 +227,18 @@ function reset(jid) {
     try { _saveState(); } catch (_) {}
 }
 
-function buildCaption(curiosidade, prefix, botName) {
+function buildCaption(curiosidade, prefix, botName, opts = {}) {
     const p = prefix || '!';
+    // No parcial o !menu é bloqueado — sugere !statusp (bypass do parcial).
+    const parcial = !!opts.parcial;
     const lines = [
-        '💡 *VOCÊ SABIA?*',
+        parcial ? '🟡 *MODO PARCIAL — VOCÊ SABIA?*' : '💡 *VOCÊ SABIA?*',
         '',
         `_${curiosidade}_`,
         '',
-        `📖 Digite *${p}menu* para ver os comandos do *${botName || 'bot'}*`
+        parcial
+            ? `📖 Digite *${p}statusp* para ver a saúde do *${botName || 'bot'}*`
+            : `📖 Digite *${p}menu* para ver os comandos do *${botName || 'bot'}*`
     ];
     return lines.join('\n');
 }
@@ -196,9 +247,11 @@ async function sendSplash(sock, jid, { curiosidade, prefix, quoted } = {}) {
     const s = sock || sockRef;
     if (!s || !jid) return false;
     const cfg = _cfg();
+    // Modo parcial: pool filtrado + card amarelo (ignora o tema do grupo).
+    const parcial = isPartialSplashJid(jid);
     const text = curiosidade || pickNext(jid);
     if (!text) return false;
-    const caption = buildCaption(text, prefix || cfg.prefix, cfg.botName);
+    const caption = buildCaption(text, prefix || cfg.prefix, cfg.botName, { parcial });
 
     if (withImage()) {
         try {
@@ -209,6 +262,7 @@ async function sendSplash(sock, jid, { curiosidade, prefix, quoted } = {}) {
             let memberLabel = '';
             let avatarRaw = null;
             let theme = null;
+            let noCover = false;
             try {
                 const meta = await utils.groupMetadataCached(s, jid).catch(() => null);
                 if (meta?.subject) groupName = meta.subject;
@@ -216,20 +270,28 @@ async function sendSplash(sock, jid, { curiosidade, prefix, quoted } = {}) {
                 if (n > 0) memberLabel = `${n} membros`;
             } catch (_) {}
             try { avatarRaw = await getRawGroupBuffer(s, jid).catch(() => null); } catch (_) { avatarRaw = null; }
-            try {
-                const themeId = typeof utils.getThemeForJid === 'function' ? utils.getThemeForJid(jid) : 'default';
-                theme = getTheme(themeId);
-            } catch (_) { theme = null; }
+            if (parcial) {
+                // Card amarelo sólido (sem foto de fundo/véu escuro) + texto escuro:
+                // garante legibilidade do amarelo.
+                theme = SPLASH_PARCIAL_THEME;
+                noCover = true;
+            } else {
+                try {
+                    const themeId = typeof utils.getThemeForJid === 'function' ? utils.getThemeForJid(jid) : 'default';
+                    theme = getTheme(themeId);
+                } catch (_) { theme = null; }
+            }
             const card = await generateMenuImage({
-                title: 'VOCÊ SABIA?',
-                headerEmoji: '💡',
+                title: parcial ? 'MODO PARCIAL' : 'VOCÊ SABIA?',
+                headerEmoji: parcial ? '🟡' : '💡',
                 groupName,
                 memberLabel,
                 tagline: String(text).slice(0, 90),
-                footer: 'SPLASH DO BOT',
-                badge: 'DICA',
+                footer: parcial ? 'SPLASH PARCIAL' : 'SPLASH DO BOT',
+                badge: parcial ? 'PARCIAL' : 'DICA',
                 theme,
-                avatarRaw
+                avatarRaw,
+                noCover
             });
             if (card) {
                 await s.sendMessage(jid, { image: card, caption }, quoted ? { quoted } : {});
@@ -305,5 +367,8 @@ module.exports = {
     SIX_HOURS_MS,
     MAX_COOLDOWN_MS,
     MIN_MESSAGES,
+    CURIOSIDADES_PARCIAL,
+    SPLASH_PARCIAL_THEME,
+    isPartialSplashJid,
     _counters: counters
 };
