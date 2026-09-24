@@ -18,6 +18,7 @@ const { runYtDlp: _coreRunYtDlp, buildYtDlpArgs: _coreBuildYtDlpArgs } = require
 
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+const { withChannelContext } = require('../services/channelPromo');
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 function hasCookies() { return fs.existsSync(cookiesPath); }
@@ -248,10 +249,12 @@ async function sendMedia(sock, from, m, filePath, title) {
     })();
 
     const fileName = (title ? title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) : 'media') + ext;
+    let channelCfg = null;
+    try { channelCfg = require('../database/utils').readConfig(); } catch (_) { channelCfg = null; }
 
     // Envio serializado pela fila global + retry/backoff em rate-limit (429)
     const send = (payload) => enqueueSend(() =>
-        sendMessageSafe(sock, from, payload, { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 })
+        sendMessageSafe(sock, from, withChannelContext(payload, channelCfg), { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 })
     );
 
     if (mime.startsWith('video/')) {

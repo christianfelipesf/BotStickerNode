@@ -38,6 +38,7 @@ const {
     getGroupData
 } = require('../database/utils');
 const stickerLog = (()=>{ try{ return require('../services/stickerLog'); }catch(_){ return null; } })();
+const { withChannelContext } = require('../services/channelPromo');
 
 function isLidJid(jid) { return typeof jid === 'string' && jid.endsWith('@lid'); }
 function resolveDisplayNum(jid, fallbackPn) {
@@ -130,7 +131,8 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
                 `│ 🤖 *Por:* ${botNameForReveal}\n` +
                 `╰───────────────`;
         }
-        const opts = { mentions: [sender], quoted: m };
+        const revealConfig = explicitOpts.config || null;
+        const opts = { quoted: m };
 
         const dashboardOn = isDashboardEnabled(from);
         const groupMetadata = from.endsWith('@g.us') ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' })) : { subject: 'Privado' };
@@ -153,9 +155,9 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
             require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, phoneReveal, mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
         }
 
-        if (isAudio) await sock.sendMessage(from, { audio: buffer, mimetype: 'audio/mp4', ptt: true }, opts);
-        else if (isVideo) await sock.sendMessage(from, { video: buffer, caption: revealCaption }, opts);
-        else await sock.sendMessage(from, { image: buffer, caption: revealCaption }, opts);
+        if (isAudio) await sock.sendMessage(from, withChannelContext({ audio: buffer, mimetype: 'audio/mp4', ptt: true, mentions: [sender] }, revealConfig), opts);
+        else if (isVideo) await sock.sendMessage(from, withChannelContext({ video: buffer, caption: revealCaption, mentions: [sender] }, revealConfig), opts);
+        else await sock.sendMessage(from, withChannelContext({ image: buffer, caption: revealCaption, mentions: [sender] }, revealConfig), opts);
 
         return await reactStatus(sock, m, from, true, '🔓', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     } catch (error) {
@@ -298,14 +300,14 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 console.log(`[STICKER-LOG] handleMediaCommand toimg isAnimated=${!!mediaMessage.stickerMessage.isAnimated} quotedBuffer=${buffer.length} bytes`);
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
                 console.log(`[STICKER-LOG] handleMediaCommand toimg converted mime=${converted.mime} bytes=${converted.buffer.length}`);
-                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, { quoted: m });
+                await sock.sendMessage(from, withChannelContext({ [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, config), { quoted: m });
             } else {
-                await sock.sendMessage(from, { [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: captionConvertido }, { quoted: m });
+                await sock.sendMessage(from, withChannelContext({ [mediaMessage.imageMessage ? 'image' : 'video']: buffer, caption: captionConvertido }, config), { quoted: m });
             }
         } else if (action === 'sticker') {
             if (isSticker) {
                 const converted = await stickerToMedia(buffer, !!mediaMessage.stickerMessage.isAnimated);
-                await sock.sendMessage(from, { [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, { quoted: m });
+                await sock.sendMessage(from, withChannelContext({ [converted.mime.startsWith('image/') ? 'image' : 'video']: converted.buffer, caption: captionConvertido }, config), { quoted: m });
             } else {
                 const detectedMime = mediaMessage.videoMessage
                     ? (mediaMessage.videoMessage.mimetype || 'video/mp4')
@@ -370,7 +372,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                     if (header && (header.slice(0, 4).toString() !== 'RIFF' || header.slice(8, 12).toString() !== 'WEBP')) {
                         throw new Error('Sticker gerado inválido');
                     }
-                    await sock.sendMessage(from, { sticker: stickerBuffer }, { quoted: m });
+                    await sock.sendMessage(from, withChannelContext({ sticker: stickerBuffer }, config), { quoted: m });
                     return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
                 } catch (stickerErr) {
                     _stickerError = stickerErr.message;
@@ -415,15 +417,15 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 else await sock.sendMessage(from, { text: `❌ Falha ao converter para GIF: ${msg.slice(0,120)}` }, { quoted: m });
                 throw e;
             }
-            await sock.sendMessage(from, { video: gifVideo, gifPlayback: true, mimetype: 'video/mp4', caption: captionConvertido }, { quoted: m });
+            await sock.sendMessage(from, withChannelContext({ video: gifVideo, gifPlayback: true, mimetype: 'video/mp4', caption: captionConvertido }, config), { quoted: m });
         } else if (action === 'speed') {
             if (!mediaMessage.videoMessage && !mediaMessage.audioMessage) {
                 await sock.sendMessage(from, { text: '❌ Marque um vídeo ou áudio.' }, { quoted: m });
                 return lastBotResponse;
             }
             const processed = await changeSpeed(buffer, mediaMessage.videoMessage ? 'video/mp4' : 'audio/mp4', speed);
-            if (mediaMessage.videoMessage) await sock.sendMessage(from, { video: processed, caption: captionConvertido }, { quoted: m });
-            else await sock.sendMessage(from, { audio: processed, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
+            if (mediaMessage.videoMessage) await sock.sendMessage(from, withChannelContext({ video: processed, caption: captionConvertido }, config), { quoted: m });
+            else await sock.sendMessage(from, withChannelContext({ audio: processed, mimetype: 'audio/ogg; codecs=opus', ptt: true }, config), { quoted: m });
         }
 
         return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);

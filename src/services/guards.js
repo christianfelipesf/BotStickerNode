@@ -5,13 +5,23 @@ function normalizeJidSafe(jid) {
 }
 
 function isBotOwner(sock, m, sender) {
-    const meId = normalizeJidSafe(sock?.user?.id);
-    const senderNorm = normalizeJidSafe(sender);
-    return m?.key?.fromMe === true || sender === meId || senderNorm === meId;
+    try { return utils.isBotOwner(sock, m, sender); } catch (_) {
+        const meId = normalizeJidSafe(sock?.user?.id);
+        const senderNorm = normalizeJidSafe(sender);
+        return m?.key?.fromMe === true || sender === meId || senderNorm === meId;
+    }
+}
+
+// Sub-dono ou dono: pode configurar variáveis do bot (!set, !config...).
+function canConfigureBot(sock, m, sender, from) {
+    try { return utils.canConfigureBot(sock, m, sender, from); } catch (_) {
+        return { ok: isBotOwner(sock, m, sender), owner: isBotOwner(sock, m, sender), sub: false };
+    }
 }
 
 async function requireOwner(sock, m, sender, from) {
     if (isBotOwner(sock, m, sender)) return { ok: true };
+    try { if (utils.canConfigureBot(sock, m, sender, from).ok) return { ok: true }; } catch (_) {}
     if (utils.canAdminControl()) {
         try {
             const admins = await utils.getAdmins(sock, from);
@@ -48,4 +58,4 @@ function getTargetText(args, m, utilsRef) {
     return text;
 }
 
-module.exports = { isBotOwner, requireOwner, requireAdmin, requireBotAdmin, getTargetText };
+module.exports = { isBotOwner, canConfigureBot, requireOwner, requireAdmin, requireBotAdmin, getTargetText };

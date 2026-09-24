@@ -5,12 +5,12 @@ module.exports = {
     async execute(sock, m, { from, sender, args, config, utils, ai, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, writeConfig, readConfig } = utils;
         const { setupAI } = ai;
-        
-        const meId = utils.normalizeJid(sock.user.id);
-        const senderNorm = utils.normalizeJid(sender);
-        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
-        if (!isBotOwner) {
-            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+
+        const access = typeof utils.canConfigureBot === 'function'
+            ? utils.canConfigureBot(sock, m, sender, from)
+            : { ok: (() => { const meId = utils.normalizeJid(sock.user.id); const senderNorm = utils.normalizeJid(sender); return m.key.fromMe === true || sender === meId || senderNorm === meId; })() };
+        if (!access.ok) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono ou sub-donos podem usar este comando.' }, { quoted: m });
         }
         
         const rawP = args[0];
@@ -63,7 +63,7 @@ module.exports = {
                 return typeof val;
             };
 
-            const allKeys = Object.keys(defaults).sort();
+            const allKeys = Object.keys(defaults).filter(k => k !== 'subOwners').sort();
             const lines = [`⚙️ *Configurações editáveis (${allKeys.length})*`, ''];
             for (const k of allKeys) {
                 const def = defaults[k];
@@ -80,6 +80,13 @@ module.exports = {
             lines.push(`Ex.: \`${config.prefix}set botName Gravity Bot🪐\``);
             lines.push(`Veja o valor atual: \`${config.prefix}set <parâmetro>\` (sem valor)`);
             await sock.sendMessage(from, { text: lines.join('\n') }, { quoted: m });
+            return lastBotResponse;
+        }
+
+        // subOwners NÃO é editável via !set (evita escalação por sub-dono).
+        // Use !addsubdono / !remsubdono / !listsubdonos (só o dono real).
+        if (p === 'subOwners' || String(p || '').toLowerCase() === 'subowners') {
+            await sock.sendMessage(from, { text: `👑 *Sub-donos* só pelo dono via:\n➕ \`${config.prefix}addsubdono <numero>\`\n➖ \`${config.prefix}remsubdono <numero>\`\n📋 \`${config.prefix}listsubdonos\`` }, { quoted: m });
             return lastBotResponse;
         }
 

@@ -1,5 +1,6 @@
 const { synthesize } = require('../services/tts');
 const fs = require('fs');
+const { withChannelContext } = require('../services/channelPromo');
 
 module.exports = {
     name: 'tts',
@@ -49,12 +50,14 @@ module.exports = {
         try {
             const audioPath = await synthesize(text);
             const audioBuffer = fs.readFileSync(audioPath);
+            let channelCfg = null;
+            try { channelCfg = require('../database/utils').readConfig(); } catch (_) {}
 
-            await sock.sendMessage(from, { 
-                audio: audioBuffer, 
-                mimetype: 'audio/ogg; codecs=opus', 
-                ptt: true 
-            }, { quoted: messageToReply }); // Aqui respondemos à mensagem correta
+            await sock.sendMessage(from, withChannelContext({
+                audio: audioBuffer,
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true
+            }, channelCfg), { quoted: messageToReply }); // Aqui respondemos à mensagem correta
 
             // Deletar arquivo temporário
             fs.unlinkSync(audioPath);

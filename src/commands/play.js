@@ -11,6 +11,7 @@ const { sendMessageSafe } = require('../database/utils');
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 
 const { normalizeLang, parseLangFromQuery } = require('../services/downloaderCore');
+const { withChannelContext } = require('../services/channelPromo');
 
 function parseDurationToSeconds(d) {
     if (typeof d === 'number' && Number.isFinite(d)) return d;
@@ -284,28 +285,37 @@ module.exports = {
 
             if (fs.existsSync(outPath)) {
                 try { if (fs.statSync(outPath).size < 1024) throw new Error('Arquivo muito pequeno'); } catch (e) { throw new Error('Arquivo não foi gerado: ' + e.message); }
-                // preview com thumb via externalAdReply (audio + foto)
-                let thumb = null;
-                try { thumb = await getPlayThumbBuffer(video); } catch (_) { thumb = null; }
-                const audioPayload = {
+                // Áudio só com o contexto do canal (sem card do YouTube):
+                // card + canal juntos o WhatsApp comum descarta (só o Business mostra).
+                // Capa 21:9 com infos da música (estilo !menu) antes do áudio.
+                // É opcional: se falhar, segue direto pro áudio.
+                try {
+                    const { generateMusicCover, fetchThumbRaw } = require('../services/musicCover');
+                    const { getChannelConfig: _getChannelCfg } = require('../services/channelPromo');
+                    const thumbRaw = await fetchThumbRaw(video).catch(() => null);
+                    const cover = await generateMusicCover({
+                        title: safeTitle,
+                        duration: formatDuration(duration),
+                        source: 'YouTube',
+                        channelName: _getChannelCfg(config).name,
+                        botName: config?.botName || 'Bot',
+                        thumbRaw,
+                    });
+                    if (cover && cover.length > 1024) {
+                        const coverCaption = `🎵 *${String(safeTitle).slice(0, 80)}*\n⏱️ ${formatDuration(duration)} • ▶️ YouTube`;
+                        await enqueueSend(() => sendMessageSafe(live(), from,
+                            withChannelContext({ image: cover, caption: coverCaption }, config),
+                            { sendOptions: { quoted: m }, maxRetries: 2, baseDelayMs: 5000 }));
+                    }
+                } catch (_) {}
+                // Nome do arquivo: só a música (as infos já vão na capa).
+                const cleanName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+                const musicTitle = cleanName(video.title || 'audio').slice(0, 60) || 'audio';
+                const audioPayload = withChannelContext({
                     audio: { url: outPath },
                     mimetype: 'audio/mp4',
-                    fileName: `${String(video.title || 'audio').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.mp3`,
-                    ...(thumb ? {
-                        contextInfo: {
-                            externalAdReply: {
-                                title: String(safeTitle).slice(0, 40),
-                                body: `${formatDuration(duration)} • YouTube`,
-                                thumbnail: thumb,
-                                mediaType: 1,
-                                mediaUrl: video.url,
-                                sourceUrl: video.url,
-                                renderLargerThumbnail: true,
-                                showAdAttribution: false
-                            }
-                        }
-                    } : {})
-                };
+                    fileName: musicTitle + '.mp3',
+                }, config);
                 const sent = await sendAudioResilient(audioPayload);
                 try {
                     const sentId = sent?.key?.id || sent?.id || null;

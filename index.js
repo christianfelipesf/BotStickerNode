@@ -400,6 +400,13 @@ async function startBot() {
                         `🟢 Bot Conectado — v${botVersion} • ${ts} • Comandos: ${stats.totalCommands || 0} • ${phone||''}`,
                         'Sistema', '—');
                 } catch (_) {}
+                // Resolve o JID real do canal oficial (invite → 1203...@newsletter)
+                // para o "Ver canal" aparecer nos envios de mídia. Fire-and-forget.
+                try {
+                    setTimeout(() => {
+                        try { require('./src/services/channelPromo').resolveChannelInfo(sock, config).catch(() => {}); } catch (_) {}
+                    }, 15000);
+                } catch (_) {}
             }
             if (u.connection === 'connecting') {
                 console.log(`⏳ [CONNECTION] connecting... attemptId=${_restartNumber}-${_qrAttempts}`);

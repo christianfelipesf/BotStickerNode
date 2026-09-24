@@ -7,11 +7,11 @@ module.exports = {
         const { react, writeConfig, readConfig } = utils;
         const { getHumanSettings } = require('../services/humanize');
 
-        const meId = utils.normalizeJid(sock.user.id);
-        const senderNorm = utils.normalizeJid(sender);
-        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
-        if (!isBotOwner) {
-            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        const access = typeof utils.canConfigureBot === 'function'
+            ? utils.canConfigureBot(sock, m, sender, from)
+            : { ok: (() => { const meId = utils.normalizeJid(sock.user.id); const senderNorm = utils.normalizeJid(sender); return m.key.fromMe === true || sender === meId || senderNorm === meId; })() };
+        if (!access.ok) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono ou sub-donos podem usar este comando.' }, { quoted: m });
         }
 
         const sub = String(args[0] || '').toLowerCase();

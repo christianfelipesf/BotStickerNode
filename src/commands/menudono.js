@@ -11,12 +11,26 @@ module.exports = {
         const meId = normalizeJid(sock.user?.id || '');
         const senderNorm = normalizeJid(sender);
         const isOwner = m.key.fromMe || sender === meId || senderNorm === meId;
+        const subAccess = !isOwner && typeof utils.canConfigureBot === 'function'
+            ? utils.canConfigureBot(sock, m, sender, from)
+            : { ok: isOwner };
+        const isSub = !isOwner && subAccess.ok;
 
-        if (!isOwner) {
+        if (!isOwner && !isSub) {
             return sock.sendMessage(from, { text: '❌ Apenas o *dono do bot* pode usar este comando.' }, { quoted: m });
         }
 
-        const text = `*${botName} — Menu Dono* 👑\n_comandos ocultos do !menu_\n\n` +
+        const text = `*${botName} — Menu Dono* 👑\n_comandos ocultos do !menu_${isSub ? '\n👤 _você é sub-dono: pode usar !set / !config / !setprefix_' : ''}\n\n` +
+            `╭─── *CONFIG (dono + sub-dono)* ───\n` +
+            `│ 🔧 *${p}set* <param> <valor> — variáveis do bot\n` +
+            `│ ⚙️ *${p}config* — ver configs\n` +
+            `│ ⌨️ *${p}setprefix* <prefix> — prefixo global\n` +
+            `╰───────────────\n\n` +
+            `╭─── *SUB-DONOS (só dono)* ───\n` +
+            `│ ➕ *${p}addsubdono* <numero> — autoriza sub-dono\n` +
+            `│ ➖ *${p}remsubdono* <numero|all> — remove sub-dono\n` +
+            `│ 📋 *${p}listsubdonos* — lista sub-donos\n` +
+            `╰───────────────\n\n` +
             `╭─── *ATIVAÇÃO* ───\n` +
             `│ ✅ *${p}ativar* / *${p}desativar* — liga/desliga bot no grupo\n` +
             `│ ⚙️ *${p}ativarp* / *${p}desativarp* — modo parcial (mídia + interação + tts, 10s, sem moderação)\n` +

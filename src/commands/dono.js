@@ -16,7 +16,8 @@ module.exports = {
             const text = `👑 *Dono do Bot*\n\n` +
                 `📱 *Número:* +${num}\n` +
                 `🔗 *Link:* ${waLink}\n` +
-                `🤖 *Bot:* ${raw || '—'}`;
+                `🤖 *Bot:* ${raw || '—'}` +
+                (() => { try { const subs = utils.getSubOwners ? utils.getSubOwners() : []; return subs.length ? `\n\n👤 *Sub-dono(s) (${subs.length}):*\n${subs.map(s => `• +${s}`).join('\n')}` : ''; } catch (_) { return ''; } })();
 
             await sock.sendMessage(from, {
                 text,

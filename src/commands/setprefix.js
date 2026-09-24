@@ -66,12 +66,14 @@ module.exports = {
             return currentBotResponse;
         }
 
-        // === Privado / não-grupo: altera prefixo global (só dono) ===
+        // === Privado / não-grupo: altera prefixo global (dono + sub-dono) ===
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
-        const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
-        if (!isBotOwner) {
-            return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode alterar o prefixo global.' }, { quoted: m });
+        const cfgAccess = typeof utils.canConfigureBot === 'function'
+            ? utils.canConfigureBot(sock, m, sender, from)
+            : { ok: m.key.fromMe === true || sender === meId || senderNorm === meId };
+        if (!cfgAccess.ok) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono ou sub-donos podem alterar o prefixo global.' }, { quoted: m });
         }
 
         const newPrefix = (args[0] || '').trim();

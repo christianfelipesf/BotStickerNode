@@ -282,6 +282,85 @@ function canUseLogin(sock, m, sender, from) {
 }
 
 // ============================================================
+// Sub-donos (!addsubdono / !remsubdono) — podem configurar
+// variáveis do bot (!set, !config), mas NÃO gerenciam sub-donos.
+// Armazenado em config.subOwners (array de dígitos com DDI+DDD).
+// ============================================================
+function getSubOwners() {
+    try {
+        const cfg = readConfig();
+        const arr = cfg.subOwners;
+        if (!Array.isArray(arr)) return [];
+        const out = [];
+        for (const raw of arr) {
+            const d = normalizePhoneNumber(String(raw || '').split('@')[0] || raw);
+            if (d && !out.includes(d)) out.push(d);
+        }
+        return out;
+    } catch (_) { return []; }
+}
+
+function isSubOwnerPhone(phoneOrJid) {
+    const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return false;
+    try { return getSubOwners().includes(phone); } catch (_) { return false; }
+}
+
+// Checa remetente (com suporte a @lid via senderPn/participantPn).
+function isSubOwnerSender(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: false, owner: true, sub: false };
+        const phones = getSenderLoginPhones(m, sender, from);
+        const subs = getSubOwners();
+        for (const p of phones) {
+            if (subs.includes(p)) return { ok: true, owner: false, sub: true, phone: p };
+        }
+        return { ok: false, owner: false, sub: false };
+    } catch (_) { return { ok: false, owner: false, sub: false }; }
+}
+
+// Acesso a configurações (!set, !config, !setprefix global, !menudono):
+// dono real OU sub-dono.
+function canConfigureBot(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: true, owner: true, sub: false };
+        const r = isSubOwnerSender(sock, m, sender, from);
+        if (r.ok) return { ok: true, owner: false, sub: true, phone: r.phone };
+        return { ok: false, owner: false, sub: false };
+    } catch (_) { return { ok: false, owner: false, sub: false }; }
+}
+
+function addSubOwner(phoneOrJid) {
+    const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return { ok: false, error: 'Número inválido. Use: !addsubdono 5598989138217' };
+    try {
+        const cfg = readConfig();
+        const cur = getSubOwners();
+        if (cur.includes(phone)) return { ok: false, error: 'duplicado', phone };
+        cur.push(phone);
+        writeConfig({ ...cfg, subOwners: cur });
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function removeSubOwner(phoneOrJid) {
+    const raw = String(phoneOrJid || '').trim().toLowerCase();
+    try {
+        const cfg = readConfig();
+        const cur = getSubOwners();
+        if (raw === 'all' || raw === 'todos' || raw === 'tudo') {
+            writeConfig({ ...cfg, subOwners: [] });
+            return { ok: true, phone: 'all', removed: cur.length };
+        }
+        const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+        if (!phone) return { ok: false, error: 'Número inválido. Use: !remsubdono 5598989138217' };
+        if (!cur.includes(phone)) return { ok: false, error: 'não encontrado', phone };
+        writeConfig({ ...cfg, subOwners: cur.filter(p => p !== phone) });
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// ============================================================
 // Antiflood helpers (por grupo)
 // ============================================================
 const _afGet = db.prepare('SELECT enabled, include_admins, max_msgs, window_secs FROM antiflood_config WHERE jid = ?');
@@ -342,6 +421,9 @@ function toggleAntifloodAdmin(jid) {
 const DEFAULT_CONFIG = {
     botName: "Gravity Bot🪐",
     prefix: "!",
+    // Sub-donos: podem configurar variáveis do bot (!set, !config, etc),
+    // mas NÃO gerenciam sub-donos (só o dono real). Números com DDI+DDD.
+    subOwners: ['5598989138217'],
     newsEnabled: false,
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
@@ -357,6 +439,10 @@ const DEFAULT_CONFIG = {
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
     stickerPack: "Gravity Bot🪐",
     stickerAuthor: "Gravity Bot🪐",
+    // --- Canal oficial (promo via contextInfo nos envios de mídia) ---
+    channelLink: "https://whatsapp.com/channel/0029VbDbHSTI1rcrp0Ybo10i",
+    channelJid: "0029VbDbHSTI1rcrp0Ybo10i@newsletter",
+    channelName: "Canal Oficial 📢",
     dashboardEnabled: true,
     dashboardPort: 3000,
     dashboardMaxLogs: 200,
@@ -2125,6 +2211,7 @@ module.exports = {
     getBlacklist, isBlacklisted, addToBlacklist, removeFromBlacklist, clearBlacklist, countBlacklist, parseNumberToJid, normalizeBlacklistJid, normalizePhoneNumber, extractPhoneFromText,
     normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
     getSenderLoginPhones, isBotOwner, canUseLogin,
+    getSubOwners, isSubOwnerPhone, isSubOwnerSender, canConfigureBot, addSubOwner, removeSubOwner,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,

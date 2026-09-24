@@ -6,13 +6,16 @@ module.exports = {
     category: 'admin',
     description: 'Liga/desliga o log de mensagens do grupo no painel (independente de !ativar)',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, isDashboardEnabled, setDashboardEnabled, getAdmins, isUserAdmin, normalizeJid, canAdminControl } = utils;
+        const { react, isDashboardEnabled, setDashboardEnabled, getAdmins, isUserAdmin, normalizeJid, canAdminControl, canConfigureBot } = utils;
 
         const meId = utils.normalizeJid(sock.user.id);
         const senderNorm = utils.normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
         let allowed = isBotOwner;
+        if (!allowed && typeof canConfigureBot === 'function') {
+            try { if (canConfigureBot(sock, m, sender, from).ok) allowed = true; } catch (_) {}
+        }
         if (!allowed && canAdminControl()) {
             try {
                 const adminsRaw = await getAdmins(sock, from);
@@ -22,8 +25,8 @@ module.exports = {
 
         if (!allowed) {
             const msg = canAdminControl() && isGroup
-                ? '❌ Apenas o dono do bot ou admins do grupo podem ativar/desativar o log no painel.'
-                : '❌ Apenas o dono do bot pode ativar/desativar o log no painel.';
+                ? '❌ Apenas o dono, sub-donos ou admins do grupo podem ativar/desativar o log no painel.'
+                : '❌ Apenas o dono ou sub-donos podem ativar/desativar o log no painel.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 

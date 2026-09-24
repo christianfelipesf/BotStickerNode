@@ -5,6 +5,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const axios = require('axios');
 const { addMetadata } = require('../database/sticker');
 const { tempDir } = require('../database/db');
+const { withChannelContext } = require('../services/channelPromo');
 
 const FONT_DIR = path.join(process.cwd(), 'fonts');
 const FONT_PATH = path.join(FONT_DIR, 'DejaVuSans.ttf');
@@ -157,7 +158,9 @@ module.exports = {
 
         try {
             const sticker = await makeGlowSticker(text);
-            await sock.sendMessage(from, { sticker }, { quoted: m });
+            let channelCfg = null;
+            try { channelCfg = require('../database/utils').readConfig(); } catch (_) {}
+            await sock.sendMessage(from, withChannelContext({ sticker }, channelCfg), { quoted: m });
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (error) {
             console.error('❌ [STEXTO] Erro:', error.message);
