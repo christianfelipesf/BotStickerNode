@@ -42,7 +42,7 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 
 describe('news service', () => {
     it('exporta helpers puros para teste', () => {
-        for (const fn of ['pollOnce', 'start', 'stop', 'parseRssItems', 'buildCaption', 'normalizeSubreddit', 'dedupeSubreddits', 'normalizeMediaUrl', 'parseIntervalMs', 'resolvePollMs', 'coerceMime']) {
+        for (const fn of ['pollOnce', 'start', 'stop', 'parseRssItems', 'buildCaption', 'normalizeSubreddit', 'dedupeSubreddits', 'normalizeMediaUrl', 'parseIntervalMs', 'resolvePollMs', 'coerceMime', 'extractHlsPlaylist']) {
             assert.strictEqual(typeof news[fn], 'function', fn);
         }
     });
@@ -108,5 +108,12 @@ describe('news service', () => {
         assert.strictEqual(news.coerceMime('application/octet-stream', 'video', 'video/mp4'), 'video/mp4');
         assert.strictEqual(news.coerceMime('', 'image', 'image/jpeg'), 'image/jpeg');
         assert.strictEqual(news.coerceMime('image/png; charset=utf-8', 'image', 'image/jpeg'), 'image/png');
+    });
+
+    it('extractHlsPlaylist acha a master do embed e ignora resto', () => {
+        const html = '<html><script>\\"https://v.redd.it/ol1v5v0wkvrh1/HLSPlaylist.m3u8?f=sd\\",\\"https://v.redd.it/ol1v5v0wkvrh1/CMAF_96.mp4\\"</script></html>';
+        assert.strictEqual(news.extractHlsPlaylist(html), 'https://v.redd.it/ol1v5v0wkvrh1/HLSPlaylist.m3u8?f=sd');
+        assert.strictEqual(news.extractHlsPlaylist('<html>sem video</html>'), null);
+        assert.strictEqual(news.extractHlsPlaylist(''), null);
     });
 });

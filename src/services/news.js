@@ -284,7 +284,8 @@ function extractSelftext(body) {
     return text;
 }
 
-let _rateLimitedUntil = 0;
+let _rateLimitedUntil = 0; // feed do Reddit (429 no RSS): pausa COLETAS, não envios
+let _sendLimitedUntil = 0; // envios WhatsApp (erros rate/overlimit/429 do Baileys): pausa ENVIOS
 let _isPolling = false; // trava anti-concorrência para pollOnce
 const _subCooldownUntil = new Map();
 const _subConsecutiveRateLimits = new Map();
@@ -354,6 +355,97 @@ async function fetchVideoFromJson(postId, userAgent) {
         }
     }
     newsErrOnce(`json-no-video:${postId}`, `JSON API: nenhum endpoint/UA retornou vídeo para ${postId}.`);
+    return null;
+}
+
+// Extrai a URL da playlist HLS master do HTML da página de embed do post.
+// Ex.: https://v.redd.it/ol1v5v0wkvrh1/HLSPlaylist.m3u8?f=sd
+function extractHlsPlaylist(html) {
+    if (!html) return null;
+    const m = String(html).match(/https?:\/\/v\.redd\.it\/[A-Za-z0-9]+\/HLSPlaylist\.m3u8(?:\?[^\s"'<>\\]*)?/);
+    return m ? m[0] : null;
+}
+
+// Plano B para vídeos v.redd.it quando a JSON API está bloqueada (403):
+// a página de embed (embed.reddit.com) continua pública e contém a playlist
+// HLS do vídeo. Precisa do `sub` porque /comments/{id}/ sem sub não resolve.
+async function fetchHlsPlaylistUrl(sub, postId, userAgent) {
+    if (!sub || !postId) return null;
+    try {
+        const url = `https://embed.reddit.com/r/${encodeURIComponent(sub)}/comments/${encodeURIComponent(postId)}/?embed=true`;
+        const res = await axios.get(url, {
+            timeout: HTTP_TIMEOUT_MS,
+            headers: {
+                'User-Agent': buildHeaders(userAgent)['User-Agent'],
+                'Accept': 'text/html,*/*',
+                'Referer': 'https://www.reddit.com/'
+            },
+            responseType: 'text',
+            validateStatus: () => true,
+            transformResponse: [(data) => data]
+        });
+        if (res.status !== 200 || !res.data) return null;
+        return extractHlsPlaylist(String(res.data));
+    } catch (_) {
+        return null;
+    }
+}
+
+// Baixa a playlist HLS (com áudio) via ffmpeg com stream-copy (sem re-encode)
+// e devolve o buffer MP4. Devolve null se falhar/estourar limite.
+async function remuxHlsToMp4(playlistUrl, userAgent, timeoutMs = 150 * 1000) {
+    if (!playlistUrl) return null;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const outPath = path.join(os.tmpdir(), `news_hls_${id}.mp4`);
+    try {
+        await new Promise((resolve, reject) => {
+            let done = false;
+            const finish = (err) => { if (!done) { done = true; err ? reject(err) : resolve(); } };
+            let ff = null;
+            const to = setTimeout(() => { try { ff && ff.kill('SIGKILL'); } catch (_) {} finish(new Error('ffmpeg HLS timeout')); }, timeoutMs);
+            const ua = String(userAgent || buildHeaders()['User-Agent']);
+            ff = spawn('ffmpeg', [
+                '-y',
+                '-v', 'error',
+                '-user_agent', ua,
+                '-headers', 'Referer: https://embed.reddit.com/',
+                '-rw_timeout', '20000000',
+                '-i', String(playlistUrl),
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                outPath
+            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ff.on('error', (err) => { clearTimeout(to); finish(err); });
+            ff.on('close', (code) => { clearTimeout(to); code === 0 ? finish() : finish(new Error(`ffmpeg HLS exit ${code}`)); });
+        });
+        const buf = fs.readFileSync(outPath);
+        if (!buf || buf.length === 0) return null;
+        if (buf.length > MEDIA_MAX_BYTES) {
+            newsErr(`HLS remux com ${Math.round(buf.length / 1048576)}MB (>${MEDIA_MAX_BYTES / 1048576}MB) — descartado.`);
+            return null;
+        }
+        return buf;
+    } catch (e) {
+        newsErr(`remux HLS→MP4 falhou:`, e?.message || e);
+        return null;
+    } finally {
+        try { fs.unlinkSync(outPath); } catch (_) {}
+    }
+}
+
+// Resolve o MP4 de um post v.redd.it. Ordem: JSON API (rápido, sem áudio) →
+// página de embed + remux HLS via ffmpeg (lento, COM áudio). Devolve
+// { url } ou { buffer } ou null.
+async function resolveRedditVideo(sub, postId, userAgent) {
+    if (!postId) return null;
+    const vUrl = await fetchVideoFromJson(postId, userAgent);
+    if (vUrl && isVideoUrl(vUrl)) return { url: vUrl };
+    const hls = await fetchHlsPlaylistUrl(sub, postId, userAgent);
+    if (hls) {
+        newsLog(`r/${sub}: playlist HLS encontrada para ${postId} — baixando via ffmpeg.`);
+        const buf = await remuxHlsToMp4(hls, userAgent);
+        if (buf) return { buffer: buf };
+    }
     return null;
 }
 
@@ -570,25 +662,36 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     };
 
     await new Promise(resolve => setImmediate(resolve));
-    if (Date.now() < _rateLimitedUntil) {
-        newsLog(`pulando envio para ${jid} (rate-limit global ativo).`);
+    if (Date.now() < _sendLimitedUntil) {
+        newsLog(`pulando envio para ${jid} (rate-limit de envio ativo).`);
         return;
     }
 
-    // Se é post de vídeo mas não temos URL direta, busca via JSON API.
+    // Se é post de vídeo mas não temos URL direta, resolve via JSON API e,
+    // se bloqueada, via página de embed + remux HLS (com áudio).
     // (post.isVideoPost OU media.isVideoPost — `isVideoPost` é colocado dentro
     // de media pelo extractMedia.)
     if (isVideoPostFlag && post.id) {
-        if (!media.video || !isVideoUrl(media.video)) {
-            const vUrl = await fetchVideoFromJson(post.id, cfg.newsUserAgent);
-            if (vUrl) {
-                media.video = vUrl;
+        if ((!media.video || !isVideoUrl(media.video)) && !media.videoBuffer) {
+            const resolved = await resolveRedditVideo(sub, post.id, cfg.newsUserAgent);
+            if (resolved && resolved.url) {
+                media.video = resolved.url;
                 newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
+            } else if (resolved && resolved.buffer) {
+                media.videoBuffer = resolved.buffer;
+                newsLog(`r/${sub}: vídeo obtido via HLS (${Math.round(resolved.buffer.length / 1024)}KB).`);
             } else {
-                newsErrOnce(`json-fail:${post.id}`, `r/${sub}: post ${post.id} marcado como vídeo mas JSON API não retornou URL. Marcado como problemático por 30min.`);
+                newsErrOnce(`json-fail:${post.id}`, `r/${sub}: post ${post.id} sem vídeo acessível (JSON + HLS falharam). Marcado como problemático por 30min.`);
                 markPostFailed(post.id);
             }
         }
+    }
+
+    // Buffer HLS (já com áudio) tem prioridade: evita baixar de novo por grupo.
+    if (media.videoBuffer && media.videoBuffer.length > 0) {
+        const payload = { video: media.videoBuffer, mimetype: 'video/mp4' };
+        if (caption) payload.caption = caption;
+        return await sendMessageSafe(sock, jid, payload, retryOpts);
     }
 
     if (media.video && isVideoUrl(media.video)) {
@@ -688,8 +791,8 @@ function scheduleProcessQueue() {
 async function processQueue() {
     try {
         while (!isShuttingDown && sendQueue.length > 0 && sockRef) {
-            if (Date.now() < _rateLimitedUntil) {
-                const wait = _rateLimitedUntil - Date.now();
+            if (Date.now() < _sendLimitedUntil) {
+                const wait = _sendLimitedUntil - Date.now();
                 newsLog(`fila pausada por rate-limit; aguardando ${Math.ceil(wait/1000)}s (${sendQueue.length} pendentes).`);
                 setTimeout(scheduleProcessQueue, wait + 1000);
                 break;
@@ -706,19 +809,19 @@ async function processQueue() {
             const showMeta = !!cfg.newsShowMeta;
             const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
 
-            if (Date.now() < _rateLimitedUntil) break;
+            if (Date.now() < _sendLimitedUntil) break;
 
             for (const jid of groups) {
                 if (isShuttingDown) break;
                 if (!isNewsEnabled(jid)) continue;
-                if (Date.now() < _rateLimitedUntil) break;
+                if (Date.now() < _sendLimitedUntil) break;
 
                 try {
                     await sendOne(sockRef, jid, post, sub, showMeta);
                 } catch (e) {
                     const msg = String(e?.message || e || '').toLowerCase();
                     if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
-                        _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+                        _sendLimitedUntil = Math.max(_sendLimitedUntil, Date.now() + 120 * 1000);
                         newsErr(`rate-limit em ${jid}; cooldown 120s.`);
                         break;
                     } else {
@@ -747,7 +850,7 @@ async function pollOnce() {
     try {
         if (Date.now() < _rateLimitedUntil) {
             const wait = Math.round((_rateLimitedUntil - Date.now()) / 1000);
-            newsLogOnce(`cooldown:${Math.round(wait / 60)}min`, `em cooldown (rate-limit) por mais ${wait}s — pulando poll.`);
+            newsLogOnce(`cooldown:${Math.round(wait / 60)}min`, `feed em cooldown (rate-limit do Reddit) por mais ${wait}s — pulando poll.`);
             return;
         }
 
@@ -838,15 +941,17 @@ async function pollOnce() {
             if (!latest.media) latest.media = {};
             const latestMedia = latest.media;
 
-            // Prefetch da URL do vídeo UMA vez por poll (não 1x por grupo
-            // dentro do sendOne). Nota: o flag mora em media.isVideoPost —
-            // `latest.isVideoPost` (nível do post) nunca existe e deixava
-            // este bloco morto.
-            if (latestMedia.isVideoPost && !latestMedia.video) {
-                const vUrl = await fetchVideoFromJson(latest.id, cfg.newsUserAgent);
-                if (vUrl) {
-                    latestMedia.video = vUrl;
+            // Prefetch do vídeo UMA vez por poll (não 1x por grupo dentro do
+            // sendOne): JSON API (rápido, sem áudio) → embed+HLS via ffmpeg
+            // (lento, COM áudio). O buffer HLS é reutilizado para todos os grupos.
+            if (latestMedia.isVideoPost && !latestMedia.video && !latestMedia.videoBuffer) {
+                const resolved = await resolveRedditVideo(sub, latest.id, cfg.newsUserAgent);
+                if (resolved && resolved.url) {
+                    latestMedia.video = resolved.url;
                     newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
+                } else if (resolved && resolved.buffer) {
+                    latestMedia.videoBuffer = resolved.buffer;
+                    newsLog(`r/${sub}: vídeo obtido via HLS (${Math.round(resolved.buffer.length / 1024)}KB).`);
                 }
             }
 
@@ -857,8 +962,8 @@ async function pollOnce() {
             for (const jid of groups) {
                 if (isShuttingDown) break;
                 if (!isNewsEnabled(jid)) continue;
-                if (Date.now() < _rateLimitedUntil) {
-                    newsLog(`envio pausado por rate-limit global.`);
+                if (Date.now() < _sendLimitedUntil) {
+                    newsLog(`envio pausado por rate-limit de envio.`);
                     break;
                 }
 
@@ -868,7 +973,7 @@ async function pollOnce() {
                 } catch (e) {
                     const msg = String(e?.message || e || '').toLowerCase();
                     if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
-                        _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + 120 * 1000);
+                        _sendLimitedUntil = Math.max(_sendLimitedUntil, Date.now() + 120 * 1000);
                         newsErr(`rate-limit em ${jid}; cooldown 120s.`);
                         break;
                     } else {
@@ -961,4 +1066,4 @@ function stop() {
     }
 }
 
-module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime };
+module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime, extractHlsPlaylist, resolveRedditVideo };
