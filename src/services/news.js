@@ -428,20 +428,52 @@ async function fetchSubredditFeed(sub, userAgent) {
     }
 }
 
+// Limites de download de mídia. Vídeos do Reddit passam fácil de 10MB;
+// com o teto antigo quase todo MP4 direto caía no fallback de thumbnail
+// (imagem estática). 64MB/60s cobre a maioria; se o envio falhar, o
+// sendOne cai para imagem/texto de qualquer forma.
+const MEDIA_TIMEOUT_MS = 60 * 1000;
+const MEDIA_MAX_BYTES = 64 * 1024 * 1024;
+
 async function downloadToBuffer(mediaUrl, userAgent) {
-    const res = await axios.get(mediaUrl, {
-        responseType: 'arraybuffer',
-        timeout: HTTP_TIMEOUT_MS,
-        headers: { 'User-Agent': buildHeaders(userAgent)['User-Agent'], 'Accept': '*/*' },
-        maxRedirects: 5,
-        validateStatus: () => true,
-        maxContentLength: 10 * 1024 * 1024,
-        maxBodyLength: 10 * 1024 * 1024
-    });
-    if (res.status < 200 || res.status >= 300 || !res.data) return null;
-    if (res.data.byteLength > 10 * 1024 * 1024) return null;
+    let host = '';
+    try { host = new URL(String(mediaUrl)).hostname; } catch (_) {}
+    let res;
+    try {
+        res = await axios.get(mediaUrl, {
+            responseType: 'arraybuffer',
+            timeout: MEDIA_TIMEOUT_MS,
+            headers: { 'User-Agent': buildHeaders(userAgent)['User-Agent'], 'Accept': '*/*' },
+            maxRedirects: 5,
+            validateStatus: () => true,
+            maxContentLength: MEDIA_MAX_BYTES,
+            maxBodyLength: MEDIA_MAX_BYTES
+        });
+    } catch (e) {
+        // Timeout / limite de tamanho do axios / erro de rede: antes era
+        // silencioso e o post virava imagem sem deixar rastro no log.
+        newsErrOnce(`dl-err:${host}`, `download falhou (${host}): ${e?.message || e}`);
+        return null;
+    }
+    if (res.status < 200 || res.status >= 300 || !res.data) {
+        newsErrOnce(`dl-status:${host}:${res.status}`, `download respondeu status=${res.status} (${host}) — mídia ignorada.`);
+        return null;
+    }
+    if (res.data.byteLength > MEDIA_MAX_BYTES) {
+        newsErrOnce(`dl-size:${host}`, `mídia com ${Math.round(res.data.byteLength / 1048576)}MB (>${MEDIA_MAX_BYTES / 1048576}MB) ignorada (${host}).`);
+        return null;
+    }
     const mime = (res.headers && res.headers['content-type']) || '';
     return { buffer: Buffer.from(res.data), mime: String(mime).split(';')[0].trim() };
+}
+
+// Força um mimetype da família esperada: alguns hosts devolvem
+// application/octet-stream para .mp4/.jpg, o que faz o WhatsApp tratar
+// o arquivo errado (vídeo como imagem/documento e vice-versa).
+function coerceMime(mime, family, fallback) {
+    const m = String(mime || '').toLowerCase();
+    if (m.startsWith(family + '/')) return String(mime).split(';')[0].trim();
+    return fallback;
 }
 
 function buildCaption(post, sub, showMeta) {
@@ -563,10 +595,11 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         try {
             const dl = await downloadToBuffer(media.video, cfg.newsUserAgent);
             if (dl && dl.buffer && dl.buffer.length > 0) {
-                const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
+                const payload = { video: dl.buffer, mimetype: coerceMime(dl.mime, 'video', 'video/mp4') };
                 if (caption) payload.caption = caption;
                 return await sendMessageSafe(sock, jid, payload, retryOpts);
             }
+            newsErrOnce(`video-dl:${post.id}`, `r/${sub} post ${post.id}: MP4 inacessível (${media.video}) — caindo para thumbnail.`);
         } catch (e) {
             newsErr(`falha vídeo r/${sub}:`, e.message);
         }
@@ -581,7 +614,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
             try {
                 const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
                 if (dl && dl.buffer && dl.buffer.length > 0) {
-                    const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg' };
+                    const payload = { image: dl.buffer, mimetype: coerceMime(dl.mime, 'image', 'image/jpeg') };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 }
@@ -602,7 +635,7 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                 const bufferIsGif = mimeLower === 'image/gif' || urlIsGif;
 
                 if (urlIsVideo || bufferIsVideo) {
-                    const payload = { video: dl.buffer, mimetype: dl.mime || 'video/mp4' };
+                    const payload = { video: dl.buffer, mimetype: coerceMime(dl.mime, 'video', 'video/mp4') };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else if (urlIsGif || bufferIsGif) {
@@ -615,11 +648,11 @@ async function sendOne(sock, jid, post, sub, showMeta) {
                         return await sendMessageSafe(sock, jid, payload, retryOpts);
                     }
                     // Fallback: envia como imagem estática se a conversão falhar
-                    const payload = { image: dl.buffer, mimetype: 'image/gif' };
+                    const payload = { image: dl.buffer, mimetype: coerceMime(dl.mime, 'image', 'image/gif') };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 } else {
-                    const payload = { image: dl.buffer, mimetype: dl.mime || 'image/jpeg' };
+                    const payload = { image: dl.buffer, mimetype: coerceMime(dl.mime, 'image', 'image/jpeg') };
                     if (caption) payload.caption = caption;
                     return await sendMessageSafe(sock, jid, payload, retryOpts);
                 }
@@ -629,7 +662,10 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         }
     }
 
-    if (caption && showMeta) {
+    // Fallback texto: se não há mídia para enviar (post só-texto ou download
+    // de mídia falhou), entrega título+texto. O `showMeta` controla apenas se
+    // o permalink vai na legenda (ver buildCaption), não se o texto é enviado.
+    if (caption) {
         return await sendMessageSafe(sock, jid, { text: caption }, retryOpts);
     }
 }
@@ -730,6 +766,8 @@ async function pollOnce() {
         const sendDelayMs = Math.max(0, Number(cfg.newsSendDelayMs) || 5000);
         const staggerMs = Math.max(0, Number(cfg.newsFetchStaggerMs) || 30000);
         const onePerCycle = !!cfg.newsOnePerCycle;
+        // newsMaxPerCycle passa a valer quando newsOnePerCycle=false.
+        const maxPerCycle = onePerCycle ? 1 : Math.max(1, Number(cfg.newsMaxPerCycle) || Number.MAX_SAFE_INTEGER);
 
         const lastSeen = getNewsState(STATE_KEY, {}) || {};
 
@@ -739,11 +777,11 @@ async function pollOnce() {
         }
 
         let firstSubOfCycle = true;
-        let publishedThisCycle = false;
+        let publishedThisCycle = 0;
 
         for (const sub of subsToCheck) {
-            if (onePerCycle && publishedThisCycle) {
-                newsLogOnce('cycle-skip', `cycle: 1 post já publicado neste ciclo — demais subs ficam para o próximo poll.`);
+            if (publishedThisCycle >= maxPerCycle) {
+                newsLogOnce('cycle-skip', `cycle: ${publishedThisCycle} post(s) já publicado(s) neste ciclo — demais subs ficam para o próximo poll.`);
                 break;
             }
 
@@ -797,20 +835,25 @@ async function pollOnce() {
                 continue;
             }
 
-            lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
-            setNewsState(STATE_KEY, lastSeen);
+            if (!latest.media) latest.media = {};
+            const latestMedia = latest.media;
 
-            if (latest.isVideoPost && !latest.media.video) {
+            // Prefetch da URL do vídeo UMA vez por poll (não 1x por grupo
+            // dentro do sendOne). Nota: o flag mora em media.isVideoPost —
+            // `latest.isVideoPost` (nível do post) nunca existe e deixava
+            // este bloco morto.
+            if (latestMedia.isVideoPost && !latestMedia.video) {
                 const vUrl = await fetchVideoFromJson(latest.id, cfg.newsUserAgent);
                 if (vUrl) {
-                    latest.media.video = vUrl;
+                    latestMedia.video = vUrl;
                     newsLog(`r/${sub}: URL de vídeo obtida via JSON API.`);
                 }
             }
 
             newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
-            publishedThisCycle = true;
+            publishedThisCycle++;
 
+            let anyDelivered = false;
             for (const jid of groups) {
                 if (isShuttingDown) break;
                 if (!isNewsEnabled(jid)) continue;
@@ -820,7 +863,8 @@ async function pollOnce() {
                 }
 
                 try {
-                    await sendOne(sockRef, jid, latest, sub, showMeta);
+                    const res = await sendOne(sockRef, jid, latest, sub, showMeta);
+                    if (res) anyDelivered = true;
                 } catch (e) {
                     const msg = String(e?.message || e || '').toLowerCase();
                     if (msg.includes('rate') || msg.includes('overlimit') || msg.includes('429')) {
@@ -833,6 +877,19 @@ async function pollOnce() {
                 }
 
                 if (sendDelayMs > 0) await sleep(sendDelayMs);
+            }
+
+            // Marca como visto SOMENTE após entrega. Se todos os envios
+            // falharem, o post é retentado no próximo poll em vez de perdido
+            // para sempre. Posts sem nenhum conteúdo enviável são marcados
+            // para não entrar em loop infinito.
+            const hasSendableContent = !!(latest.title || latest.selftext || latestMedia.image || latestMedia.video || latestMedia.thumbnail);
+            if (anyDelivered || !hasSendableContent) {
+                if (!hasSendableContent) newsLog(`r/${sub}: post ${latest.id} sem conteúdo enviável — marcando como visto.`);
+                lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
+                setNewsState(STATE_KEY, lastSeen);
+            } else {
+                newsLog(`r/${sub}: falha ao entregar ${latest.id} em todos os grupos — tentando de novo no próximo poll.`);
             }
 
             await new Promise(resolve => setImmediate(resolve));
@@ -865,13 +922,27 @@ function parseIntervalMs(v) {
     return Math.round(n * 60 * 1000);
 }
 
+// Resolve o intervalo de polling em ms. Chave padrão: newsPollIntervalMinutes.
+// Aceita o legado newsPollIntervalMs (valor já em ms) como fallback — antes
+// o `!set newsPollIntervalMs` gravava a chave mas o start() a ignorava.
+function resolvePollMs(cfg) {
+    if (cfg && cfg.newsPollIntervalMinutes != null) {
+        return Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMinutes));
+    }
+    if (cfg && cfg.newsPollIntervalMs != null) {
+        const n = Number(cfg.newsPollIntervalMs);
+        if (Number.isFinite(n) && n > 0) return Math.max(60 * 1000, Math.round(n));
+    }
+    return 15 * 60 * 1000;
+}
+
 function start() {
     stop();
     isShuttingDown = false;
     sendQueue.length = 0;
     isProcessing = false;
     const cfg = readConfig();
-    const ms = Math.max(60 * 1000, parseIntervalMs(cfg.newsPollIntervalMinutes));
+    const ms = resolvePollMs(cfg);
     pollTimer = setInterval(() => {
         pollOnce().catch(e => newsErr(`poll: ${e?.message || e}`));
     }, ms);
@@ -890,4 +961,4 @@ function stop() {
     }
 }
 
-module.exports = { attachSock, start, stop, pollOnce };
+module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime };
