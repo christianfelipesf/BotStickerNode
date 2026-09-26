@@ -20,10 +20,17 @@ module.exports = {
 
         // status/info
         if (['status', 'info', 'config', 'ver'].includes(sub)) {
+            let statsLine = '';
+            try {
+                const { getAntifloodStats } = require('../services/antiflood');
+                const st = getAntifloodStats(from) || {};
+                const lastHit = st.lastHit ? new Date(st.lastHit).toLocaleString('pt-BR', { hour12: false }) : '—';
+                statsLine = `\n• *Floods bloqueados (sessão):* ${st.hits || 0} (último: ${lastHit})`;
+            } catch (_) {}
             const txt = `🛡️ *Antiflood — ${from.endsWith('@g.us') ? 'este grupo' : ''}*\n\n` +
                 `• *Ativo:* ${cfg.enabled ? '✅ sim' : '❌ não'} (padrão ativado)\n` +
                 `• *Inclui admins:* ${cfg.includeAdmins ? '✅ sim' : '❌ não'} (padrão desativado)\n` +
-                `• *Limite:* ${cfg.maxMsgs} msgs / ${cfg.windowSecs}s\n\n` +
+                `• *Limite:* ${cfg.maxMsgs} msgs / ${cfg.windowSecs}s${statsLine}\n\n` +
                 `💡 *Uso:*\n` +
                 `• \`${utils.getPrefixForJid(from)}antiflood\` — liga/desliga\n` +
                 `• \`${utils.getPrefixForJid(from)}antiflood admin\` — liga/desliga para admins\n` +

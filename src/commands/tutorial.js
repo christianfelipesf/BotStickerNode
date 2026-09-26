@@ -26,6 +26,7 @@ module.exports = {
         `│ ${p}dl <link> — baixa vídeo (TikTok, IG, YouTube…)\n` +
         `│ ${p}dhd <link> — versão HD do !d\n` +
         `│ ${p}tts <texto> — fala um texto em áudio\n` +
+        `│ ${p}transcrever (marque o áudio/vídeo) — transcreve áudio em texto\n` +
         `│ ${p}acelerar / ${p}desacelerar — ajusta velocidade do áudio\n` +
         `╰─────────────────────────────\n\n` +
         `⏱️ *Limite:* ${p}play e ${p}d (YouTube) baixam no máximo *15 minutos* (configurável com \`${p}set maxMediaDurationSeconds <s>\`).\n\n` +

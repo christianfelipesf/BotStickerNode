@@ -156,3 +156,6 @@ bot.db*
 database.json
 database.json.bak
 
+
+# Modelos STT baixados sob demanda (faster-whisper) - nao versionar
+models/stt/

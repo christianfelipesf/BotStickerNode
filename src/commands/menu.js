@@ -42,6 +42,7 @@ module.exports = {
             `${B} 📥 *${p}dl* <link> — download\n` +
             `${B} 📥 *${p}dhd* <link> — download HD\n` +
             `${B} 🗣️ *${p}tts* <texto> — texto → áudio\n` +
+            `${B} 🎙️ *${p}transcrever* — áudio/vídeo → texto (marque o áudio)\n` +
             `${B} ⚡ *${p}acelerar* • 🐌 *${p}desacelerar* — áudio/vídeo\n` +
             `╰───────────────\n\n` +
             `╭─── *INTERAÇÃO* ───\n` +

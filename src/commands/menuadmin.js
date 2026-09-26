@@ -41,6 +41,7 @@ module.exports = {
             `│ 🔍 *${p}veradv* [@user] — consulta advertências\n` +
             `│ ✅ *${p}limparadv* [@user|all] — limpa advertências\n` +
             `│ 🛡️ *${p}antilink* — ativa/desativa filtro de links\n` +
+            `│ 🔓 *${p}revelaradmin* — só admins revelam view-once (padrão: todos)\n` +
             `│ 🚨 *${p}antiflood* — ativa/configura antiflood (admin desligado por padrão)\n` +
             `│ 🔇 *${p}mute* @user — silencia\n` +
             `│ 🔊 *${p}desmute* @user — dessilencia\n` +

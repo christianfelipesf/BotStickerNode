@@ -44,7 +44,7 @@ module.exports = {
     name: 'perfil',
     aliases: ['pp', 'profile'],
     category: 'geral',
-    description: 'Exibe a foto de perfil de um usuário',
+    description: 'Exibe a foto de perfil + região/clima/país pelo número (DDD/DDI)',
     async execute(sock, m, { from, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react, getBotName } = utils;
         let currentBotResponse = await react(sock, m, '👤', lastBotResponse, GLOBAL_COOLDOWN);
@@ -76,31 +76,71 @@ module.exports = {
 
             const botName = getBotName(from, config || {});
             const isLid = (jid) => typeof jid === 'string' && jid.endsWith('@lid');
-            const toDisplay = (jid, fallbackName) => {
-                if (isLid(jid)) return fallbackName && !['usuario','usuário'].includes(String(fallbackName).trim().toLowerCase()) ? String(fallbackName).trim().slice(0,30) : 'Usuário';
-                const num = String(jid||'').split('@')[0].split(':')[0];
-                return /^\d{8,15}$/.test(num) ? `@${num}` : (fallbackName ? String(fallbackName).trim().slice(0,30) : 'Usuário');
+            const GENERIC_NAMES = new Set(['usuario', 'usuário', 'utilizador', 'user', 'desconhecido', 'nao identificado', 'não identificado', 'null', 'undefined']);
+            const cleanName = (n) => {
+                const s = String(n || '').trim().slice(0, 30);
+                if (s.length < 2) return null;
+                if (GENERIC_NAMES.has(s.toLowerCase())) return null;
+                if (!/[\p{L}]/u.test(s)) return null; // só dígitos/símbolos não é nome
+                return s;
+            };
+            const phoneOf = (jid) => {
+                if (typeof jid !== 'string' || !jid.endsWith('@s.whatsapp.net')) return null;
+                const num = jid.split('@')[0].split(':')[0];
+                return /^\d{8,15}$/.test(num) ? jid : null;
+            };
+            // Exibe nome real quando existe; senão o @número; nunca o genérico "Usuário"
+            // (era isso que gerava o "Usuário: Usuário").
+            const toDisplay = (jid, phoneJid, fallbackName) => {
+                const name = cleanName(fallbackName);
+                if (name) return name;
+                const pj = phoneOf(phoneJid) || phoneOf(jid);
+                if (pj) return `@${pj.split('@')[0].split(':')[0]}`;
+                if (!isLid(jid)) {
+                    const num = String(jid || '').split('@')[0].split(':')[0];
+                    if (/^\d{8,15}$/.test(num)) return `@${num}`;
+                }
+                return 'não identificado';
             };
             // tenta pegar nome via pushName se disponível no m
             const pushName = m.pushName || null;
             const quotedName = m.message?.extendedTextMessage?.contextInfo?.pushName || null;
-            const targetDisplay = toDisplay(target, quotedName || null);
-            const senderDisplay = toDisplay(sender, pushName || null);
+            // Telefone do remetente: sender pode vir como @lid — o nº real vem no Pn da chave
+            const msgPn = m.key?.participantPn || m.key?.senderPn || null;
+            const senderPhone = phoneOf(sender) || phoneOf(msgPn);
+            const targetNorm = String(target || '').split('@')[0].split(':')[0];
+            const senderNorm = String(sender || '').split('@')[0].split(':')[0];
+            // Telefone do alvo: metadados > próprio JID > Pn (só quando o alvo é o remetente)
+            let targetPhone = phone || phoneOf(target);
+            if (!targetPhone && senderPhone && targetNorm && targetNorm === senderNorm) targetPhone = senderPhone;
+            const targetDisplay = toDisplay(target, targetPhone, quotedName || (targetNorm === senderNorm ? pushName : null));
+            const senderDisplay = toDisplay(sender, senderPhone, pushName || null);
             const isSelf = String(target||'').split('@')[0] === String(sender||'').split('@')[0];
+
+            // Região / clima / país pelo número (DDD cobre a área, não a cidade exata)
+            let regiaoLines = [];
+            try {
+                const { getRegiaoInfo, formatRegiaoLines } = require('../services/regiao');
+                const numJid = targetPhone || ((typeof target === 'string' && target.endsWith('@s.whatsapp.net')) ? target : null);
+                const digits = numJid ? String(numJid).split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+                regiaoLines = formatRegiaoLines(digits ? getRegiaoInfo(digits) : null);
+            } catch (_) { regiaoLines = []; }
+            const regiaoBlock = regiaoLines.length ? `\n${regiaoLines.join('\n')}` : '';
 
             // visual igual ao de mídia convertida (╭─── / │ / ╰───────────────)
             const caption = isSelf
                 ? `╭─── *👤 PERFIL* ───\n` +
-                  `│ 👤 *Usuário:* ${targetDisplay}\n` +
+                  `│ 👤 *Usuário:* ${targetDisplay}${regiaoBlock}\n` +
                   `│ 🤖 *Por:* ${botName}\n` +
                   `╰───────────────`
                 : `╭─── *👤 PERFIL* ───\n` +
-                  `│ 👤 *Usuário:* ${targetDisplay}\n` +
+                  `│ 👤 *Usuário:* ${targetDisplay}${regiaoBlock}\n` +
                   `│ 👥 *Solicitado por:* ${senderDisplay}\n` +
                   `│ 🤖 *Por:* ${botName}\n` +
                   `╰───────────────`;
 
-            const mentions = isSelf ? [target] : [target, sender];
+            const _mentions = isSelf ? [target, targetPhone] : [target, targetPhone, sender, senderPhone];
+            const mentions = [...new Set(_mentions.filter(Boolean))];
 
             if (!ppBuffer) {
                 await sock.sendMessage(from, {

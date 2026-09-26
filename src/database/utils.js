@@ -434,6 +434,10 @@ const DEFAULT_CONFIG = {
     aiMaxPromptLength: 2000,
     aiCacheTtl: 300000,
     aiRetryCount: 2,
+    transcribeModel: 'openai/whisper-1',
+    transcribeMaxSeconds: 600,
+    transcribeProvider: 'auto',
+    transcribeLocalModel: 'base',
     summaryLimit: 20,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
@@ -1082,7 +1086,7 @@ function setGroupData(jid, data) {
     const cur = ensureGroupState(jid);
     const curParsed = parseGroupState(cur);
     const merged = { ...curParsed };
-    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg']);
+    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly']);
     merged.extra = { ...(curParsed.extra || {}) };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
