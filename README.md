@@ -101,6 +101,24 @@ Prefixo padrão é `!`. Troque com `!setprefix .`
 
 ---
 
+## Banco de dados / modo local
+
+O bot usa `bot.db` (SQLite local) + Supabase (Postgres na nuvem, fonte da verdade).
+No boot faz PULL nuvem -> local; a cada escrita agenda PUSH (debounce 3s) + push
+periódico a cada 60s (`SUPABASE_SYNC_INTERVAL_MS`).
+
+| Variável `.env` | Padrão | O que faz |
+|---|---|---|
+| `SUPABASE_URL` / `SUPABASE_SECRET_KEY` | — | credenciais da nuvem (sem elas, roda só local) |
+| `SUPABASE_SYNC_INTERVAL_MS` | `60000` | intervalo do push periódico (mínimo 15000) |
+| `SUPABASE_SYNC_ON_BOOT` | `1` | `0` = pula o PULL do boot |
+| `SUPABASE_REQUIRE_PULL` | `1` | `1` = nenhum PUSH sobe antes do 1º PULL (trava anti-db-vazio); `0` = perigoso |
+| `BOT_LOCAL_MODE` | `0` | **`1` = modo 100% local**: sem pull no boot, sem push periódico e sem push via flush. Só `bot.db`. Comandos manuais (`npm run db:push` / `db:pull`) continuam funcionando por serem ação explícita |
+
+Também dá para alternar em runtime via Telegram com `/banco` (persiste no `.env`).
+
+---
+
 ## Dúvidas
 
 - QR não aparece? `pm2 logs bot --lines 100` ou apague a pasta `session/` e reinicie.

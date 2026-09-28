@@ -21,7 +21,7 @@ function getSupabaseConfig() {
     return { url, key };
 }
 
-async function supaFetch(path, { method = 'GET', body, prefer, signal } = {}) {
+async function supaFetch(path, { method = 'GET', body, prefer, signal, timeoutMs = 20000 } = {}) {
     const conf = getSupabaseConfig();
     if (!conf) throw new Error('Supabase não configurado (SUPABASE_URL / SUPABASE_SECRET_KEY ausentes)');
     const headers = {
@@ -30,25 +30,46 @@ async function supaFetch(path, { method = 'GET', body, prefer, signal } = {}) {
         'Content-Type': 'application/json',
     };
     if (prefer) headers.Prefer = prefer;
-    const res = await fetch(`${conf.url}/rest/v1${path}`, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal,
-    });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
-    if (!res.ok) {
-        const msg = (data && (data.message || data.hint || data.details))
-            ? `${data.message}${data.hint ? ' — ' + data.hint : ''}`
-            : `HTTP ${res.status}: ${String(text).slice(0, 300)}`;
-        const err = new Error(msg);
-        err.status = res.status;
-        err.body = data;
-        throw err;
+    // Timeout próprio: sem isso uma conexão pendurada (stall) segura o
+    // _syncRunning do supabaseSync para sempre e todo sync futuro vira 'busy'.
+    // Quem já tem um AbortController passa `signal` e o timeout é ignorado.
+    let ownController = null;
+    let effSignal = signal;
+    let timer = null;
+    if (!effSignal && timeoutMs > 0) {
+        ownController = new AbortController();
+        effSignal = ownController.signal;
+        timer = setTimeout(() => { try { ownController.abort(); } catch (_) {} }, Math.max(1000, timeoutMs));
+        try { if (timer.unref) timer.unref(); } catch (_) {}
     }
-    return data;
+    try {
+        const res = await fetch(`${conf.url}/rest/v1${path}`, {
+            method,
+            headers,
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+            signal: effSignal,
+        });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+        if (!res.ok) {
+            const msg = (data && (data.message || data.hint || data.details))
+                ? `${data.message}${data.hint ? ' — ' + data.hint : ''}`
+                : `HTTP ${res.status}: ${String(text).slice(0, 300)}`;
+            const err = new Error(msg);
+            err.status = res.status;
+            err.body = data;
+            throw err;
+        }
+        return data;
+    } catch (e) {
+        if (e && (e.name === 'AbortError' || /aborted/i.test(e?.message || '')) && ownController) {
+            throw new Error(`Supabase timeout após ${Math.max(1000, timeoutMs)}ms (${method} ${path.split('?')[0]})`);
+        }
+        throw e;
+    } finally {
+        try { if (timer) clearTimeout(timer); } catch (_) {}
+    }
 }
 
 // Lê TODAS as linhas (pagina de 1000 em 1000, limite de segurança de 20k).
@@ -70,18 +91,32 @@ async function supaSelectAll(table, { order = null, desc = true, limit = 20000 }
     return out;
 }
 
-async function supaCount(table) {
+async function supaCount(table, { timeoutMs = 20000 } = {}) {
     // count exato via HEAD + Prefer: count=exact
     const conf = getSupabaseConfig();
     if (!conf) throw new Error('Supabase não configurado');
-    const res = await fetch(`${conf.url}/rest/v1/${table}?select=*&limit=1`, {
-        method: 'HEAD',
-        headers: {
-            apikey: conf.key,
-            Authorization: `Bearer ${conf.key}`,
-            Prefer: 'count=exact',
-        },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => { try { controller.abort(); } catch (_) {} }, Math.max(1000, timeoutMs));
+    try { if (timer.unref) timer.unref(); } catch (_) {}
+    let res;
+    try {
+        res = await fetch(`${conf.url}/rest/v1/${table}?select=*&limit=1`, {
+            method: 'HEAD',
+            headers: {
+                apikey: conf.key,
+                Authorization: `Bearer ${conf.key}`,
+                Prefer: 'count=exact',
+            },
+            signal: controller.signal,
+        });
+    } catch (e) {
+        if (e && (e.name === 'AbortError' || /aborted/i.test(e?.message || ''))) {
+            throw new Error(`Supabase timeout após ${Math.max(1000, timeoutMs)}ms (HEAD count ${table})`);
+        }
+        throw e;
+    } finally {
+        try { clearTimeout(timer); } catch (_) {}
+    }
     if (!res.ok) {
         const t = await res.text().catch(() => '');
         if (/not find|does not exist|relation/i.test(t) || res.status === 404) return 0;

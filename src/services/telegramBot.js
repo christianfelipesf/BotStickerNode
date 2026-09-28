@@ -299,6 +299,12 @@ async function handleUpdate(update) {
         await send(chatId, `🔄 Reiniciando bot (process.exit) — Docker vai subir em ~5s...`);
         console.warn('🔄 [telegramBot] /restart por', chatId);
         try { require('../database/utils').flushNow?.(); } catch (_) {}
+        // Push best-effort antes de sair: sem isso o PULL do próximo boot
+        // desfaz os últimos ~60s (o schedulePush de 5s morria no exit).
+        try {
+            const sync = require('../database/supabaseSync');
+            if (sync.isDirty && sync.isDirty()) await sync.pushNow(12000);
+        } catch (_) {}
         setTimeout(() => process.exit(1), 1200).unref();
         return;
     }

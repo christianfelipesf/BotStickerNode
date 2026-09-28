@@ -228,6 +228,16 @@ async function _check() {
             const { flushNow } = require('../database/utils');
             flushNow();
         } catch (_) {}
+        // Push best-effort antes de sair (mesmo motivo do /restart): o push
+        // agendado morreria no exit e o próximo PULL desfaria ~60s.
+        try {
+            const sync = require('../database/supabaseSync');
+            if (sync.isDirty && sync.isDirty()) {
+                sync.pushNow(10000).catch(() => {});
+                setTimeout(() => process.exit(1), 11000).unref();
+                return;
+            }
+        } catch (_) {}
         setTimeout(() => process.exit(1), 1500).unref();
     }
 }

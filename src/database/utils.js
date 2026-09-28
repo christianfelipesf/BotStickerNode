@@ -179,7 +179,7 @@ function normalizeLoginPhone(raw) {
     return normalizePhoneNumber(raw);
 }
 
-function _loginAllowedStmts() {
+const _loginStmts = (() => {
     try {
         return {
             get: db.prepare('SELECT phone, added_by, added_at FROM login_allowed WHERE phone = ?'),
@@ -189,6 +189,9 @@ function _loginAllowedStmts() {
             clear: db.prepare('DELETE FROM login_allowed')
         };
     } catch (_) { return null; }
+})();
+function _loginAllowedStmts() {
+    return _loginStmts;
 }
 
 function isLoginAllowed(phoneOrJid) {
@@ -690,8 +693,9 @@ function deactivateGroup(jid) {
     return true;
 }
 
+const _agList = db.prepare('SELECT jid FROM active_groups');
 function listActiveGroups() {
-    try { return db.prepare('SELECT jid FROM active_groups').all().map(r => r.jid); } catch (e) { return []; }
+    try { return _agList.all().map(r => r.jid); } catch (e) { return []; }
 }
 
 // ============================================================
@@ -754,8 +758,9 @@ function reconcileActivePartial(dbHandle) {
     }
 }
 
+const _agpList = db.prepare('SELECT jid FROM active_groups_partial');
 function listPartialGroups() {
-    try { return db.prepare('SELECT jid FROM active_groups_partial').all().map(r => r.jid); } catch (e) { return []; }
+    try { return _agpList.all().map(r => r.jid); } catch (e) { return []; }
 }
 
 function getPartialWaitMs() {
@@ -1684,10 +1689,45 @@ function getChatHistory(jid, limit = 20) {
     try { const rows = _msgSelectByJid.all(jid, limit); return rows.reverse(); } catch (e) { return []; }
 }
 
+const _msgClearByJid = db.prepare('DELETE FROM messages WHERE jid = ?');
+const _msgMaxTimeByJid = db.prepare('SELECT MAX(time) AS t FROM messages WHERE jid = ?');
+// Deletes de messages ainda não confirmados na nuvem (jid -> cutoff time ms).
+// Existe porque messages é upsert-only no push: sem o DELETE explícito na
+// nuvem, o PULL do próximo boot ressuscitaria o histórico apagado.
+const _msgPendingCloudDelete = new Map();
+function _attemptMessageCloudDelete(jid, cutoff) {
+    try {
+        const { supaFetch } = require('./supabaseClient');
+        supaFetch(`/messages?jid=eq.${encodeURIComponent(jid)}&time=lte.${cutoff}`, { method: 'DELETE', timeoutMs: 15000 }).then(
+            () => { if (_msgPendingCloudDelete.get(jid) === cutoff) _msgPendingCloudDelete.delete(jid); },
+            (e) => { try { console.error('⚠️ [messages] delete na nuvem falhou (fica pendente p/ o próximo push):', e?.message || e); } catch (_) {} }
+        );
+    } catch (_) {}
+}
+function consumePendingMessageDeletes() {
+    const out = Array.from(_msgPendingCloudDelete.entries());
+    _msgPendingCloudDelete.clear();
+    return out;
+}
+function requeueMessageCloudDelete(jid, cutoff) {
+    try {
+        const prev = _msgPendingCloudDelete.get(jid) || 0;
+        _msgPendingCloudDelete.set(jid, Math.max(prev, Number(cutoff) || 0));
+    } catch (_) {}
+}
 function clearChatHistory(jid) {
     flushMessagesSync();
-    try { db.prepare('DELETE FROM messages WHERE jid = ?').run(jid); } catch (e) { console.error('❌ Falha ao limpar histórico:', e.message); }
+    // Cutoff ANTES do delete. `time` (ms) é a coluna comparável entre PCs
+    // (id AUTOINCREMENT não é).
+    let cutoff = 0;
+    try { cutoff = Number(_msgMaxTimeByJid.get(jid)?.t) || 0; } catch (_) {}
+    try { _msgClearByJid.run(jid); } catch (e) { console.error('❌ Falha ao limpar histórico:', e.message); }
     _msgBufferByJid.delete(jid);
+    if (jid && cutoff > 0) {
+        requeueMessageCloudDelete(jid, cutoff);
+        _attemptMessageCloudDelete(jid, cutoff);
+    }
+    _pushSoon();
 }
 
 // ============================================================
@@ -1709,23 +1749,26 @@ function _analyticsDayHour(ts = Date.now()) {
     }
 }
 
+const _gmsUpsert = db.prepare(`INSERT INTO group_msg_stats (jid, day, hour, count) VALUES (?, ?, ?, 1)
+    ON CONFLICT(jid, day, hour) DO UPDATE SET count = count + 1`);
 function recordGroupMessage(jid, ts = Date.now()) {
     if (!jid || !jid.endsWith('@g.us')) return;
     try {
         const { day, hour } = _analyticsDayHour(ts);
-        db.prepare(`INSERT INTO group_msg_stats (jid, day, hour, count) VALUES (?, ?, ?, 1)
-            ON CONFLICT(jid, day, hour) DO UPDATE SET count = count + 1`).run(jid, day, hour);
+        _gmsUpsert.run(jid, day, hour);
     } catch (_) {}
 }
 
 const MODLOG_KINDS = new Set(['join', 'leave', 'ban', 'warn', 'spam']);
+const _modlogInsert = db.prepare('INSERT INTO group_modlog (jid, kind, timestamp) VALUES (?, ?, ?)');
+const _modlogPrune = db.prepare('DELETE FROM group_modlog WHERE jid = ? AND timestamp < ?');
 function recordModEvent(jid, kind, ts = Date.now()) {
     if (!jid || !jid.endsWith('@g.us')) return;
     if (!MODLOG_KINDS.has(String(kind))) return;
     try {
-        db.prepare('INSERT INTO group_modlog (jid, kind, timestamp) VALUES (?, ?, ?)').run(jid, String(kind), Number(ts) || Date.now());
+        _modlogInsert.run(jid, String(kind), Number(ts) || Date.now());
         // poda: mantém 90 dias por grupo
-        try { db.prepare('DELETE FROM group_modlog WHERE jid = ? AND timestamp < ?').run(jid, Date.now() - 90 * 86400 * 1000); } catch (_) {}
+        try { _modlogPrune.run(jid, Date.now() - 90 * 86400 * 1000); } catch (_) {}
     } catch (_) {}
 }
 
@@ -2209,15 +2252,15 @@ async function flushAndPushBeforeExit(exitCode = 0) {
     try { flushMessagesSync(); } catch (_) {}
     try { if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); } catch (_) {}
     try {
-        const sync = require('./database/supabaseSync');
-        try { sync.stopAutoSync(); } catch (_) {}
+        const sync = require('./supabaseSync');
+        try { sync.stopAutoSync(); } catch (e) { try { console.error('⚠️ [shutdown] stopAutoSync falhou:', e?.message || e); } catch (_) {} }
         const dirty = !!(sync.isDirty && sync.isDirty());
         try { console.log(`☁️ [shutdown] SIGINT/SIGTERM recebido (dirty=${dirty}) — flush local ok.`); } catch (_) {}
         if (dirty) {
             try { console.log('☁️ [supabase] push de shutdown (preservar alterações)...'); } catch (_) {}
             await sync.pushNow(25000);
         }
-    } catch (_) {}
+    } catch (e) { try { console.error('⚠️ [shutdown] push de shutdown falhou (segue p/ exit):', e?.message || e); } catch (_) {} }
     process.exit(exitCode);
 }
 process.on('SIGINT', () => { void flushAndPushBeforeExit(0); });
@@ -2240,6 +2283,7 @@ module.exports = {
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
     formatUptime, getBotName, react, reactStatus, getVersion,
     saveMessage, getChatHistory, clearChatHistory,
+    consumePendingMessageDeletes, requeueMessageCloudDelete,
     updateMemberActivity, getTopMember, getMonthlyRank, getGlobalMonthlyRank, getTopGroupsByActivity, clearMonthlyRank, clearAllMonthlyRanks, checkMonthlyReset, _getCurrentMonthKey, _getMonthLabelBr,
     snapshotMonthlyRanks, getRankHistory, backupDatabase,
     recordGroupMessage, recordModEvent, getGroupAnalytics,

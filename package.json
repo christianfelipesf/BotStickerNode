@@ -23,9 +23,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "@hapi/boom": "^10.0.1",
-    "@libsql/client": "^0.18.0",
     "@whiskeysockets/baileys": "^6.6.0",
     "adm-zip": "^0.5.17",
     "axios": "^1.6.7",

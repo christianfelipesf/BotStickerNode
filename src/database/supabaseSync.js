@@ -1,5 +1,5 @@
 // Sincronização local (bot.db) <-> Supabase Postgres (nuvem, fonte da verdade).
-// Mesma estratégia do antigo tursoSync:
+// Estratégia:
 //  - Boot: PULL nuvem -> local (a nuvem vence; sobrescreve o bot.db local).
 //  - Ao salvar / flush / intervalo: PUSH local -> nuvem (upsert em lote via PostgREST).
 // Mantém todo o código síncrono existente intacto.
@@ -306,6 +306,19 @@ async function pullFromCloud({ log = console } = {}) {
                 desc: true,
                 limit: cap || 20000,
             });
+            // Guarda anti-nuvem-vazia: o PULL é destrutivo (DELETE+INSERT local).
+            // Se a nuvem veio vazia mas o local tem dados, NÃO apaga o local —
+            // pode ser push interrompido entre DELETE e upsert (REPLACE_TABLES),
+            // falha parcial, ou tabela dropada manualmente. O próximo push
+            // restaura a nuvem a partir do local preservado.
+            if (!cloudRows.length && (REPLACE_TABLES[table] || table === 'config' || table === 'group_state')) {
+                let localCount = 0;
+                try { localCount = localDb.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get()?.c || 0; } catch (_) {}
+                if (localCount > 0) {
+                    try { log.log(`🛡️ [supabase] PULL pulou ${table}: nuvem vazia, local com ${localCount} linha(s) preservado(s)`); } catch (_) {}
+                    continue;
+                }
+            }
             const del = localDb.prepare(`DELETE FROM "${table}"`);
             const placeholders = cols.map(() => '?').join(',');
             const quoted = cols.map(c => `"${c}"`).join(',');
@@ -367,7 +380,7 @@ const REPLACE_TABLES = {
 
 async function pushToCloud({ log = console, force = false, requirePull = true } = {}) {
     if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
-    if (requirePull && !_pullOk && !force && process.env.SUPABASE_REQUIRE_PULL !== '0' && process.env.TURSO_REQUIRE_PULL !== '0') {
+    if (requirePull && !_pullOk && !force && process.env.SUPABASE_REQUIRE_PULL !== '0') {
         _lastPushRefused = { at: Date.now(), reason: 'pull-pending' };
         if (!_pullRefusedLogged) {
             _pullRefusedLogged = true;
@@ -380,6 +393,23 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
     _syncRunning = true;
     try {
         await ensureSupabaseSchema(SYNC_TABLES);
+        // Deletes de messages pendentes (clearChatHistory offline): messages é
+        // upsert-only, então o delete precisa ir explícito — senão o próximo
+        // PULL ressuscita o histórico. Falha aqui re-enfileira p/ o próximo push.
+        try {
+            const pending = require('./utils').consumePendingMessageDeletes?.() || [];
+            if (pending.length) {
+                const { supaFetch } = require('./supabaseClient');
+                for (const [pjid, pcut] of pending) {
+                    try {
+                        await supaFetch(`/messages?jid=eq.${encodeURIComponent(pjid)}&time=lte.${pcut}`, { method: 'DELETE', timeoutMs: 15000 });
+                    } catch (e) {
+                        try { require('./utils').requeueMessageCloudDelete?.(pjid, pcut); } catch (_) {}
+                        try { console.error(`⚠️ [supabase] delete pendente de messages falhou (re-enfileirado): ${e?.message || e}`); } catch (_) {}
+                    }
+                }
+            }
+        } catch (_) {}
         const check = await validateBeforePush();
         if (!check.ok && !force) {
             _lastPushRefused = { at: Date.now(), reason: check.reason };
@@ -455,7 +485,7 @@ function schedulePush(delayMs = 5000) {
 }
 
 function _intervalMs() {
-    const raw = process.env.SUPABASE_SYNC_INTERVAL_MS || process.env.TURSO_SYNC_INTERVAL_MS || '60000';
+    const raw = process.env.SUPABASE_SYNC_INTERVAL_MS || '60000';
     return Math.max(15000, Number(raw) || 60000);
 }
 
@@ -554,7 +584,7 @@ function startAutoSync({ onBootPull = true } = {}) {
     const intervalMs = _intervalMs();
     _pullOk = false;
     _pullFailed = false;
-    const bootPullOff = process.env.SUPABASE_SYNC_ON_BOOT === '0' || process.env.TURSO_SYNC_ON_BOOT === '0';
+    const bootPullOff = process.env.SUPABASE_SYNC_ON_BOOT === '0';
     if (onBootPull && !bootPullOff) {
         setImmediate(async () => {
             try {
