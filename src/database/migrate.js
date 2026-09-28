@@ -30,7 +30,9 @@ function migrateLegacyUnifiedDB() {
         const now = Date.now();
         for (const jid of oldActive) agInsert.run(jid, now);
 
-        const ins = db.prepare('INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)');
+        const ins = db.prepare(`INSERT INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(jid) DO UPDATE SET muted=excluded.muted, warnings=excluded.warnings,
+                antilink=excluded.antilink, activity=excluded.activity`);
         for (const [jid, s] of Object.entries(oldSettings)) {
             ins.run(jid, JSON.stringify(Array.isArray(s.muted) ? s.muted : []), JSON.stringify(s.warnings && typeof s.warnings === 'object' ? s.warnings : {}), s.antilink ? 1 : 0, JSON.stringify({}));
         }
@@ -90,7 +92,9 @@ function migrateLegacyActiveGroups() {
     }
     const oldSettings = (json.groups?.settings && typeof json.groups.settings === 'object') ? json.groups.settings : null;
     if (oldSettings && !json.stats._settingsMigrated) {
-        const gsInsert = db.prepare('INSERT OR REPLACE INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)');
+        const gsInsert = db.prepare(`INSERT INTO group_state (jid, muted, warnings, antilink, activity) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(jid) DO UPDATE SET muted=excluded.muted, warnings=excluded.warnings,
+                antilink=excluded.antilink, activity=excluded.activity`);
         const newGroups = {};
         for (const [jid, s] of Object.entries(oldSettings)) {
             gsInsert.run(jid, JSON.stringify(Array.isArray(s.muted) ? s.muted : []), JSON.stringify(s.warnings && typeof s.warnings === 'object' ? s.warnings : {}), s.antilink ? 1 : 0, JSON.stringify({}));
@@ -145,7 +149,8 @@ function migrateJsonToSqlite() {
         ON CONFLICT(jid) DO UPDATE SET
             muted=excluded.muted, warnings=excluded.warnings,
             antilink=excluded.antilink, activity=excluded.activity,
-            bot_name=excluded.bot_name, menu_image=excluded.menu_image`);
+            bot_name=excluded.bot_name, menu_image=excluded.menu_image,
+            theme=excluded.theme`);
 
     const tx = db.transaction(() => {
         // Config
