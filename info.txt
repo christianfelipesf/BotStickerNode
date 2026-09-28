@@ -9,3 +9,7 @@
 -- DOCUMENTE
 
 -- IGNORE O DASHBOARD, NÃO ENVOLVA ELE
+
+-- Verificar e fazer commit no git local antes de mudanças significativas
+
+// verificar no rank grupos que o bot nao participa
