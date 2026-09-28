@@ -17,6 +17,87 @@ function resolvePhoneJid(target, participants) {
     return null;
 }
 
+function onlyDigits(s) {
+    return String(s || '').replace(/\D/g, '');
+}
+
+// Normaliza número digitado em vários formatos:
+// 5511999998888 | +55 11 99999-8888 | (11) 99999-8888 | 11 99999-8888 |
+// 11999998888 | 11 98888-8888 | 0055... | @5511... | 55-11-99999-8888
+// Retorna só dígitos com DDI (ex: '5511999998888') ou null se inválido.
+function normalizePhoneInput(raw) {
+    let d = onlyDigits(raw);
+    if (!d) return null;
+    // discagem internacional com 00 (ex: 0055...)
+    if (d.startsWith('00') && d.length > 4) d = d.slice(2);
+    // zero de tronco (ex: 0119...) — remove zeros à esquerda
+    d = d.replace(/^0+/, '');
+    if (!d) return null;
+    if (d.length < 10) return null; // nem DDD+número tem
+    if (d.length === 10 || d.length === 11) {
+        // número nacional BR sem DDI (DDD + 8/9 dígitos) → assume 55
+        return '55' + d;
+    }
+    if (d.length >= 7 && d.length <= 15) return d; // BR completo ou internacional
+    return null;
+}
+
+function extractVcardInfo(vcard) {
+    if (!vcard || typeof vcard !== 'string') return null;
+    const waidM = vcard.match(/waid\s*=\s*(\d{7,15})/i);
+    const fnM = vcard.match(/^FN[^:]*:(.+)$/im);
+    const name = fnM ? String(fnM[1]).trim().slice(0, 30) : null;
+    if (waidM) return { number: normalizePhoneInput(waidM[1]) || onlyDigits(waidM[1]), name };
+    // fallback: primeiro TEL com dígitos
+    const telM = vcard.match(/TEL[^:]*:([+\d\s().\-]+)/i);
+    if (telM) {
+        const n = normalizePhoneInput(telM[1]);
+        if (n) return { number: n, name };
+    }
+    return null;
+}
+
+function unwrapMessage(msg) {
+    let m = msg;
+    for (let i = 0; i < 5 && m; i++) {
+        if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
+        else if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
+        else if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+        else if (m.viewOnceMessageV2Extension?.message) m = m.viewOnceMessageV2Extension.message;
+        else if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message;
+        else break;
+    }
+    return m;
+}
+
+// Contatos citados (responder um contato compartilhado com !perfil).
+// Cobre contactMessage e contactsArrayMessage, com ou sem wrapper ephemeral/viewOnce.
+function getQuotedContacts(qInfo) {
+    try {
+        const out = [];
+        const qm0 = qInfo?.quotedMessage;
+        if (!qm0) return out;
+        const qm = unwrapMessage(qm0) || {};
+        if (qm.contactMessage?.vcard) {
+            const info = extractVcardInfo(qm.contactMessage.vcard);
+            if (info?.number) out.push(info);
+            else if (qm.contactMessage.displayName) out.push({ number: null, name: String(qm.contactMessage.displayName).slice(0, 30) });
+        }
+        const arr = qm.contactsArrayMessage?.contacts;
+        if (Array.isArray(arr)) {
+            for (const c of arr) {
+                const info = extractVcardInfo(c?.vcard);
+                if (info?.number && !out.some(o => o.number === info.number)) out.push(info);
+            }
+        }
+        // contactShareMessage (alguns clientes usam esse nome)
+        if (qm.contactShareMessage?.vcard) {
+            const info = extractVcardInfo(qm.contactShareMessage.vcard);
+            if (info?.number) out.push(info);
+        }
+        return out;
+    } catch (_) { return []; }
+}
 function isImageBuffer(buf) {
     if (!buf || buf.length < 100) return false;
     if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true; // jpeg
@@ -45,13 +126,62 @@ module.exports = {
     aliases: ['pp', 'profile'],
     category: 'geral',
     description: 'Exibe a foto de perfil + região/clima/país pelo número (DDD/DDI)',
-    async execute(sock, m, { from, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+    async execute(sock, m, { from, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN, args, fullArgsText }) {
         const { react, getBotName } = utils;
         let currentBotResponse = await react(sock, m, '👤', lastBotResponse, GLOBAL_COOLDOWN);
 
         try {
-            const qInfo = m.message.extendedTextMessage?.contextInfo;
-            const target = qInfo?.mentionedJid?.[0] || qInfo?.participant || sender;
+            // contextInfo pode estar em extendedText/image/video (resposta a contato, menção etc.)
+            let qInfo = null;
+            try {
+                const media = require('../database/media');
+                qInfo = (media.getContextInfo && media.getContextInfo(m.message)) || null;
+            } catch (_) {}
+            qInfo = qInfo || m.message?.extendedTextMessage?.contextInfo || null;
+            const mentioned = qInfo?.mentionedJid?.[0] || null;
+
+            // 1) contato compartilhado citado (responder o contato com !perfil)
+            const quotedContacts = getQuotedContacts(qInfo);
+            // contato enviado junto na própria mensagem (forward com legenda, alguns clientes)
+            try {
+                const cur = unwrapMessage(m.message) || {};
+                if (cur.contactMessage?.vcard) {
+                    const info = extractVcardInfo(cur.contactMessage.vcard);
+                    if (info?.number && !quotedContacts.some(o => o.number === info.number)) quotedContacts.push(info);
+                }
+                const arr = cur.contactsArrayMessage?.contacts;
+                if (Array.isArray(arr)) {
+                    for (const c of arr) {
+                        const info = extractVcardInfo(c?.vcard);
+                        if (info?.number && !quotedContacts.some(o => o.number === info.number)) quotedContacts.push(info);
+                    }
+                }
+            } catch (_) {}
+
+            // 2) número digitado: !perfil 11999998888 | +55 11 99999-8888 | (11) 99999-8888 ...
+            const rawTyped = String(fullArgsText || (Array.isArray(args) ? args.join(' ') : '') || '').trim();
+            const typedDigits = normalizePhoneInput(rawTyped);
+            if (rawTyped && !typedDigits && !mentioned && !quotedContacts.length && !qInfo?.participant) {
+                const prefix = (config && config.prefix) || '!';
+                await sock.sendMessage(from, {
+                    text: `╭─── *👤 PERFIL* ───\n│ ❓ Número não reconhecido: *${rawTyped.slice(0, 40)}*\n│ 💡 *Use:*\n│ • *${prefix}perfil* (você)\n│ • *${prefix}perfil @pessoa* (menção)\n│ • *${prefix}perfil 11999998888*\n│ • *${prefix}perfil (11) 99999-8888*\n│ • *${prefix}perfil +55 11 99999-8888*\n│ • responda um contato compartilhado com *${prefix}perfil*\n╰───────────────`
+                }, { quoted: m });
+                return currentBotResponse;
+            }
+
+            let target = mentioned || qInfo?.participant || sender;
+            let forcedPhone = null; // jid @s.whatsapp.net vindo de contato/arg
+            let forcedName = null;  // FN do vcard
+            if (!mentioned) {
+                if (quotedContacts.length && quotedContacts[0].number) {
+                    forcedPhone = `${quotedContacts[0].number}@s.whatsapp.net`;
+                    forcedName = quotedContacts[0].name || null;
+                    target = forcedPhone;
+                } else if (typedDigits) {
+                    forcedPhone = `${typedDigits}@s.whatsapp.net`;
+                    target = forcedPhone;
+                }
+            }
             // tenta jid original + equivalente @s.whatsapp.net (caso @lid)
             let participants = [];
             try {
@@ -104,18 +234,22 @@ module.exports = {
             };
             // tenta pegar nome via pushName se disponível no m
             const pushName = m.pushName || null;
-            const quotedName = m.message?.extendedTextMessage?.contextInfo?.pushName || null;
+            const quotedName = qInfo?.pushName || null;
             // Telefone do remetente: sender pode vir como @lid — o nº real vem no Pn da chave
             const msgPn = m.key?.participantPn || m.key?.senderPn || null;
             const senderPhone = phoneOf(sender) || phoneOf(msgPn);
             const targetNorm = String(target || '').split('@')[0].split(':')[0];
             const senderNorm = String(sender || '').split('@')[0].split(':')[0];
-            // Telefone do alvo: metadados > próprio JID > Pn (só quando o alvo é o remetente)
-            let targetPhone = phone || phoneOf(target);
+            // Telefone do alvo: forçado (contato/arg) > metadados > próprio JID > Pn (só quando o alvo é o remetente)
+            let targetPhone = forcedPhone || phone || phoneOf(target);
             if (!targetPhone && senderPhone && targetNorm && targetNorm === senderNorm) targetPhone = senderPhone;
-            const targetDisplay = toDisplay(target, targetPhone, quotedName || (targetNorm === senderNorm ? pushName : null));
+            const targetDisplay = toDisplay(target, targetPhone, forcedName || quotedName || (targetNorm === senderNorm ? pushName : null));
             const senderDisplay = toDisplay(sender, senderPhone, pushName || null);
-            const isSelf = String(target||'').split('@')[0] === String(sender||'').split('@')[0];
+            const targetPhoneDigits = targetPhone ? String(targetPhone).split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+            const senderPhoneDigits = senderPhone ? String(senderPhone).split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+            const isSelf = targetPhoneDigits && senderPhoneDigits
+                ? targetPhoneDigits === senderPhoneDigits
+                : String(target || '').split('@')[0] === String(sender || '').split('@')[0];
 
             // Região / clima / país pelo número (DDD cobre a área, não a cidade exata)
             let regiaoLines = [];
@@ -162,3 +296,6 @@ module.exports = {
         return currentBotResponse;
     }
 };
+
+// helpers expostos p/ teste (não afeta o loader)
+module.exports._helpers = { normalizePhoneInput, extractVcardInfo, getQuotedContacts, unwrapMessage, onlyDigits };

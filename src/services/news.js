@@ -252,9 +252,28 @@ function extractMedia(body, link = '') {
 }
 
 function extractSelftext(body) {
-    const contentMatch = body.match(/<content[^>]*type\s*=\s*"html"[^>]*>([\s\S]*?)<\/content>/i);
-    if (!contentMatch) return '';
-    const decoded = decodeEntities(contentMatch[1]);
+    // O RSS do Reddit varia: <content type="html"> é o comum, mas já vimos
+    // <content> sem type, CDATA e corpo em <summary>/<description>.
+    // extractMedia já tinha fallback genérico — aqui faltava (retornava '').
+    let raw = null;
+    const htmlTyped = body.match(/<content[^>]*type\s*=\s*"html"[^>]*>([\s\S]*?)<\/content>/i);
+    if (htmlTyped) raw = htmlTyped[1];
+    if (!raw) {
+        const generic = body.match(/<content[^>]*>([\s\S]*?)<\/content>/i);
+        if (generic) raw = generic[1];
+    }
+    if (!raw) {
+        const summary = body.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
+        if (summary) raw = summary[1];
+    }
+    if (!raw) {
+        const desc = body.match(/<description[^>]*>([\s\S]*?)<\/description>/i);
+        if (desc) raw = desc[1];
+    }
+    if (!raw) return '';
+    // Desembrulha CDATA antes de decodar entidades.
+    raw = String(raw).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
+    const decoded = decodeEntities(raw);
 
     const afterTable = decoded.split(/<\/table>/i).slice(1).join('</table>') || decoded;
 
@@ -355,6 +374,59 @@ async function fetchVideoFromJson(postId, userAgent) {
         }
     }
     newsErrOnce(`json-no-video:${postId}`, `JSON API: nenhum endpoint/UA retornou vídeo para ${postId}.`);
+    return null;
+}
+
+// Post tem mídia quando há imagem/vídeo/thumbnail/buffer. Usado para decidir
+// o fallback de selftext: só posts SEM mídia buscam texto via JSON API.
+// Com mídia, o envio segue título+mídia (sem request extra).
+function hasMediaContent(post) {
+    const m = (post && post.media) || {};
+    return !!(m.image || m.video || m.thumbnail || m.videoBuffer);
+}
+
+// Busca o selftext via JSON API (mesmos endpoints/UAs do vídeo).
+// Só deve ser chamado para posts SEM mídia. Devolve string ou null.
+async function fetchSelftextFromJson(postId, userAgent) {
+    if (!postId) return null;
+    const userAgents = [
+        String(userAgent || ''),
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+    ].filter(Boolean);
+    const endpoints = [
+        `https://old.reddit.com/comments/${encodeURIComponent(postId)}.json`,
+        `https://www.reddit.com/comments/${encodeURIComponent(postId)}.json`,
+        `https://i.reddit.com/comments/${encodeURIComponent(postId)}.json`
+    ];
+    for (const url of endpoints) {
+        for (const ua of userAgents) {
+            try {
+                const res = await axios.get(url, {
+                    timeout: HTTP_TIMEOUT_MS,
+                    headers: {
+                        'User-Agent': ua,
+                        'Accept': 'application/json, text/plain, */*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    },
+                    responseType: 'text',
+                    validateStatus: () => true,
+                    transformResponse: [(data) => data]
+                });
+                if (res.status !== 200 || !res.data) continue;
+                let data;
+                try { data = JSON.parse(res.data); } catch (_) { continue; }
+                const post = Array.isArray(data) && data[0]?.data?.children?.[0]?.data;
+                if (!post) continue;
+                const txt = String(post.selftext || '').trim();
+                if (txt) return txt.length > 2000 ? txt.slice(0, 1997) + '...' : txt;
+            } catch (_) {
+                // silencioso — tenta próximo
+            }
+        }
+    }
     return null;
 }
 
@@ -573,16 +645,18 @@ function buildCaption(post, sub, showMeta) {
     const selftext = (post.selftext || '').trim();
 
     if (showMeta) {
-        const lines = [];
-        if (title) lines.push(`*${title}*`);
-        if (selftext) lines.push(selftext);
+        const parts = [];
+        if (title) parts.push(`*${title}*`);
+        if (selftext) parts.push(selftext);
         const permalink = post.permalink || post.url || '';
-        if (permalink) lines.push(permalink);
-        return lines.join('\n');
+        if (permalink) parts.push(permalink);
+        return parts.join('\n\n');
     }
 
+    // Post só-texto: título + duas linhas + conteúdo.
     if (title && selftext) return `*${title}*\n\n${selftext}`;
-    return title || selftext || '';
+    if (title) return `*${title}*`;
+    return selftext || '';
 }
 
 function isGifUrl(url) {
@@ -647,9 +721,22 @@ async function convertGifToMp4(buffer) {
 }
 
 async function sendOne(sock, jid, post, sub, showMeta) {
-    const caption = buildCaption(post, sub, showMeta);
     const cfg = readConfig();
     const media = post.media || {};
+    // Fallback texto via JSON API — SÓ para posts sem mídia e com selftext
+    // vazio (1 tentativa por post, reutilizada entre grupos). Com mídia o
+    // envio segue título+mídia, sem request extra.
+    if (!hasMediaContent(post) && !String(post.selftext || '').trim() && post.id && !post._selftextFetched) {
+        post._selftextFetched = true;
+        try {
+            const txt = await fetchSelftextFromJson(post.id, cfg.newsUserAgent);
+            if (txt) {
+                post.selftext = txt;
+                newsLog(`r/${sub}: selftext obtido via JSON API para ${post.id}.`);
+            }
+        } catch (_) {}
+    }
+    const caption = buildCaption(post, sub, showMeta);
     const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
     // Log de diagnóstico só uma vez por post (não por grupo).
     newsLogOnce(`diag:${post.id}`, `r/${sub} post ${post.id}: domain=${media.domain || '?'} isVideo=${isVideoPostFlag} hasVideo=${!!media.video}`);
@@ -955,6 +1042,19 @@ async function pollOnce() {
                 }
             }
 
+            // Prefetch do selftext UMA vez por poll para posts SEM mídia com
+            // texto vazio. Com mídia, mantém título+mídia (sem request extra).
+            if (!hasMediaContent(latest) && !String(latest.selftext || '').trim() && latest.id) {
+                latest._selftextFetched = true;
+                try {
+                    const txt = await fetchSelftextFromJson(latest.id, cfg.newsUserAgent);
+                    if (txt) {
+                        latest.selftext = txt;
+                        newsLog(`r/${sub}: selftext obtido via JSON API para ${latest.id}.`);
+                    }
+                } catch (_) {}
+            }
+
             newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
             publishedThisCycle++;
 
@@ -1066,4 +1166,4 @@ function stop() {
     }
 }
 
-module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime, extractHlsPlaylist, resolveRedditVideo };
+module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime, extractHlsPlaylist, resolveRedditVideo, hasMediaContent, fetchSelftextFromJson };

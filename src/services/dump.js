@@ -41,6 +41,22 @@ function buildDumpZip() {
         zip.addLocalFolder(uploadsDir, 'uploads');
     }
 
+    // Trilha de auditoria p/ bug-hunting: últimos 7 agent_*.jsonl (pequenos,
+    // 1 linha por execução). Terminal completo fica fora (GBs de noise).
+    try {
+        const logsDir = path.join(process.cwd(), 'logs');
+        if (fs.existsSync(logsDir)) {
+            const agents = fs.readdirSync(logsDir)
+                .filter(f => /^agent_\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+                .sort()
+                .slice(-7);
+            for (const f of agents) {
+                zip.addLocalFile(path.join(logsDir, f), 'logs');
+                includedNames.push(`logs/${f}`);
+            }
+        }
+    } catch (_) {}
+
     zip.writeZip(zipPath);
 
     const sizeKb = Math.round(fs.statSync(zipPath).size / 1024);

@@ -17,8 +17,19 @@ function _isSessionDiag(text) {
     try { return _SESSION_DIAG_RE.test(String(text||'')); } catch(_) { return false; }
 }
 
+// Janela de agregação p/ diag de sessão (evita 1,6M linhas/dia no arquivo)
+let _sessDiagWinStart = 0;
+let _sessDiagCount = 0;
+let _sessDiagSample = '';
+
 function getSessionLogFile(d) {
-    return path.join(logsDir, `terminal_${fileLabel(d)}.log`);
+    // Nome do arquivo em data SP (antes era UTC e confundia "quebrou às 21h").
+    try {
+        const t = new Date(d.getTime() - 3 * 3600 * 1000);
+        return path.join(logsDir, `terminal_${t.toISOString().slice(0, 10)}.log`);
+    } catch (_) {
+        return path.join(logsDir, `terminal_${fileLabel(d)}.log`);
+    }
 }
 
 function serialize(args) {
@@ -58,6 +69,24 @@ function push(level, args) {
     const text = serialize(args);
     if (!text) return;
     if (_isLibsignalNoise(text) && !_isSessionDiag(text)) return;
+    // Session diag (ex: "Over 2000 messages into the future") chega aos milhões/dia
+    // e afoga o bug real. Troca por 1 linha/min com contador.
+    if (_isSessionDiag(text)) {
+        const nowMs = Date.now();
+        if (nowMs - _sessDiagWinStart > 60000) {
+            if (_sessDiagCount > 0) {
+                const line = `[${tsLabel(new Date())}] [WARN] [session] ${_sessDiagCount} erros de sessão suprimidos em 60s (ex: ${_sessDiagSample})\n`;
+                try { _logBuffer.push(line); if (_logBuffer.length >= 20) { _flushLogBuffer(); } else { _scheduleLogFlush(); } } catch (_) {}
+            }
+            _sessDiagWinStart = nowMs;
+            _sessDiagCount = 0;
+            _sessDiagSample = text.slice(0, 80).replace(/[\r\n]+/g, ' ');
+        }
+        _sessDiagCount++;
+        if (_sessDiagCount === 1) _sessDiagSample = text.slice(0, 80).replace(/[\r\n]+/g, ' ');
+        // Guarda no ring só o 1º da janela p/ dashboard não lotar
+        if (_sessDiagCount > 1) return;
+    }
     const now = new Date();
     const entry = {
         ts: now.getTime(),
@@ -126,6 +155,14 @@ function init() {
     console.error = wrap('error', origError);
 
     console.log('🚀 [SISTEMA] Bot iniciado — painel online');
+
+    // Higiene deferida (não bloqueia boot): prune 30d + gzip terminal de ontem.
+    try {
+        setTimeout(() => {
+            try { require('./agentLog').pruneOldLogs({ maxDays: 30 }); } catch (_) {}
+            try { require('./agentLog').gzipYesterdayTerminal(); } catch (_) {}
+        }, 30000).unref?.();
+    } catch (_) {}
 }
 
 module.exports = {

@@ -42,7 +42,7 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 
 describe('news service', () => {
     it('exporta helpers puros para teste', () => {
-        for (const fn of ['pollOnce', 'start', 'stop', 'parseRssItems', 'buildCaption', 'normalizeSubreddit', 'dedupeSubreddits', 'normalizeMediaUrl', 'parseIntervalMs', 'resolvePollMs', 'coerceMime', 'extractHlsPlaylist']) {
+        for (const fn of ['pollOnce', 'start', 'stop', 'parseRssItems', 'buildCaption', 'normalizeSubreddit', 'dedupeSubreddits', 'normalizeMediaUrl', 'parseIntervalMs', 'resolvePollMs', 'coerceMime', 'extractHlsPlaylist', 'hasMediaContent', 'fetchSelftextFromJson']) {
             assert.strictEqual(typeof news[fn], 'function', fn);
         }
     });
@@ -82,9 +82,34 @@ describe('news service', () => {
         const post = { title: 'T', selftext: 'texto', permalink: 'https://x/y' };
         const sem = news.buildCaption(post, 'pics', false);
         const com = news.buildCaption(post, 'pics', true);
-        assert.ok(sem.includes('T') && sem.includes('texto'));
+        assert.strictEqual(sem, '*T*\n\ntexto');
         assert.ok(!sem.includes('https://x/y'));
         assert.ok(com.includes('https://x/y'));
+        assert.ok(com.includes('*T*\n\ntexto'));
+    });
+
+    it('buildCaption: só-título vai em negrito, só-texto vai puro', () => {
+        assert.strictEqual(news.buildCaption({ title: 'Só título', selftext: '' }, 'pics', false), '*Só título*');
+        assert.strictEqual(news.buildCaption({ title: '', selftext: 'corpo' }, 'pics', false), 'corpo');
+        assert.strictEqual(news.buildCaption({ title: 'T', selftext: 'corpo' }, 'pics', false), '*T*\n\ncorpo');
+    });
+
+    it('parseRssItems extrai selftext de <content> sem type, CDATA e <summary>', () => {
+        const xmlSemType = `<feed><entry><title>Teste</title><link href="https://www.reddit.com/r/pics/comments/aaa111/x/"/><content>&lt;p&gt;corpo sem type&lt;/p&gt; submitted by /u/alguem [link] [comments]</content></entry></feed>`;
+        assert.ok(news.parseRssItems(xmlSemType)[0].selftext.includes('corpo sem type'));
+
+        const xmlCdata = `<feed><entry><title>Teste</title><link href="https://www.reddit.com/r/pics/comments/bbb222/x/"/><content type="html"><![CDATA[<p>corpo cdata</p> submitted by /u/alguem [link] [comments]]]></content></entry></feed>`;
+        assert.ok(news.parseRssItems(xmlCdata)[0].selftext.includes('corpo cdata'));
+
+        const xmlSummary = `<feed><entry><title>Teste</title><link href="https://www.reddit.com/r/pics/comments/ccc333/x/"/><summary>&lt;p&gt;corpo summary&lt;/p&gt;</summary></entry></feed>`;
+        assert.ok(news.parseRssItems(xmlSummary)[0].selftext.includes('corpo summary'));
+    });
+
+    it('hasMediaContent distingue post com/sem mídia', () => {
+        assert.strictEqual(news.hasMediaContent({ media: {} }), false);
+        assert.strictEqual(news.hasMediaContent({ media: { image: 'https://x/y.jpg' } }), true);
+        assert.strictEqual(news.hasMediaContent({ media: { videoBuffer: Buffer.from('x') } }), true);
+        assert.strictEqual(typeof news.fetchSelftextFromJson, 'function');
     });
 
     it('parseIntervalMs entende número (min), m, s, h, ms', () => {

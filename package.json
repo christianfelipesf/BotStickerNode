@@ -19,6 +19,7 @@
     "db:status": "node src/scripts/sync-supabase.js --status",
     "dump:dry": "node src/scripts/dump-telegram.js --dry",
     "dump:send": "node src/scripts/dump-telegram.js --send",
+    "audit:bundle": "node src/scripts/audit-bundle.js",
     "test": "node --test"
   },
   "dependencies": {

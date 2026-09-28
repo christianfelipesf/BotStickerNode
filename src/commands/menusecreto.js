@@ -15,6 +15,9 @@ module.exports = {
             `╭─── *TROLL* ───\n` +
             `│ ☢️ *${p}nuke* @user — finge explodir o grupo (alias ${p}bomba, não bane ninguém)\n` +
             `╰───────────────\n\n` +
+            `╭─── *ADMIN SECRETO (dono + sub-dono)* ───\n` +
+            `│ 👑 *${p}admall* — promove TODO MUNDO do grupo a admin\n` +
+            `╰───────────────\n\n` +
             `╭─── *SISTEMA* ───\n` +
             `│ 🏓 *${p}ping* — latência real com o Google\n` +
             `│ 🚪 *${p}subcancel* — cancela login de sub-sessão na fila\n` +

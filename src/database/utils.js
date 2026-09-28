@@ -104,6 +104,7 @@ function addToBlacklist(groupJid, userJid, addedBy) {
     if (!norm) return false;
     try {
         const r = _blInsert.run(groupJid, norm, addedBy ? normalizeBlacklistJid(addedBy) || addedBy : null, Date.now());
+        if (r.changes > 0) _pushSoon();
         return r.changes > 0;
     } catch (_) { return false; }
 }
@@ -114,7 +115,7 @@ function removeFromBlacklist(groupJid, userJid) {
         const normTarget = normalizeBlacklistJid(userJid);
         if (!normTarget) return false;
         const direct = _blDelete.run(groupJid, normTarget);
-        if (direct.changes > 0) return true;
+        if (direct.changes > 0) { _pushSoon(); return true; }
         const targetUser = normTarget.split('@')[0];
         const rows = _blGetAll.all(groupJid);
         let removed = false;
@@ -123,7 +124,7 @@ function removeFromBlacklist(groupJid, userJid) {
             if (!norm) continue;
             if (norm.split('@')[0] === targetUser) {
                 const del = _blDelete.run(groupJid, r.user_jid);
-                if (del.changes > 0) removed = true;
+                if (del.changes > 0) { removed = true; _pushSoon(); }
             }
         }
         return removed;
@@ -132,7 +133,7 @@ function removeFromBlacklist(groupJid, userJid) {
 
 function clearBlacklist(groupJid) {
     if (!groupJid) return false;
-    try { const r = _blClear.run(groupJid); return r.changes; } catch (_) { return 0; }
+    try { const r = _blClear.run(groupJid); if (r.changes) _pushSoon(); return r.changes; } catch (_) { return 0; }
 }
 
 function countBlacklist(groupJid) {
@@ -216,6 +217,7 @@ function addLoginAllowed(phoneOrJid, addedBy) {
         if (!s) return { ok: false, error: 'Banco indisponível' };
         const r = s.ins.run(phone, addedBy || null, Date.now());
         if (r.changes === 0) return { ok: false, error: 'duplicado', phone };
+        _pushSoon();
         return { ok: true, phone };
     } catch (e) { return { ok: false, error: e.message }; }
 }
@@ -228,6 +230,7 @@ function removeLoginAllowed(phoneOrJid) {
         if (!s) return { ok: false, error: 'Banco indisponível' };
         const r = s.del.run(phone);
         if (r.changes === 0) return { ok: false, error: 'não encontrado', phone };
+        _pushSoon();
         return { ok: true, phone };
     } catch (e) { return { ok: false, error: e.message }; }
 }
@@ -236,7 +239,9 @@ function clearLoginAllowed() {
     try {
         const s = _loginAllowedStmts();
         if (!s) return 0;
-        return s.clear.run().changes || 0;
+        const n = s.clear.run().changes || 0;
+        if (n) _pushSoon();
+        return n;
     } catch (_) { return 0; }
 }
 
@@ -399,6 +404,7 @@ function setAntifloodConfig(jid, patch = {}) {
         const maxMsgs = patch.maxMsgs !== undefined ? Math.max(2, Math.min(20, Number(patch.maxMsgs) || cur.maxMsgs)) : cur.maxMsgs;
         const windowSecs = patch.windowSecs !== undefined ? Math.max(3, Math.min(60, Number(patch.windowSecs) || cur.windowSecs)) : cur.windowSecs;
         _afUpsert.run(jid, enabled, includeAdmins, maxMsgs, windowSecs, Date.now());
+        _pushSoon();
         return true;
     } catch (_) { return false; }
 }
@@ -449,8 +455,8 @@ const DEFAULT_CONFIG = {
     channelName: "Canal Oficial 📢",
     dashboardEnabled: true,
     dashboardPort: 3000,
-    dashboardMaxLogs: 200,
-    dashboardHistoryHours: 12,
+    dashboardMaxLogs: 2000,
+    dashboardHistoryHours: 168,
     adminCanControl: true,
     clearDefaultLimit: 10,
     partialWaitMs: 10000,
@@ -527,6 +533,7 @@ function writeConfig(newConfig) {
     tx(newConfig);
     _invalidateConfigCache();
     _cachedSummaryLimit = null;
+    _pushSoon();
 }
 
 function readStats() {
@@ -554,6 +561,7 @@ function getGroupLink() {
 
 function setGroupLink(link) {
     _cfgSet.run('linkgrupo', JSON.stringify(link));
+    _pushSoon();
 }
 
 // ============================================================
@@ -612,6 +620,7 @@ function writeGroupState(jid, patch = {}) {
         pick('theme', null),
         pick('extra', '{}')
     );
+    _pushSoon();
 }
 
 // ============================================================
@@ -621,11 +630,11 @@ const _agHas = db.prepare('SELECT 1 FROM active_groups WHERE jid = ?');
 const _agUpsert = db.prepare('INSERT INTO active_groups (jid, activated_at) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET activated_at = excluded.activated_at');
 const _agDelete = db.prepare('DELETE FROM active_groups WHERE jid = ?');
 
-// Mudança total<->parcial precisa chegar à nuvem ANTES do próximo restart:
-// o PULL do boot (nuvem vence, DELETE+INSERT local) ressuscita o modo antigo
-// se a nuvem ainda tiver a linha velha. O push periódico (60s) é lento demais
-// e morre junto no restart — por isso agenda push rápido aqui.
-function _scheduleMembershipPush() {
+// Qualquer mudança no banco precisa chegar à nuvem ANTES do próximo restart:
+// o PULL do boot (nuvem vence, DELETE+INSERT local) desfaz o que ainda não
+// subiu. O push periódico (60s) é lento demais e morre junto no restart —
+// por isso agenda push rápido a cada escrita relevante (debounce interno).
+function _pushSoon() {
     try { require('./supabaseSync').schedulePush(3000); } catch (_) {}
 }
 
@@ -640,7 +649,7 @@ function activateGroup(jid) {
     // usa o mais recente p/ desempatar total x parcial (sem isso o !ativar de
     // hoje não deixava rastro e o parcial mais antigo "vencia" no boot).
     try { _agUpsert.run(jid, Date.now()); } catch (e) { return isActiveGroup(jid); }
-    _scheduleMembershipPush();
+    _pushSoon();
     return isActiveGroup(jid);
 }
 
@@ -649,7 +658,7 @@ function deactivateGroup(jid) {
     const r = _agDelete.run(jid);
     const rp = r.changes === 0 ? _agpDelete.run(jid) : { changes: 0 };
     if (r.changes === 0 && rp.changes === 0) return true; // idempotente: já desligado conta como sucesso
-    _scheduleMembershipPush();
+    _pushSoon();
     try {
         const row = _gsGet.get(jid);
         if (row && row.menu_image) {
@@ -703,7 +712,7 @@ function activatePartial(jid) {
         try { _agDelete.run(jid); } catch (_) {}
         // UPSERT com timestamp (mesmo motivo do activateGroup: desempate no PULL).
         try { _agpUpsert.run(jid, Date.now()); } catch (_) {}
-        _scheduleMembershipPush();
+        _pushSoon();
         return isPartialActive(jid);
     } catch (e) {
         console.error('❌ Falha ao ativar modo parcial:', e.message);
@@ -713,7 +722,7 @@ function activatePartial(jid) {
 
 function deactivatePartial(jid) {
     if (!jid) return false;
-    try { _agpDelete.run(jid); _scheduleMembershipPush(); return true; } catch (e) { return false; }
+    try { _agpDelete.run(jid); _pushSoon(); return true; } catch (e) { return false; }
 }
 
 // Reconcilia total x parcial após o PULL da nuvem: o push antigo era só-upsert
@@ -781,6 +790,7 @@ function setDashboardEnabled(jid, enabled) {
     try {
         _dgSet.run(jid, enabled ? 1 : 0, Date.now());
         if (!enabled) { try { _dgDelete.run(jid); } catch (_) {} }
+        _pushSoon();
         return true;
     } catch (e) { return false; }
 }
@@ -812,6 +822,7 @@ function setNewsEnabled(jid, enabled) {
     try {
         _ngUpsert.run(jid, enabled ? 1 : 0, Date.now());
         if (!enabled) { try { _ngDelete.run(jid); } catch (_) {} }
+        _pushSoon();
         return true;
     } catch (e) { return false; }
 }
@@ -831,15 +842,15 @@ function getNewsState(key, fallback = null) {
 }
 
 function setNewsState(key, value) {
-    try { _nsUpsert.run(key, JSON.stringify(value), Date.now()); return true; } catch (e) { return false; }
+    try { _nsUpsert.run(key, JSON.stringify(value), Date.now()); _pushSoon(); return true; } catch (e) { return false; }
 }
 
 function clearNewsState(key) {
-    try { db.prepare('DELETE FROM news_state WHERE key = ?').run(key); return true; } catch (e) { return false; }
+    try { db.prepare('DELETE FROM news_state WHERE key = ?').run(key); _pushSoon(); return true; } catch (e) { return false; }
 }
 
 function clearAllNewsState() {
-    try { db.prepare('DELETE FROM news_state').run(); return true; } catch (e) { return false; }
+    try { db.prepare('DELETE FROM news_state').run(); _pushSoon(); return true; } catch (e) { return false; }
 }
 
 // ============================================================
@@ -1041,6 +1052,7 @@ function addFeedback(kind, text, senderJid, senderName, groupJid) {
         _fbInsert.run(k, t, senderJid || null, senderName || null, groupJid || null, now);
         // mantém apenas os 10 últimos
         try { _fbTrim.run(k, k, FEEDBACK_MAX); } catch (_) {}
+        _pushSoon();
         return { ok: true };
     } catch (e) {
         return { ok: false, error: e.message };
@@ -1065,7 +1077,7 @@ function countFeedback(kind) {
 function clearFeedback(kind) {
     const k = String(kind || '').toLowerCase();
     if (k !== 'bug' && k !== 'sugestao') return 0;
-    try { const r = db.prepare('DELETE FROM feedback WHERE kind = ?').run(k); return r.changes; } catch (_) { return 0; }
+    try { const r = db.prepare('DELETE FROM feedback WHERE kind = ?').run(k); if (r.changes) _pushSoon(); return r.changes; } catch (_) { return 0; }
 }
 
 // ============================================================
@@ -1127,6 +1139,7 @@ function setGroupData(jid, data) {
         theme,
         extra: JSON.stringify(merged.extra || {})
     });
+    _pushSoon();
 }
 
 // ============================================================
@@ -1826,6 +1839,7 @@ function upsertPessoa(data = {}) {
         const now = Date.now();
         const pick = (k) => (data[k] !== undefined ? data[k] : (prev ? prev[k] : null));
         s.upsert.run(nome, nomeNorm, pick('nascimento'), pick('cidade'), pick('descricao'), pick('status'), pick('hobby'), pick('pix'), pick('instagram'), pick('linkedin'), data.foto_path !== undefined ? data.foto_path : (prev ? prev.foto_path : null), data.created_by || (prev ? prev.created_by : null), prev ? prev.created_at : now, now);
+        _pushSoon();
         return { ok: true, created: !prev };
     } catch (e) { return { ok: false, error: e.message }; }
 }
@@ -1857,7 +1871,7 @@ function countPessoas() {
 function deletePessoa(nome) {
     const norm = _normPessoa(nome);
     if (!norm) return false;
-    try { return _pessoaStmts().del.run(norm).changes > 0; } catch (_) { return false; }
+    try { const ok = _pessoaStmts().del.run(norm).changes > 0; if (ok) _pushSoon(); return ok; } catch (_) { return false; }
 }
 
 function updatePessoa(nome, patch = {}) {
@@ -1882,6 +1896,7 @@ function updatePessoa(nome, patch = {}) {
                 if (newNorm && newNorm !== norm) db.prepare('UPDATE pessoas SET nome_norm = ? WHERE nome_norm = ?').run(newNorm, norm);
             } catch (_) {}
         }
+        if (r.changes > 0) _pushSoon();
         return { ok: r.changes > 0 };
     } catch (e) { return { ok: false, error: e.message }; }
 }
@@ -1889,7 +1904,7 @@ function updatePessoa(nome, patch = {}) {
 function clearPessoaFoto(nome) {
     const norm = _normPessoa(nome);
     if (!norm) return false;
-    try { return _pessoaStmts().clearFoto.run(Date.now(), norm).changes > 0; } catch (_) { return false; }
+    try { const ok = _pessoaStmts().clearFoto.run(Date.now(), norm).changes > 0; if (ok) _pushSoon(); return ok; } catch (_) { return false; }
 }
 
 function aniversariantes(mes) {
@@ -2183,8 +2198,30 @@ setTimeout(() => {
 }, 0).unref();
 
 process.on('beforeExit', flushNow);
-process.on('SIGINT', () => { flushNow(); process.exit(0); });
-process.on('SIGTERM', () => { flushNow(); process.exit(0); });
+// Shutdown gracioso (pm2 restart = SIGINT): o schedulePush agendado morria
+// junto no process.exit e o PULL do próximo boot desfazia os últimos ~60s.
+// Aqui faz flush local + push SÍNCRONO (só se houver escrita pendente) antes
+// de sair, para o restart preservar tudo.
+let _exiting = false;
+async function flushAndPushBeforeExit(exitCode = 0) {
+    if (_exiting) return;
+    _exiting = true;
+    try { flushMessagesSync(); } catch (_) {}
+    try { if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); } catch (_) {}
+    try {
+        const sync = require('./database/supabaseSync');
+        try { sync.stopAutoSync(); } catch (_) {}
+        const dirty = !!(sync.isDirty && sync.isDirty());
+        try { console.log(`☁️ [shutdown] SIGINT/SIGTERM recebido (dirty=${dirty}) — flush local ok.`); } catch (_) {}
+        if (dirty) {
+            try { console.log('☁️ [supabase] push de shutdown (preservar alterações)...'); } catch (_) {}
+            await sync.pushNow(25000);
+        }
+    } catch (_) {}
+    process.exit(exitCode);
+}
+process.on('SIGINT', () => { void flushAndPushBeforeExit(0); });
+process.on('SIGTERM', () => { void flushAndPushBeforeExit(0); });
 
 // ============================================================
 // Exports (barrel — compatível com toda a base de código)

@@ -130,11 +130,15 @@ dist
 
 # Bot Specific
 session/
+session-ses_*.md
 session.bak-*
 session.bak-*/
 **/*.bak-*
 **/*.bak-*/
 temp/
+# uploads/ = dados de runtime (imagem do !imagem, fotos do !cadastrar-pessoa).
+# SEM isso, o update.sh (git clean -fd) APAGA a pasta a cada atualização.
+uploads/
 data/
 # Exceção: curiosidades do splash fazem parte do bot e vão pro git.
 # (Ordem importa: re-inclui o dir, ignora o conteúdo, re-inclui o arquivo.)

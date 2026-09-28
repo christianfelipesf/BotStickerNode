@@ -2,6 +2,14 @@ const { getGroupData, isMuted, botIsAdmin, isUserAdmin, getAdmins, normalizeJid,
 const { enforceAntiflood } = require('../services/antiflood');
 
 async function enforceMuteAndAntilink(sock, m, from, sender, text) {
+    // Dono (aparelho do bot) nunca é bloqueado: senão comandos do próprio
+    // número caem em 'muted'/'antiflood' silencioso e parecem "ignorados".
+    // fromMe é a fonte da verdade; isBotOwner cobre LID/PN divergente.
+    try {
+        if (m?.key?.fromMe === true) return null;
+        const { isBotOwner } = require('../database/utils');
+        if (typeof isBotOwner === 'function' && isBotOwner(sock, m, sender)) return null;
+    } catch (_) {}
     const groupData = getGroupData(from);
     const utilsRef = require('../database/utils');
     const adminsRaw = await getAdmins(sock, from);

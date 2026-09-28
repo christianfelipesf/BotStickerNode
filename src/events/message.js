@@ -4,6 +4,7 @@ const cooldown = require('../services/cooldown');
 const trace = require('../services/trace');
 const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('./dashboard-handler');
 const { enforceMuteAndAntilink } = require('./enforcement');
+const { agentCommand } = require('../services/agentLog');
 
 const {
     isActiveGroup, isPartialActive, getPartialWaitMs,
@@ -366,6 +367,18 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             const CMD_TIMEOUT_MS = cmd.category === 'mídia'
                 ? (Number(process.env.CMD_TIMEOUT_MEDIA_MS) || 210000)
                 : (Number(process.env.CMD_TIMEOUT_MS) || 90000);
+            // Trilha p/ bug-hunting: 1 linha JSON por execução (logs/agent_*.jsonl).
+            // cid = message id — liga INTERAÇÃO → passos → erro sem adivinhar por timestamp.
+            const _auditBase = () => {
+                let version = '';
+                try { version = require('../database/utils').getVersion() || ''; } catch (_) {}
+                return {
+                    cid: m?.key?.id || '', cmd: commandName, prefix: effectivePrefix,
+                    category: cmd.category || '', args: fullArgsText || '',
+                    from, group: groupMetadata.subject || '', sender, senderName,
+                    fromMe: !!m?.key?.fromMe, version
+                };
+            };
             try {
                 context.log = cmdLog;
                 const { runCommandWithTimeout } = require('../services/commandRunner');
@@ -373,6 +386,7 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                 if (result !== undefined) lastBotResponse = result;
                 const elapsed = Date.now() - t0;
                 cmdLog('fim', `ok em ${elapsed}ms`);
+                try { agentCommand({ ..._auditBase(), ok: true, cmd_ms: elapsed }); } catch (_) {}
                 if (botActiveInGroup && elapsed >= 800) {
                     safeDashboardLog('action', groupMetadata.subject, `✅ !${commandName} concluído em ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 }
@@ -382,6 +396,7 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                 if (isTimeout) {
                     console.warn(`⏱️ [CMD-TIMEOUT] ${effectivePrefix}${commandName} travou após ${elapsed}ms — liberando handler (anti-zumbi)`);
                     cmdLog('TIMEOUT', `travou após ${elapsed}ms`);
+                    try { agentCommand({ ..._auditBase(), ok: false, err: 'timeout', cmd_ms: elapsed }); } catch (_) {}
                     try { await sock.sendMessage(from, { text: `⏱️ *${effectivePrefix}${commandName}* demorou demais e foi interrompido. Tente novamente.` }, { quoted: m }); } catch (_) {}
                     safeDashboardLog('error', groupMetadata.subject, `⏱️ Timeout em !${commandName} após ${elapsed}ms`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                 } else {
@@ -389,12 +404,20 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                     if (isConnClosed) {
                         console.warn(`⚠️ [CMD-WARN] ${effectivePrefix}${commandName}: conexão fechada (428) após ${elapsed}ms — ignorado, reconexão automática`);
                         cmdLog('WARN', `Connection Closed (após ${elapsed}ms) — socket será reconectado`);
+                        try { agentCommand({ ..._auditBase(), ok: false, err: 'connection-closed', cmd_ms: elapsed }); } catch (_) {}
                         // Feedback ao usuário: antes era só warn no terminal e
                         // parecia que o bot ignorou o comando.
                         try { await sock.sendMessage(from, { text: `🔄 Conexão instável ao executar *${effectivePrefix}${commandName}*. Tente novamente em alguns segundos.` }, { quoted: m }); } catch (_) {}
                     } else {
                         console.error(`💥 [CMD-ERROR] ${effectivePrefix}${commandName}:`, cmdErr);
                         cmdLog('ERRO', `${cmdErr?.message || cmdErr} (após ${elapsed}ms)`);
+                        try {
+                            agentCommand({
+                                ..._auditBase(), ok: false, cmd_ms: elapsed,
+                                err: cmdErr?.message || String(cmdErr || ''),
+                                stack0: ((cmdErr?.stack || '').split('\n')[1] || '').trim()
+                            });
+                        } catch (_) {}
                         if (botActiveInGroup || !isGroup) {
                             safeDashboardLog('error', groupMetadata.subject, `❌ Erro em !${commandName} após ${elapsed}ms: ${cmdErr?.message || cmdErr}`, config.botName || 'Bot', (sock.user?.id || '').split(':')[0].split('@')[0] || 'bot', null, { toJid: from, messageId: m.key.id, senderJid: sock.user?.id || '', fromMe: true });
                         }

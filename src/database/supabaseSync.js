@@ -124,9 +124,27 @@ let _syncRunning = false;
 let _pullOk = false;
 let _pullFailed = false;
 let _pullRefusedLogged = false;
+let _dirty = false; // true = houve escrita local desde o último push bem-sucedido
 let _lastPullAt = 0;
 let _lastPushAt = 0;
 let _lastPushRefused = null;
+
+function markDirty() { _dirty = true; }
+function isDirty() { return _dirty; }
+// Push com timeout: usado no shutdown (SIGINT/SIGTERM), onde o process.exit
+// mataria um schedulePush agendado. Retorna true se subiu.
+async function pushNow(timeoutMs = 20000) {
+    try {
+        await Promise.race([
+            pushToCloud({ requirePull: false }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('push-timeout')), Math.max(1000, timeoutMs))),
+        ]);
+        return true;
+    } catch (e) {
+        try { console.error(`⚠️ [supabase] push de shutdown falhou: ${e?.message || e}`); } catch (_) {}
+        return false;
+    }
+}
 
 function _localDb() {
     return require('./db').db;
@@ -322,12 +340,30 @@ async function pullFromCloud({ log = console } = {}) {
     }
 }
 
-// Tabelas de modo (total/parcial): PUSH faz full-replace (DELETE na nuvem +
-// INSERT do local) em vez de upsert puro. Motivo: o upsert nunca apaga, então
-// !desativar / !ativar / !ativarp deixavam a linha velha na nuvem e o PULL do
-// boot (DELETE+INSERT local) ressuscitava o modo antigo. São tabelas minúsculas
-// (só jids), então o replace é barato.
-const MEMBERSHIP_REPLACE_TABLES = new Set(['active_groups', 'active_groups_partial']);
+// Tabelas com semântica de DELETE (membership, toggles por grupo, listas):
+// PUSH faz full-replace (DELETE na nuvem + INSERT do local) em vez de upsert
+// puro. Motivo: o upsert nunca apaga, então remoções/desativações locais
+// (!desativar, !news desativar, !listanegra del/limpar, !removerlogin,
+// !deletar-pessoa, !dashboard off, !newsreset, !limparfeedback...) deixavam a
+// linha velha na nuvem e o PULL do boot (DELETE+INSERT local) ressuscitava o
+// estado antigo. O valor é o filtro PostgREST do DELETE (coluna temporal da
+// tabela; group_state não tem coluna temporal — usa o PK com valor impossível,
+// já que jid é PRIMARY KEY NOT NULL e nunca é "__none__").
+// Tabelas minúsculas (só jids/flags), então o replace é barato.
+const REPLACE_TABLES = {
+    active_groups: 'activated_at=gte.0',
+    active_groups_partial: 'activated_at=gte.0',
+    news_groups: 'activated_at=gte.0',
+    group_blacklist: 'added_at=gte.0',
+    login_allowed: 'added_at=gte.0',
+    pessoas: 'created_at=gte.0',
+    antiflood_config: 'updated_at=gte.0',
+    dashboard_groups: 'updated_at=gte.0',
+    dashboard_group_info: 'updated_at=gte.0',
+    news_state: 'updated_at=gte.0',
+    feedback: 'created_at=gte.0',
+    group_state: 'jid=neq.__none__',
+};
 
 async function pushToCloud({ log = console, force = false, requirePull = true } = {}) {
     if (!isSupabaseEnabled()) return { ok: false, reason: 'not-configured' };
@@ -355,7 +391,12 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
         }
         const localDb = _localDb();
         let tables = 0, rows = 0;
-        for (const table of SYNC_TABLES) {
+        // Ordem de prioridade: tabelas pequenas e críticas primeiro, para que
+        // mesmo um push truncado (ex: SIGKILL do PM2 no meio do push de
+        // shutdown) preserve o que importa. Logs volumosos vão por último.
+        const priority = ['config', 'group_state', ...Object.keys(REPLACE_TABLES)];
+        const ordered = [...new Set([...priority.filter(t => SYNC_TABLES.includes(t)), ...SYNC_TABLES])];
+        for (const table of ordered) {
             if (!_tableExists(localDb, table)) continue;
             const cols = _tableColumns(localDb, table);
             if (!cols.length) continue;
@@ -364,11 +405,11 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
             const localRows = cap && orderCol && cols.includes(orderCol)
                 ? localDb.prepare(`SELECT * FROM "${table}" ORDER BY "${orderCol}" DESC LIMIT ${cap}`).all().reverse()
                 : localDb.prepare(`SELECT * FROM "${table}"`).all();
-            if (MEMBERSHIP_REPLACE_TABLES.has(table)) {
-                // Propaga DESATIVAÇÕES e trocas total<->parcial: limpa a nuvem e
-                // grava o estado local (vazio = "ninguém nesse modo", válido).
+            if (REPLACE_TABLES[table]) {
+                // Propaga DESATIVAÇÕES e REMOÇÕES: limpa a nuvem e grava o
+                // estado local (vazio = "ninguém nesse modo / lista vazia", válido).
                 const { supaFetch } = require('./supabaseClient');
-                await supaFetch(`/${table}?activated_at=gte.0`, { method: 'DELETE' });
+                await supaFetch(`/${table}?${REPLACE_TABLES[table]}`, { method: 'DELETE' });
                 if (!localRows.length) { tables++; continue; }
             } else if (!localRows.length) { tables++; continue; }
             // Postgres: coerção explícita (SQLite é flexível, Postgres não).
@@ -390,6 +431,7 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
             }
         }
         _lastPushAt = Date.now();
+        _dirty = false;
         _pullRefusedLogged = false;
         try { log.log(`☁️ [supabase] PUSH ok: ${rows} linhas em ${tables} tabelas (local → nuvem)`); } catch (_) {}
         return { ok: true, tables, rows };
@@ -401,6 +443,7 @@ async function pushToCloud({ log = console, force = false, requirePull = true } 
 
 function schedulePush(delayMs = 5000) {
     if (!isSupabaseEnabled() || isSyncKilled()) return;
+    markDirty();
     if (_syncTimer) return;
     _syncTimer = setTimeout(async () => {
         _syncTimer = null;
@@ -535,9 +578,9 @@ function startAutoSync({ onBootPull = true } = {}) {
 }
 
 function status() {
-    return { enabled: isSupabaseEnabled(), localOnly: isSyncKilled(), lastPullAt: _lastPullAt, lastPushAt: _lastPushAt, pullOk: _pullOk, pullFailed: _pullFailed, lastPushRefused: _lastPushRefused };
+    return { enabled: isSupabaseEnabled(), localOnly: isSyncKilled(), lastPullAt: _lastPullAt, lastPushAt: _lastPushAt, pullOk: _pullOk, pullFailed: _pullFailed, dirty: _dirty, lastPushRefused: _lastPushRefused };
 }
 
 function markPullOk() { _pullOk = true; _pullFailed = false; }
 
-module.exports = { pullFromCloud, pushToCloud, schedulePush, startAutoSync, stopAutoSync, setLocalMode, getMode, status, SYNC_TABLES, backupCloud, validateBeforePush, markPullOk, isSyncKilled };
+module.exports = { pullFromCloud, pushToCloud, schedulePush, pushNow, markDirty, isDirty, startAutoSync, stopAutoSync, setLocalMode, getMode, status, SYNC_TABLES, backupCloud, validateBeforePush, markPullOk, isSyncKilled };
