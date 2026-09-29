@@ -3,28 +3,27 @@ module.exports = {
     category: 'grupos',
     description: 'Desliga o bot no grupo',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, reactStatus, deactivateGroup, getAdmins, isUserAdmin, normalizeJid, canAdminControl, canConfigureBot } = utils;
+        const { react, reactStatus, deactivateGroup, normalizeJid, canActivateBotAsync, canConfigureBot } = utils;
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
         const senderNorm = normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
+        // SÓ dono da sessão ou sub-dono pode desativar. Admin de grupo NÃO desativa.
         let allowed = isBotOwner;
-        if (!allowed && typeof canConfigureBot === 'function') {
-            try { if (canConfigureBot(sock, m, sender, from).ok) allowed = true; } catch (_) {}
-        }
-        if (!allowed && canAdminControl()) {
+        if (!allowed) {
             try {
-                const adminsRaw = await getAdmins(sock, from);
-                allowed = isUserAdmin(sender, adminsRaw);
+                if (typeof canActivateBotAsync === 'function') {
+                    if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
+                } else if (typeof canConfigureBot === 'function') {
+                    if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                }
             } catch (_) {}
         }
 
         if (!allowed) {
-            const msg = canAdminControl()
-                ? '❌ Apenas o dono, sub-donos ou admins do grupo podem desativar o bot.'
-                : '❌ Apenas o dono ou sub-donos podem desativar o bot neste grupo.';
+            const msg = '❌ Apenas o dono ou sub-donos podem desativar o bot neste grupo.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 

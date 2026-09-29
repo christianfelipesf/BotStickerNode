@@ -5,28 +5,27 @@ module.exports = {
     category: 'grupos',
     description: 'Liga o bot no grupo em modo parcial (mídia + interação + tts; espera 10s antes de responder)',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, activatePartial, getPartialWaitMs, getAdmins, isUserAdmin, normalizeJid, canAdminControl, canConfigureBot } = utils;
+        const { react, activatePartial, getPartialWaitMs, normalizeJid, canActivateBotAsync, canConfigureBot } = utils;
         if (!isGroup) return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
         const senderNorm = normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
+        // SÓ dono da sessão ou sub-dono pode ativar. Admin de grupo NÃO ativa.
         let allowed = isBotOwner;
-        if (!allowed && typeof canConfigureBot === 'function') {
-            try { if (canConfigureBot(sock, m, sender, from).ok) allowed = true; } catch (_) {}
-        }
-        if (!allowed && canAdminControl()) {
+        if (!allowed) {
             try {
-                const adminsRaw = await getAdmins(sock, from);
-                allowed = isUserAdmin(sender, adminsRaw);
+                if (typeof canActivateBotAsync === 'function') {
+                    if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
+                } else if (typeof canConfigureBot === 'function') {
+                    if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                }
             } catch (_) {}
         }
 
         if (!allowed) {
-            const msg = canAdminControl()
-                ? '❌ Apenas o dono, sub-donos ou admins do grupo podem ativar o bot.'
-                : '❌ Apenas o dono ou sub-donos podem ativar o bot neste grupo.';
+            const msg = '❌ Apenas o dono ou sub-donos podem ativar o bot neste grupo.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 

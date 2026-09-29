@@ -385,6 +385,15 @@ function hasMediaContent(post) {
     return !!(m.image || m.video || m.thumbnail || m.videoBuffer);
 }
 
+// Modo mídia-only do !news: SÓ imagem/vídeo real com título. Thumbnail sozinha
+// (preview do Reddit) NÃO conta — post texto-only ou só-thumb é descartado.
+function hasRealMediaContent(post) {
+    const m = (post && post.media) || {};
+    if (!(m.image || m.video || m.videoBuffer)) return false;
+    if (!String(post?.title || '').trim()) return false;
+    return true;
+}
+
 // Busca o selftext via JSON API (mesmos endpoints/UAs do vídeo).
 // Só deve ser chamado para posts SEM mídia. Devolve string ou null.
 async function fetchSelftextFromJson(postId, userAgent) {
@@ -723,19 +732,8 @@ async function convertGifToMp4(buffer) {
 async function sendOne(sock, jid, post, sub, showMeta) {
     const cfg = readConfig();
     const media = post.media || {};
-    // Fallback texto via JSON API — SÓ para posts sem mídia e com selftext
-    // vazio (1 tentativa por post, reutilizada entre grupos). Com mídia o
-    // envio segue título+mídia, sem request extra.
-    if (!hasMediaContent(post) && !String(post.selftext || '').trim() && post.id && !post._selftextFetched) {
-        post._selftextFetched = true;
-        try {
-            const txt = await fetchSelftextFromJson(post.id, cfg.newsUserAgent);
-            if (txt) {
-                post.selftext = txt;
-                newsLog(`r/${sub}: selftext obtido via JSON API para ${post.id}.`);
-            }
-        } catch (_) {}
-    }
+    // Mídia-only: sem imagem/vídeo real não envia nada (nem texto).
+    if (!hasRealMediaContent(post)) return null;
     const caption = buildCaption(post, sub, showMeta);
     const isVideoPostFlag = !!(post.isVideoPost || media.isVideoPost);
     // Log de diagnóstico só uma vez por post (não por grupo).
@@ -796,24 +794,11 @@ async function sendOne(sock, jid, post, sub, showMeta) {
     }
 
     if (media.image) {
-        // Se é post de vídeo e o JSON não retornou URL, NÃO cai no fallback
-        // de imagem (que enviaria thumbnail estática como "imagem" no WhatsApp).
-        // Envia apenas a thumbnail como imagem estática + caption normal (sem link).
-        if (isVideoPostFlag && !media.video) {
-            newsErrOnce(`video-fallback:${post.id}`, `r/${sub} post ${post.id}: vídeo sem URL acessível — enviando só thumbnail.`);
-            try {
-                const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
-                if (dl && dl.buffer && dl.buffer.length > 0) {
-                    const payload = { image: dl.buffer, mimetype: coerceMime(dl.mime, 'image', 'image/jpeg') };
-                    if (caption) payload.caption = caption;
-                    return await sendMessageSafe(sock, jid, payload, retryOpts);
-                }
-            } catch (_) {}
-            // Fallback final: só texto com caption
-            if (caption) {
-                return await sendMessageSafe(sock, jid, { text: caption }, retryOpts);
-            }
-            return;
+        // Mídia-only: post de vídeo sem vídeo acessível é descartado (não envia
+        // thumbnail estática nem texto).
+        if (isVideoPostFlag && !media.video && !media.videoBuffer) {
+            newsErrOnce(`video-fallback:${post.id}`, `r/${sub} post ${post.id}: vídeo sem URL acessível — descartado (mídia-only).`);
+            return null;
         }
         try {
             const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
@@ -852,12 +837,10 @@ async function sendOne(sock, jid, post, sub, showMeta) {
         }
     }
 
-    // Fallback texto: se não há mídia para enviar (post só-texto ou download
-    // de mídia falhou), entrega título+texto. O `showMeta` controla apenas se
-    // o permalink vai na legenda (ver buildCaption), não se o texto é enviado.
-    if (caption) {
-        return await sendMessageSafe(sock, jid, { text: caption }, retryOpts);
-    }
+    // Mídia-only: sem imagem/vídeo entregue, não envia texto. Retorna null para
+    // o poll tratar como não-entregue (e marcar como visto, sem loop).
+    newsLogOnce(`skip-text:${post.id}`, `r/${sub} post ${post.id} sem mídia entregável — descartado (mídia-only).`);
+    return null;
 }
 
 // Enfileira um post para envio. Retorna true se enfileirado.
@@ -1042,17 +1025,13 @@ async function pollOnce() {
                 }
             }
 
-            // Prefetch do selftext UMA vez por poll para posts SEM mídia com
-            // texto vazio. Com mídia, mantém título+mídia (sem request extra).
-            if (!hasMediaContent(latest) && !String(latest.selftext || '').trim() && latest.id) {
-                latest._selftextFetched = true;
-                try {
-                    const txt = await fetchSelftextFromJson(latest.id, cfg.newsUserAgent);
-                    if (txt) {
-                        latest.selftext = txt;
-                        newsLog(`r/${sub}: selftext obtido via JSON API para ${latest.id}.`);
-                    }
-                } catch (_) {}
+            // Mídia-only: sem imagem/vídeo real nem tenta publicar. Marca como
+            // visto (senão o poll pega o mesmo posts[0] em loop) e pula.
+            if (!hasRealMediaContent(latest)) {
+                newsLog(`r/${sub}: post ${latest.id} sem mídia real — ignorado (mídia-only).`);
+                lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };
+                setNewsState(STATE_KEY, lastSeen);
+                continue;
             }
 
             newsLog(`r/${sub}: novo último post ${latest.id} — publicando.`);
@@ -1086,9 +1065,9 @@ async function pollOnce() {
 
             // Marca como visto SOMENTE após entrega. Se todos os envios
             // falharem, o post é retentado no próximo poll em vez de perdido
-            // para sempre. Posts sem nenhum conteúdo enviável são marcados
-            // para não entrar em loop infinito.
-            const hasSendableContent = !!(latest.title || latest.selftext || latestMedia.image || latestMedia.video || latestMedia.thumbnail);
+            // para sempre. Posts sem mídia real são marcados para não entrar
+            // em loop infinito (modo mídia-only: texto nunca é enviável).
+            const hasSendableContent = hasRealMediaContent(latest);
             if (anyDelivered || !hasSendableContent) {
                 if (!hasSendableContent) newsLog(`r/${sub}: post ${latest.id} sem conteúdo enviável — marcando como visto.`);
                 lastSeen[sub] = { id: latest.id, imageUrl: normalizeMediaUrl(currentImage), at: Date.now() };

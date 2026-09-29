@@ -36,7 +36,7 @@ module.exports = {
     category: 'grupos',
     description: 'Ativa/desativa o feed automático de notícias do Reddit no grupo',
     async execute(sock, m, { from, isGroup, sender, config, utils, fullArgsText, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, setNewsEnabled, isNewsEnabled, listNewsGroups, readConfig, normalizeJid, getAdmins, isUserAdmin, canAdminControl } = utils;
+        const { react, setNewsEnabled, isNewsEnabled, listNewsGroups, readConfig, normalizeJid, getAdmins, isUserAdmin, canAdminControl, canActivateBotAsync, canConfigureBot } = utils;
 
         if (!isGroup) {
             await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
@@ -51,6 +51,16 @@ module.exports = {
             const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
             let allowed = isBotOwner;
+            // Sub-dono pode ativar (com fallback LID->telefone).
+            if (!allowed) {
+                try {
+                    if (typeof canActivateBotAsync === 'function') {
+                        if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
+                    } else if (typeof canConfigureBot === 'function') {
+                        if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                    }
+                } catch (_) {}
+            }
             if (!allowed && canAdminControl()) {
                 try {
                     const adminsRaw = await getAdmins(sock, from);
@@ -60,8 +70,8 @@ module.exports = {
 
             if (!allowed) {
                 const msg = canAdminControl()
-                    ? '❌ Apenas o dono do bot ou admins do grupo podem ativar o feed de notícias.'
-                    : '❌ Apenas o dono do bot pode ativar o feed de notícias neste grupo.';
+                    ? '❌ Apenas o dono do bot, sub-donos ou admins do grupo podem ativar o feed de notícias.'
+                    : '❌ Apenas o dono do bot ou sub-donos podem ativar o feed de notícias neste grupo.';
                 await sock.sendMessage(from, { text: msg }, { quoted: m });
                 return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             }
@@ -85,6 +95,16 @@ module.exports = {
             const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
             let allowed = isBotOwner;
+            // Sub-dono pode desativar (com fallback LID->telefone).
+            if (!allowed) {
+                try {
+                    if (typeof canActivateBotAsync === 'function') {
+                        if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
+                    } else if (typeof canConfigureBot === 'function') {
+                        if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                    }
+                } catch (_) {}
+            }
             if (!allowed && canAdminControl()) {
                 try {
                     const adminsRaw = await getAdmins(sock, from);
@@ -94,8 +114,8 @@ module.exports = {
 
             if (!allowed) {
                 const msg = canAdminControl()
-                    ? '❌ Apenas o dono do bot ou admins do grupo podem desativar o feed de notícias.'
-                    : '❌ Apenas o dono do bot pode desativar o feed de notícias neste grupo.';
+                    ? '❌ Apenas o dono do bot, sub-donos ou admins do grupo podem desativar o feed de notícias.'
+                    : '❌ Apenas o dono do bot ou sub-donos podem desativar o feed de notícias neste grupo.';
                 await sock.sendMessage(from, { text: msg }, { quoted: m });
                 return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             }

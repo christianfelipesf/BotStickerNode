@@ -13,26 +13,37 @@ module.exports = {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode adicionar sub-donos.' }, { quoted: m });
         }
 
-        // Extrai candidato: menção, citação ou dígitos digitados
+        // Extrai candidato: prioriza dígitos digitados (à prova de @lid).
+        // Menção (@) ou citação em grupo com privacidade LID resolve para ID
+        // opaco — gravar isso no subOwners quebra o match depois. Por isso:
+        // 1) se o texto tem dígitos, usa os dígitos; 2) menção @lid é rejeitada.
         let candidate = null;
+        let mentionedRaw = null;
         try {
             const ctx = m.message?.extendedTextMessage?.contextInfo || utils.getContextInfo?.(m.message) || {};
             if (Array.isArray(ctx.mentionedJid) && ctx.mentionedJid.length > 0) {
-                candidate = ctx.mentionedJid[0];
+                mentionedRaw = ctx.mentionedJid[0];
             } else if (ctx.participant) {
-                candidate = ctx.participant;
+                mentionedRaw = ctx.participant;
             }
         } catch (_) {}
-        if (!candidate && fullArgsText) {
-            candidate = utils.extractPhoneFromText
+        if (fullArgsText) {
+            const fromText = utils.extractPhoneFromText
                 ? utils.extractPhoneFromText(fullArgsText)
                 : String(fullArgsText).replace(/\D/g, '');
+            if (fromText) candidate = fromText;
         }
         if (!candidate && Array.isArray(args)) {
             for (const a of args) {
                 const d = utils.normalizePhoneNumber ? utils.normalizePhoneNumber(a, { min: 10 }) : String(a).replace(/\D/g, '');
                 if (d) { candidate = d; break; }
             }
+        }
+        if (!candidate && mentionedRaw) {
+            if (String(mentionedRaw).endsWith('@lid')) {
+                return await sock.sendMessage(from, { text: '❌ Não consegui identificar o número (menção @lid sem telefone visível).\n\n💡 Use: !addsubdono 5598989138217 (digite o número com DDI+DDD).' }, { quoted: m });
+            }
+            candidate = mentionedRaw;
         }
 
         if (!candidate) {

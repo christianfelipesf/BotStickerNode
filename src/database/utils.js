@@ -338,6 +338,89 @@ function canConfigureBot(sock, m, sender, from) {
     } catch (_) { return { ok: false, owner: false, sub: false }; }
 }
 
+// Resolve LID -> telefone via metadata do grupo (para grupos com privacidade
+// LID onde o Baileys não entrega participantPn/senderPn). Retorna dígitos ou null.
+async function resolveLidPhoneInGroup(sock, lidUser, groupJid) {
+    if (!sock || !lidUser || !groupJid) return null;
+    const lid = String(lidUser).split('@')[0].split(':')[0];
+    if (!lid) return null;
+    let meta = null;
+    try {
+        meta = await sock.groupMetadata(groupJid);
+    } catch (_) { return null; }
+    const parts = meta?.participants || [];
+    for (const p of parts) {
+        try {
+            const cands = [p?.id, p?.jid, p?.lid, p?.phoneNumber, p?.pn].filter(Boolean).map(String);
+            const users = cands.map(c => c.split('@')[0].split(':')[0]);
+            if (!users.includes(lid)) continue;
+            for (const c of cands) {
+                if (String(c).endsWith('@s.whatsapp.net')) {
+                    const d = normalizeLoginPhone(String(c).split('@')[0]);
+                    if (d) return d;
+                }
+            }
+            // pn sem domínio
+            for (const c of cands) {
+                const d = normalizeLoginPhone(String(c).split('@')[0]);
+                if (d && !users.some(u => u === d)) {
+                    // só aceita se parecer telefone (normalizou p/ 8-15 dígitos)
+                    return d;
+                }
+            }
+        } catch (_) {}
+    }
+    return null;
+}
+
+// Versão async: tenta Pn direto e, se vazio, resolve LID via metadata.
+async function resolveSenderPhonesAsync(sock, m, sender, from) {
+    try {
+        const sync = getSenderLoginPhones(m, sender, from);
+        if (Array.isArray(sync) && sync.length > 0) return sync;
+    } catch (_) {}
+    try {
+        if (sender && String(sender).endsWith('@lid') && from && String(from).endsWith('@g.us')) {
+            const phone = await resolveLidPhoneInGroup(sock, sender, from);
+            if (phone) return [phone];
+        }
+        // participant @lid sem sender resolvido
+        const part = m?.key?.participant;
+        if (part && String(part).endsWith('@lid') && from && String(from).endsWith('@g.us')) {
+            const phone = await resolveLidPhoneInGroup(sock, part, from);
+            if (phone) return [phone];
+        }
+    } catch (_) {}
+    return [];
+}
+
+async function isSubOwnerSenderAsync(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: false, owner: true, sub: false };
+        let phones = [];
+        try { phones = getSenderLoginPhones(m, sender, from) || []; } catch (_) { phones = []; }
+        if (!phones || phones.length === 0) {
+            try { phones = await resolveSenderPhonesAsync(sock, m, sender, from) || []; } catch (_) { phones = []; }
+        }
+        const subs = getSubOwners();
+        for (const p of phones) {
+            if (subs.includes(p)) return { ok: true, owner: false, sub: true, phone: p };
+        }
+        return { ok: false, owner: false, sub: false };
+    } catch (_) { return { ok: false, owner: false, sub: false }; }
+}
+
+// !ativar/!desativar/!ativarp/!desativarp: SÓ dono da sessão ou sub-dono.
+// Admin de grupo NÃO ativa mais (decisão do dono).
+async function canActivateBotAsync(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: true, owner: true, sub: false };
+        const r = await isSubOwnerSenderAsync(sock, m, sender, from);
+        if (r.ok) return { ok: true, owner: false, sub: true, phone: r.phone };
+        return { ok: false, owner: false, sub: false };
+    } catch (_) { return { ok: false, owner: false, sub: false }; }
+}
+
 function addSubOwner(phoneOrJid) {
     const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
     if (!phone) return { ok: false, error: 'Número inválido. Use: !addsubdono 5598989138217' };
@@ -1103,7 +1186,7 @@ function setGroupData(jid, data) {
     const cur = ensureGroupState(jid);
     const curParsed = parseGroupState(cur);
     const merged = { ...curParsed };
-    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly']);
+    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly', 'inactiveNoticed']);
     merged.extra = { ...(curParsed.extra || {}) };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
@@ -2297,6 +2380,7 @@ module.exports = {
     normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
     getSenderLoginPhones, isBotOwner, canUseLogin,
     getSubOwners, isSubOwnerPhone, isSubOwnerSender, canConfigureBot, addSubOwner, removeSubOwner,
+    resolveLidPhoneInGroup, resolveSenderPhonesAsync, isSubOwnerSenderAsync, canActivateBotAsync,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,

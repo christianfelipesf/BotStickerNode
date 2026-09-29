@@ -24,7 +24,7 @@ module.exports = {
     category: 'geral',
     description: 'Rank global mensal: top 10 pessoas mais conversadoras + foto dos top 3 grupos',
     async execute(sock, m, { from, isGroup, sender, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, getBotName, getGlobalMonthlyRank, getTopGroupsByActivity, groupMetadataCached, _getCurrentMonthKey, _getMonthLabelBr, getGroupData, getThemeForJid } = utils;
+        const { react, getBotName, getGlobalMonthlyRank, getTopGroupsByActivity, normalizeJid, isActiveGroup, isPartialActive, getGroupData, getThemeForJid, _getCurrentMonthKey, _getMonthLabelBr } = utils;
 
         const themeId = (typeof getThemeForJid === 'function' ? getThemeForJid(from) : ((isGroup ? getGroupData(from).theme : null) || 'default'));
         const theme = getTheme(themeId);
@@ -36,7 +36,9 @@ module.exports = {
         const monthLabel = _getMonthLabelBr ? _getMonthLabelBr(monthKey) : monthKey;
 
         const ranking = (typeof getGlobalMonthlyRank === 'function' ? getGlobalMonthlyRank(10) : []) || [];
-        const topGroupsRaw = (typeof getTopGroupsByActivity === 'function' ? getTopGroupsByActivity(3) : []) || [];
+        // Busca mais candidatos que o necessário: grupos que o bot saiu (só
+        // histórico no banco) são descartados abaixo até sobrar o top 3 válido.
+        const topGroupsRaw = (typeof getTopGroupsByActivity === 'function' ? getTopGroupsByActivity(10) : []) || [];
 
         // --- avatares do top 10 (tenta direto no jid; LID também funciona no profilePictureUrl) ---
         let rankingWithAvatar = ranking;
@@ -50,14 +52,36 @@ module.exports = {
             }));
         } catch (_) { rankingWithAvatar = ranking; }
 
-        // --- nome + foto dos top 3 grupos ---
+        // --- nome + foto dos top 3 grupos (SÓ grupos que o bot participa) ---
         const topGroups = [];
+        let botUser = '';
+        try { botUser = normalizeJid(sock?.user?.id || '').split('@')[0]; } catch (_) {}
         for (const g of topGroupsRaw) {
-            let name = g.jid;
+            if (topGroups.length >= 3) break;
+            if (!g || !g.jid || !String(g.jid).endsWith('@g.us')) continue;
+            // 1) Precisa estar ativo (total ou parcial) — histórico sozinho não basta.
             try {
-                const meta = await groupMetadataCached(sock, g.jid).catch(() => null);
-                if (meta?.subject) name = meta.subject;
+                const active = (typeof isActiveGroup === 'function' && isActiveGroup(g.jid))
+                    || (typeof isPartialActive === 'function' && isPartialActive(g.jid));
+                if (!active) continue;
             } catch (_) {}
+            // 2) Metadata direto (sem cache mascarado): falhou = bot saiu/foi removido.
+            let meta = null;
+            try { meta = await sock.groupMetadata(g.jid); } catch (_) { continue; }
+            if (!meta || !meta.subject) continue;
+            // 3) Bot precisa estar entre os participantes atuais.
+            try {
+                const parts = meta.participants || [];
+                const botIn = parts.some((p) => {
+                    try {
+                        const ids = [p?.id, p?.jid, p?.lid, p?.phoneNumber].filter(Boolean).map(String);
+                        if (ids.some((x) => { try { return normalizeJid(x).split('@')[0] === botUser; } catch (_) { return false; } })) return true;
+                        return ids.some((x) => String(x).split('@')[0].split(':')[0] === botUser);
+                    } catch (_) { return false; }
+                });
+                if (!botIn) continue;
+            } catch (_) { continue; }
+            const name = meta.subject;
             let avatar = null;
             try {
                 const url = await sock.profilePictureUrl(g.jid, 'image').catch(() => null);

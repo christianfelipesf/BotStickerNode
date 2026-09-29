@@ -12,26 +12,72 @@ const {
     readConfig, saveMessage,
     getBotName, react, getMessageText,
     isDashboardEnabled, groupMetadataCached, updateMemberActivity, recordGroupMessage,
-    readStats, getPrefixForJid
+    readStats, getPrefixForJid, getGroupData, setGroupData
 } = require('../database/utils');
 
 // ============================================================
-// Deduplication
+// Deduplication (TTL por mensagem — nunca clear() total)
 // ============================================================
-const processedMessages = new Set();
+const processedMessages = new Map(); // dedupKey -> timestamp ms
 const DEDUP_MAX = 5000;
-setInterval(() => processedMessages.clear(), 10 * 60 * 1000).unref();
+const DEDUP_TTL_MS = 24 * 60 * 60 * 1000; // 24h: cobre replays de reconnect
+const REPLAY_MAX_AGE_MS = 5 * 60 * 1000; // re-entrega com +5min é replay: ignora
 
 function _evictDedupIfNeeded() {
-    // Antes: clear() total perdia a janela de dedup (duplicata reprocessada).
-    // Agora: remove só os mais antigos (Set preserva ordem de inserção).
+    // Remove expirados primeiro; se ainda estourar, remove os mais antigos
+    // (Map preserva ordem de inserção).
+    try {
+        const now = Date.now();
+        for (const [k, ts] of processedMessages) {
+            if (now - ts > DEDUP_TTL_MS) processedMessages.delete(k);
+            else break; // mais recentes adiante — para
+        }
+    } catch (_) {}
     if (processedMessages.size > DEDUP_MAX) {
-        let n = 1000;
-        for (const k of processedMessages) {
+        let n = processedMessages.size - DEDUP_MAX + 1000;
+        for (const k of processedMessages.keys()) {
             processedMessages.delete(k);
             if (--n <= 0) break;
         }
     }
+}
+
+// ============================================================
+// Aviso de grupo não ativado — UMA única vez por grupo (nunca repete)
+// ============================================================
+// Flag em memória (rápido) + persistida em group_state.extra.inactiveNoticed
+// (sobrevive a restart). Quando avisado, nunca mais avisa naquele grupo.
+const inactiveNoticedGroups = new Set();
+
+function hasInactiveNoticed(from) {
+    try {
+        if (inactiveNoticedGroups.has(from)) return true;
+        const gd = getGroupData(from) || {};
+        if (gd.inactiveNoticed) { inactiveNoticedGroups.add(from); return true; }
+    } catch (_) {}
+    return false;
+}
+
+function markInactiveNoticed(from) {
+    try { inactiveNoticedGroups.add(from); } catch (_) {}
+    try { setGroupData(from, { inactiveNoticed: true }); } catch (_) {}
+}
+
+// Envia o aviso "bot ainda não ativado" uma única vez por grupo.
+// Retorna true se enviou, false se já tinha avisado (ou falhou).
+async function maybeSendInactiveNotice(sock, m, from, effectivePrefix, config) {
+    try {
+        if (!from || !String(from).endsWith('@g.us')) return false;
+        if (m?.key?.fromMe) return false;
+        if (hasInactiveNoticed(from)) return false;
+        markInactiveNoticed(from);
+        let botName = 'Bot';
+        try { botName = getBotName(from, config); } catch (_) {}
+        const text = `🤖 *${botName}* ainda não foi ativado neste grupo.\n\n` +
+            `⏳ Aguarde até que o dono ou um sub-dono ative com *${effectivePrefix}ativar*.`;
+        await sock.sendMessage(from, { text }, { quoted: m });
+        return true;
+    } catch (_) { return false; }
 }
 
 // ============================================================
@@ -120,7 +166,11 @@ module.exports = {
 async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
     if (!m?.key) return;
             const dedupKey = `${m.key.remoteJid || ''}:${m.key.id || ''}`;
-            if (!m.message || processedMessages.has(dedupKey)) return;
+            try {
+                const seenAt = processedMessages.get(dedupKey);
+                if (seenAt && (Date.now() - seenAt) < DEDUP_TTL_MS) return;
+                if (!m.message) return;
+            } catch (_) { if (!m.message) return; }
 
             let messageTime = 0;
             if (m.messageTimestamp) {
@@ -130,9 +180,17 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                 if (messageTime > 1e12) messageTime = Math.floor(messageTime / 1000);
             }
             if (messageTime < Math.floor(startTime / 1000) + 2) return;
+            // Replay antigo (reconnect/offline re-entregando notify de minutos
+            // atrás): ignora. Não afeta mensagens novas nem fromMe.
+            try {
+                if (messageTime > 0 && !m.key.fromMe) {
+                    const ageMs = Date.now() - messageTime * 1000;
+                    if (ageMs > REPLAY_MAX_AGE_MS) return;
+                }
+            } catch (_) {}
 
             _evictDedupIfNeeded();
-            processedMessages.add(dedupKey);
+            try { processedMessages.set(dedupKey, Date.now()); } catch (_) {}
 
             const from = m.key.remoteJid;
             if (!from) return;
@@ -216,6 +274,12 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             }
 
             // === Prefix query ===
+            // Em grupo não ativado, "prefixo" também recebe o aviso único
+            // (1x por grupo, nunca repete) em vez de silêncio.
+            if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && !botActive && isGroup && !isPartialActive(from)) {
+                await maybeSendInactiveNotice(sock, m, from, effectivePrefix, config);
+                return;
+            }
             if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && botActive) {
                 const botName = getBotName(from, config);
                 const prefixText = `*${botName} — Prefixo* ⌨️\n_prefixo atual_\n\n` +
@@ -238,9 +302,11 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (!cmd) return;
 
             // === Activation control commands always work ===
-            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'statusp', 'dashboard', 'dash', 'painel', 'dashdel', 'dashremover', 'dashremove'];
+            const activationControlCmds = ['ativar', 'desativar', 'ativarp', 'desativarp', 'status', 'statusp', 'dashboard', 'dash', 'painel', 'dashdel', 'dashremover', 'dashremove', 'news', 'noticias', 'feed'];
             const isPartActive = isGroup && isPartialActive(from);
             if (isGroup && !botActive && !isPartActive && !activationControlCmds.includes(cmd.name)) {
+                // Grupo novo/não ativado: avisa UMA única vez (nunca repete).
+                await maybeSendInactiveNotice(sock, m, from, effectivePrefix, config);
                 return;
             }
 
