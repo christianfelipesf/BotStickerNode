@@ -3,7 +3,7 @@ module.exports = {
     aliases: ['ia', 'grok', 'gemini', 'gpt', 'chatgpt'],
     category: 'ai',
     description: 'Pergunta para a inteligência artificial',
-    async execute(sock, m, { from, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN, abortSignal }) {
+    async execute(sock, m, { from, isGroup, sender, senderName, commandName, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN, abortSignal }) {
         const { react, reactStatus, getMessageText } = utils;
         if (!model) {
             await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
@@ -35,7 +35,23 @@ module.exports = {
                 return lastBotResponse;
             }
 
-            let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN); 
+            // Contexto de fundo (comandos, grupos, grupo atual, admin,
+            // solicitante, 3 msgs anteriores) — só referência, não é assunto.
+            let currentBotResponse = await react(sock, m, '🤖', lastBotResponse, GLOBAL_COOLDOWN);
+            try {
+                const { buildAIContextBlock } = require('../services/aiContext');
+                const ctxBlock = await buildAIContextBlock(sock, { from, isGroup, sender, senderName, commandName, m, config, utils });
+                if (ctxBlock) {
+                    // Garante que bloco + pergunta caibam no teto do setupAI
+                    // (maxPromptLength): corta a pergunta, nunca o contexto.
+                    const budget = Math.max(500, maxPromptLength - ctxBlock.length - 50);
+                    if (prompt.length > budget) {
+                        prompt = prompt.slice(0, budget) + '\n[Nota: mensagem truncada para caber o contexto.]';
+                    }
+                    prompt = `${ctxBlock}\n\nPergunta:\n${prompt}`;
+                }
+            } catch (_) { /* sem contexto, segue só com a pergunta */ }
+
             const result = await model.generateContent(prompt, { signal: abortSignal });
             const text = String(result.response.text() ?? '').trim();
             if (!text) throw new Error('Resposta vazia da IA');

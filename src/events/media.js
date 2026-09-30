@@ -35,7 +35,7 @@ const {
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif, mediaToGifVideo,
     isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
-    getGroupData
+    getGroupData, canUseViewOnce, viewOnceBlockedMessage
 } = require('../database/utils');
 const stickerLog = (()=>{ try{ return require('../services/stickerLog'); }catch(_){ return null; } })();
 const { withChannelContext } = require('../services/channelPromo');
@@ -257,6 +257,19 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
 
         const isSticker = !!mediaMessage.stickerMessage;
         const isViewOnceMsg = isViewOnce(targetMsg.message);
+
+        // Trava revealAdminOnly: view-once reaproveitada via sticker/toimg/
+        // togif/speed também exige admin (senão o !revelar seria burlado).
+        // Cópia já revelada (sem wrapper viewOnce) continua liberada.
+        if (isViewOnceMsg && action !== 'reveal') {
+            try {
+                const allowed = await canUseViewOnce(sock, from, m);
+                if (!allowed) {
+                    try { await sock.sendMessage(from, { text: viewOnceBlockedMessage() }, { quoted: m }); } catch (_) {}
+                    return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                }
+            } catch (_) { /* em erro mantém liberado (padrão) */ }
+        }
 
         lastBotResponse = await react(sock, m, '⏳', lastBotResponse, GLOBAL_COOLDOWN);
 

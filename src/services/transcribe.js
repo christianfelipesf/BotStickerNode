@@ -419,6 +419,26 @@ async function transcribeAudioMessage(sock, from, m, { config, utils, language, 
         throw new Error('Marque um áudio/vídeo ou envie o áudio com a legenda !transcrever.');
     }
 
+    // Trava revealAdminOnly: áudio/vídeo view-once transcrito também exige
+    // admin (senão o !revelar seria burlado via !transcrever).
+    try {
+        const isVO = typeof utils?.isViewOnce === 'function' ? utils.isViewOnce(resolved.targetMsg.message) : false;
+        if (isVO) {
+            const canUse = typeof utils?.canUseViewOnce === 'function'
+                ? await utils.canUseViewOnce(sock, from, m)
+                : true;
+            if (!canUse) {
+                const msg = typeof utils?.viewOnceBlockedMessage === 'function'
+                    ? utils.viewOnceBlockedMessage()
+                    : '🔒 Apenas *admins* podem usar mídia de visualização única neste grupo.';
+                throw Object.assign(new Error(msg), { code: 'VIEWONCE_ADMIN_ONLY' });
+            }
+        }
+    } catch (e) {
+        if (e?.code === 'VIEWONCE_ADMIN_ONLY') throw e;
+        /* em erro de verificação mantém liberado (padrão) */
+    }
+
     const seconds = resolved.mediaMessage.audioMessage?.seconds
         ?? resolved.mediaMessage.videoMessage?.seconds
         ?? null;

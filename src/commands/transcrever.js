@@ -20,6 +20,10 @@ module.exports = {
             return await reactStatus(sock, m, from, true, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (e) {
             if (e?.code === 'ABORTED' || abortSignal?.aborted) return currentBotResponse;
+            if (e?.code === 'VIEWONCE_ADMIN_ONLY') {
+                await sock.sendMessage(from, { text: String(e?.message || '🔒 Apenas *admins* podem usar mídia de visualização única neste grupo.') }, { quoted: m });
+                return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);
+            }
             const msg = String(e?.message || 'Erro desconhecido').slice(0, 300);
             console.error('❌ [TRANSCREVER] Erro:', e?.response?.data || e.message || e);
             await sock.sendMessage(from, { text: `❌ ${msg}` }, { quoted: m });

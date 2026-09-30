@@ -111,6 +111,77 @@ function dedupeSubreddits(list) {
     return out;
 }
 
+// Extrai o nome do sub de formatos variados: "pics", "r/pics", "/r/pics/",
+// "https://www.reddit.com/r/pics", ".../r/pics/new/", "reddit.com/r/pics".
+// Retorna o nome normalizado ou '' se não der para extrair.
+function extractSubredditName(raw) {
+    let s = String(raw || '').trim().replace(/^\/+/, '');
+    if (!s) return '';
+    // URL do reddit (com ou sem protocolo/www, com sufixos /new/.rss etc).
+    const urlM = s.match(/(?:https?:\/\/)?(?:www\.|old\.|new\.|m\.)?reddit\.com\/r\/([A-Za-z0-9_]+)/i);
+    if (urlM) return urlM[1].toLowerCase();
+    // u/nome é usuário, não sub — rejeita explicitamente.
+    if (/^u\//i.test(s)) return '';
+    return normalizeSubreddit(s);
+}
+
+function isValidSubredditName(name) {
+    return /^[a-z0-9_]{2,32}$/.test(String(name || ''));
+}
+
+// Quebra texto livre em candidatos: aceita vírgula, espaço, quebra de linha
+// e pipes. Retorna { valid: [...], invalid: [...] } (dedup, ordem mantida).
+function parseSubredditInput(text) {
+    const valid = [];
+    const invalid = [];
+    const seen = new Set();
+    const tokens = String(text || '').split(/[,\s|;]+/).map(t => t.trim()).filter(Boolean);
+    for (const tok of tokens) {
+        const name = extractSubredditName(tok);
+        if (!name || !isValidSubredditName(name)) {
+            if (!seen.has(tok.toLowerCase())) invalid.push(tok);
+            seen.add(tok.toLowerCase());
+            continue;
+        }
+        if (seen.has(name)) continue;
+        seen.add(name);
+        valid.push(name);
+    }
+    return { valid, invalid };
+}
+
+// Teste live ANTES de adicionar: busca o /new/.rss sem efeitos colaterais
+// (não toca em cooldowns/rate-limit do loop de polling).
+// httpGet injetável para testes: (url, opts) => Promise<{status, data}>.
+// Retorna { ok, reason } — reason: 'inexistente' | 'rate-limit' | 'rede' | 'vazio'.
+async function probeSubreddit(sub, userAgent, httpGet) {
+    const get = httpGet || axios.get;
+    const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/new/.rss`;
+    let res;
+    try {
+        res = await get(url, {
+            timeout: HTTP_TIMEOUT_MS,
+            headers: buildHeaders(userAgent),
+            responseType: 'text',
+            validateStatus: () => true,
+            transformResponse: [(data) => data]
+        });
+    } catch (e) {
+        return { ok: false, reason: 'rede' };
+    }
+    const status = res?.status;
+    if (status === 404 || status === 403 || status === 410) return { ok: false, reason: 'inexistente' };
+    if (status === 429 || status === 503) return { ok: false, reason: 'rate-limit' };
+    if (status !== 200 || !res?.data) return { ok: false, reason: 'rede' };
+    const head = String(res.data).slice(0, 500).toLowerCase();
+    if (head.includes('page not found') || head.includes('<!doctype html')) {
+        return { ok: false, reason: 'inexistente' };
+    }
+    // RSS válido mas sem posts parseáveis: sub existe (ex.: vazio/restrito).
+    // Aceita — o loop de polling trata o resto.
+    return { ok: true };
+}
+
 function decodeEntities(s) {
     if (s == null) return '';
     return String(s)
@@ -495,7 +566,7 @@ async function remuxHlsToMp4(playlistUrl, userAgent, timeoutMs = 150 * 1000) {
                 '-c', 'copy',
                 '-movflags', '+faststart',
                 outPath
-            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
             ff.on('error', (err) => { clearTimeout(to); finish(err); });
             ff.on('close', (code) => { clearTimeout(to); code === 0 ? finish() : finish(new Error(`ffmpeg HLS exit ${code}`)); });
         });
@@ -640,6 +711,29 @@ async function downloadToBuffer(mediaUrl, userAgent) {
     return { buffer: Buffer.from(res.data), mime: String(mime).split(';')[0].trim() };
 }
 
+// Upgrade de qualidade: preview.redd.it/<id>.<ext>?width=640... (rendition
+// reduzida, ex.: 83KB) -> i.redd.it/<id>.<ext> (original full-res, ex.: 750KB).
+// Comprovado por medição: reescrever width=1080 NÃO funciona (a assinatura
+// s= é amarrada aos parâmetros exatos -> 403), e remover a query também dá
+// 403. Só o i.redd.it entrega o original. Retorna '' se não for preview.
+function upgradeImageUrl(url) {
+    const m = String(url || '').match(/^https?:\/\/preview\.redd\.it\/([A-Za-z0-9]+\.(?:jpe?g|png|webp|gif))/i);
+    if (!m) return '';
+    return `https://i.redd.it/${m[1]}`;
+}
+
+// Baixa a imagem preferindo o original full-res, com fallback para a URL
+// original (preview reduzido). Retorna { buffer, mime, upgraded } ou null.
+async function downloadImageBest(url, userAgent) {
+    const hiRes = upgradeImageUrl(url);
+    if (hiRes && hiRes !== url) {
+        const dl = await downloadToBuffer(hiRes, userAgent);
+        if (dl && dl.buffer && dl.buffer.length > 0) return { ...dl, upgraded: true };
+    }
+    const dl = await downloadToBuffer(url, userAgent);
+    if (dl && dl.buffer && dl.buffer.length > 0) return { ...dl, upgraded: false };
+    return null;
+}
 // Força um mimetype da família esperada: alguns hosts devolvem
 // application/octet-stream para .mp4/.jpg, o que faz o WhatsApp tratar
 // o arquivo errado (vídeo como imagem/documento e vice-versa).
@@ -714,7 +808,7 @@ async function convertGifToMp4(buffer) {
                 '-movflags', '+faststart',
                 '-an',
                 outPath
-            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
             ff.on('error', (err) => { clearTimeout(to); reject(err); });
             ff.on('close', (code) => { clearTimeout(to); if (killed) return; code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)); });
         });
@@ -801,7 +895,17 @@ async function sendOne(sock, jid, post, sub, showMeta) {
             return null;
         }
         try {
-            const dl = await downloadToBuffer(media.image, cfg.newsUserAgent);
+            // Usa o buffer do prefetch do poll quando existir (1 download
+            // por poll, reutilizado entre grupos); senão baixa aqui.
+            let dl = null;
+            if (media.imageBuffer && media.imageBuffer.length > 0) {
+                dl = { buffer: media.imageBuffer, mime: media.imageMime || '', upgraded: !!media.imageUpgraded };
+            } else {
+                // Prefere o original full-res (i.redd.it); cai para o preview
+                // reduzido se o original falhar (ex.: extensão divergente).
+                dl = await downloadImageBest(media.image, cfg.newsUserAgent);
+                if (dl && dl.upgraded) newsLog(`r/${sub} post ${post.id}: imagem full-res (${Math.round(dl.buffer.length / 1024)}KB).`);
+            }
             if (dl && dl.buffer && dl.buffer.length > 0) {
                 const mimeLower = (dl.mime || '').toLowerCase();
                 const urlIsGif = isGifUrl(media.image);
@@ -1025,6 +1129,20 @@ async function pollOnce() {
                 }
             }
 
+            // Prefetch da imagem UMA vez por poll (não 1x por grupo dentro
+            // do sendOne): evita que um grupo receba full-res e outro falhe
+            // por hiccup transitório do CDN no re-download. O buffer é
+            // reutilizado para todos os grupos (mesmo padrão do videoBuffer).
+            if (!latestMedia.isVideoPost && latestMedia.image && !latestMedia.imageBuffer) {
+                const pre = await downloadImageBest(latestMedia.image, cfg.newsUserAgent);
+                if (pre && pre.buffer && pre.buffer.length > 0) {
+                    latestMedia.imageBuffer = pre.buffer;
+                    latestMedia.imageMime = pre.mime;
+                    latestMedia.imageUpgraded = !!pre.upgraded;
+                    if (pre.upgraded) newsLog(`r/${sub} post ${latest.id}: imagem full-res (${Math.round(pre.buffer.length / 1024)}KB).`);
+                }
+            }
+
             // Mídia-only: sem imagem/vídeo real nem tenta publicar. Marca como
             // visto (senão o poll pega o mesmo posts[0] em loop) e pula.
             if (!hasRealMediaContent(latest)) {
@@ -1145,4 +1263,4 @@ function stop() {
     }
 }
 
-module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, normalizeMediaUrl, coerceMime, extractHlsPlaylist, resolveRedditVideo, hasMediaContent, fetchSelftextFromJson };
+    module.exports = { attachSock, start, stop, pollOnce, resolvePollMs, parseIntervalMs, parseRssItems, buildCaption, normalizeSubreddit, dedupeSubreddits, extractSubredditName, isValidSubredditName, parseSubredditInput, probeSubreddit, upgradeImageUrl, downloadImageBest, normalizeMediaUrl, coerceMime, extractHlsPlaylist, resolveRedditVideo, hasMediaContent, fetchSelftextFromJson };

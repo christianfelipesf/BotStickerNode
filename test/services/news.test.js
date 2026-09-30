@@ -141,4 +141,21 @@ describe('news service', () => {
         assert.strictEqual(news.extractHlsPlaylist('<html>sem video</html>'), null);
         assert.strictEqual(news.extractHlsPlaylist(''), null);
     });
+
+    it('upgradeImageUrl troca preview reduzido pelo original i.redd.it', () => {
+        assert.strictEqual(
+            news.upgradeImageUrl('https://preview.redd.it/r24pp7rcensh1.jpeg?width=640&crop=smart&auto=webp&s=abc123'),
+            'https://i.redd.it/r24pp7rcensh1.jpeg'
+        );
+        assert.strictEqual(
+            news.upgradeImageUrl('https://preview.redd.it/foto.PNG?width=140&height=140&crop=1:1,smart&s=zz'),
+            'https://i.redd.it/foto.PNG'
+        );
+        // não-preview: sem upgrade
+        assert.strictEqual(news.upgradeImageUrl('https://i.redd.it/foto.jpg'), '');
+        assert.strictEqual(news.upgradeImageUrl('https://example.com/a.png'), '');
+        assert.strictEqual(news.upgradeImageUrl(''), '');
+        // sem extensão válida: sem upgrade
+        assert.strictEqual(news.upgradeImageUrl('https://preview.redd.it/abc123'), '');
+    });
 });

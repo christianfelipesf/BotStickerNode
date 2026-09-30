@@ -1,5 +1,10 @@
 require('dotenv').config();
 
+// Suprime janelas de console (conhost) no Windows para ffmpeg/python/etc.
+// ANTES de qualquer require('fluent-ffmpeg') — o patch pega o módulo
+// child_process cacheado, cobrindo o fluent-ffmpeg (stickers/conversões).
+try { require('./src/services/spawnSafe').patchChildProcess(); } catch (_) {}
+
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 

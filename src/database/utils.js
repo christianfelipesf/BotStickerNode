@@ -520,7 +520,7 @@ const DEFAULT_CONFIG = {
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
     voiceEffects: true,
-    aiModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    aiModel: "deepseek/deepseek-v4.1-flash:floor",
     aiMaxTokens: 500,
     aiTemperature: 0.7,
     aiMaxPromptLength: 2000,
@@ -958,6 +958,25 @@ const _dlSelectAllLimited = db.prepare(`SELECT type, grp, text, name, phone, med
 const _dlSelectByMessageId = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
     sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
     time_label, timestamp FROM dashboard_logs WHERE message_id = ? LIMIT 1`);
+// Consultas estreitas para o !aidono: mensagens de uma pessoa ou de um grupo.
+// Só type='chat' com texto (ignora logs de ação/sistema).
+const _dlBySender = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+    sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+    time_label, timestamp FROM dashboard_logs
+    WHERE type = 'chat' AND text IS NOT NULL AND text <> ''
+    AND (sender_jid = ? OR sender_jid = ?)
+    ORDER BY timestamp DESC LIMIT ?`);
+const _dlByGroup = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+    sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+    time_label, timestamp FROM dashboard_logs
+    WHERE type = 'chat' AND text IS NOT NULL AND text <> '' AND to_jid = ?
+    ORDER BY timestamp DESC LIMIT ?`);
+// Logs do próprio bot (erros, ações, comandos) para o !aidono.
+const _dlLogsByType = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+    sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+    time_label, timestamp FROM dashboard_logs
+    WHERE type = ? AND text IS NOT NULL AND text <> ''
+    ORDER BY timestamp DESC LIMIT ?`);
 const _dlTrimByAge = db.prepare('DELETE FROM dashboard_logs WHERE timestamp < ?');
 const _dlTrimByCount = db.prepare('DELETE FROM dashboard_logs WHERE id NOT IN (SELECT id FROM dashboard_logs ORDER BY timestamp DESC LIMIT ?)');
 const _dlCount = db.prepare('SELECT COUNT(*) as c FROM dashboard_logs');
@@ -1009,6 +1028,126 @@ function loadDashboardHistory({ since = 0, limit = 500 } = {}) {
 function getDashboardLogByMessageId(messageId) {
     if (!messageId) return null;
     try { const row = _dlSelectByMessageId.get(messageId); return row ? _rowToLog(row) : null; } catch (_) { return null; }
+}
+
+// Mensagens recentes de uma pessoa (qualquer grupo/PV). Passa o jid e um
+// alias (ex.: @lid + @s.whatsapp.net da mesma pessoa) — cobre os dois.
+// Retorna em ordem cronológica (mais antiga primeiro).
+function getMessagesBySender(senderJid, aliasJid, limit = 20) {
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 20));
+        const rows = _dlBySender.all(senderJid || '', aliasJid || '', lim);
+        return rows.map(_rowToLog).filter(Boolean).reverse();
+    } catch (_) { return []; }
+}
+
+// Mensagens recentes de um grupo/PV (todas as pessoas). Cronológica.
+function getMessagesByGroup(jid, limit = 30) {
+    if (!jid) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        const rows = _dlByGroup.all(jid, lim);
+        return rows.map(_rowToLog).filter(Boolean).reverse();
+    } catch (_) { return []; }
+}
+
+// Logs recentes do próprio bot por tipo ('error', 'action', ...). Cronológica.
+// Para o !aidono responder "quais erros deram?" / "que comandos rodaram?".
+function getRecentLogs(type, limit = 15) {
+    if (!type) return [];
+    try {
+        const lim = Math.max(1, Math.min(50, Number(limit) || 15));
+        const rows = _dlLogsByType.all(String(type), lim);
+        return rows.map(_rowToLog).filter(Boolean).reverse();
+    } catch (_) { return []; }
+}
+
+// Acha pessoas pelo nome/telefone no histórico (para o modo investigar
+// resolver "Carlos" -> jid). Retorna [{ senderJid, name }] (dedup por jid).
+const _dlFindPerson = db.prepare(`SELECT sender_jid, name, MAX(timestamp) AS ts FROM dashboard_logs
+    WHERE sender_jid IS NOT NULL AND sender_jid <> ''
+    AND (LOWER(name) LIKE ? OR sender_jid LIKE ? OR phone LIKE ?)
+    GROUP BY sender_jid ORDER BY ts DESC LIMIT ?`);
+function findPeopleByName(query, limit = 10) {
+    const q = String(query || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    try {
+        const lim = Math.max(1, Math.min(20, Number(limit) || 10));
+        const like = `%${q.replace(/[%_]/g, '')}%`;
+        const digits = q.replace(/\D/g, '');
+        const rows = _dlFindPerson.all(like, digits ? `%${digits}%` : like, digits ? `%${digits}%` : like, lim);
+        const seen = new Set();
+        const out = [];
+        for (const r of rows) {
+            if (!r.sender_jid || seen.has(r.sender_jid)) continue;
+            seen.add(r.sender_jid);
+            out.push({ senderJid: r.sender_jid, name: r.name || null });
+        }
+        return out;
+    } catch (_) { return []; }
+}
+
+// Nome mais recente de um remetente (qualquer tipo de log — action tem nome).
+function getSenderName(senderJid) {
+    if (!senderJid) return null;
+    try {
+        const r = db.prepare(`SELECT name FROM dashboard_logs WHERE sender_jid = ? AND name IS NOT NULL AND name <> '' ORDER BY timestamp DESC LIMIT 1`).get(senderJid);
+        return r?.name || null;
+    } catch (_) { return null; }
+}
+
+// Nome do grupo como aparece nos logs (vale para proveniência).
+function getGroupSubject(jid) {
+    if (!jid) return null;
+    try {
+        const r = db.prepare(`SELECT grp FROM dashboard_logs WHERE to_jid = ? AND grp IS NOT NULL AND grp <> '' ORDER BY timestamp DESC LIMIT 1`).get(jid);
+        return r?.grp || null;
+    } catch (_) { return null; }
+}
+
+// Tabela messages (base do !resumir — existe em todo grupo ativo, sem
+// depender do painel). Atribuição por push_name (aproximada: nomes repetem).
+const _msgByPush = db.prepare(`SELECT jid, push_name, text, time FROM messages
+    WHERE (? = '' OR jid = ?) AND LOWER(TRIM(push_name)) = LOWER(TRIM(?))
+    ORDER BY time DESC LIMIT ?`);
+const _msgByJid = db.prepare('SELECT push_name, text, time FROM messages WHERE jid = ? ORDER BY time DESC LIMIT ?');
+function getMessagesByPushName(groupJid, pushName, limit = 20) {
+    const pn = String(pushName || '').trim();
+    if (!pn) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 20));
+        return _msgByPush.all(groupJid || '', groupJid || '', pn, lim).reverse();
+    } catch (_) { return []; }
+}
+// Busca aproximada por nome ("~ David" acha "~ pastor david"): casa pelos
+// 2 maiores tokens (>=3 letras). Exata primeiro; LIKE só se a exata zerar.
+function findMessagesByNameLike(groupJid, pushName, limit = 20) {
+    const pn = String(pushName || '').trim();
+    if (!pn) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 20));
+        const exact = _msgByPush.all(groupJid || '', groupJid || '', pn, lim);
+        if (exact.length > 0) return exact.reverse();
+        const tokens = pn.toLowerCase().replace(/^~\s*/, '').split(/[\s_.-]+/)
+            .map((t) => t.replace(/[^a-zà-ú0-9]/gi, ''))
+            .filter((t) => t.length >= 3)
+            .sort((a, b) => b.length - a.length)
+            .slice(0, 2);
+        if (tokens.length === 0) return [];
+        const conds = tokens.map(() => `LOWER(push_name) LIKE ?`).join(' AND ');
+        const rows = db.prepare(`SELECT jid, push_name, text, time FROM messages
+            WHERE (? = '' OR jid = ?) AND ${conds}
+            ORDER BY time DESC LIMIT ?`).all(
+            groupJid || '', groupJid || '', ...tokens.map((t) => `%${t}%`), lim);
+        return rows.reverse();
+    } catch (_) { return []; }
+}
+function getGroupMessages(jid, limit = 30) {
+    if (!jid) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        return _msgByJid.all(jid, lim).reverse();
+    } catch (_) { return []; }
 }
 
 function trimDashboardLogs({ maxAgeMs = 0, maxRows = 5000 } = {}) {
@@ -1386,8 +1525,43 @@ function updateMemberActivity(jid, sender, senderName) {
     _scheduleActivityFlush();
 }
 
-function getTopMember(jid) {
-    // Flush antes de ler para ter dados consistentes
+// Procura uma pessoa na atividade de TODOS os grupos (jid -> nome + onde
+// aparece). Cobre quem fala mas nunca usou comando (sem logs de ação).
+// Aceita jid alternativo (alias LID<->número). Retorna
+// { name, total, groups: [{ jid, count }] } ou null.
+const _gsActivityAll = db.prepare('SELECT jid, activity FROM group_state WHERE activity IS NOT NULL');
+function findActivityName(senderJid, aliasJid = null) {
+    const keys = [senderJid, aliasJid].filter(Boolean).map((j) => {
+        try { return normalizeJid(j); } catch (_) { return String(j); }
+    });
+    if (keys.length === 0) return null;
+    if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
+    _flushActivity();
+    let name = null;
+    let total = 0;
+    const groups = [];
+    try {
+        for (const row of _gsActivityAll.all()) {
+            let act = null;
+            try { act = safeJson(row.activity, {}); } catch (_) { continue; }
+            const members = act[row.jid] || {};
+            for (const k of keys) {
+                const info = members[k];
+                if (info) {
+                    const n = String(info.name || '').trim();
+                    if (n && !['usuário', 'usuario'].includes(n.toLowerCase())) name = n.slice(0, 30);
+                    total += Number(info.count) || 0;
+                    groups.push({ jid: row.jid, count: Number(info.count) || 0 });
+                    break;
+                }
+            }
+        }
+    } catch (_) { return null; }
+    if (!name && total === 0) return null;
+    return { name, total, groups };
+}
+
+function getTopMember(jid) {    // Flush antes de ler para ter dados consistentes
     if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; }
     _flushActivity();
     try {
@@ -2167,6 +2341,29 @@ function getBotJid(sock) {
     try { const raw = sock?.user?.id || sock?.user?.jid || ''; return normalizeJid(raw); } catch (_) { return ''; }
 }
 
+// ============================================================
+// View-once admin-only — trava reaproveitamento via sticker/
+// toimg/speed/transcrever quando !revelaradmin está ON.
+// Mesma regra do !revelar: só grupo + flag + não-admin bloqueia.
+// Retorna true se pode usar, false se deve bloquear.
+// Em erro de leitura de admins, mantém liberado (padrão).
+// ============================================================
+async function canUseViewOnce(sock, from, requesterMsg) {
+    try {
+        if (typeof from !== 'string' || !from.endsWith('@g.us')) return true;
+        const gd = getGroupData(from) || {};
+        if (!gd.revealAdminOnly) return true;
+        if (requesterMsg?.key?.fromMe) return true;
+        const sender = requesterMsg?.key?.participant || requesterMsg?.key?.remoteJid || from;
+        const admins = await getAdmins(sock, from);
+        return isUserAdmin(sender, admins);
+    } catch (_) { return true; }
+}
+
+function viewOnceBlockedMessage() {
+    return '🔒 Apenas *admins* podem usar mídia de visualização única neste grupo.';
+}
+
 async function botIsAdmin(sock, jid) {
     const botRaw = getBotJid(sock);
     if (!botRaw) return false;
@@ -2372,6 +2569,7 @@ module.exports = {
     recordGroupMessage, recordModEvent, getGroupAnalytics,
     getCachedParticipantName, getGroupParticipantName,
     getAdmins, isUserAdmin, botIsAdmin, getBotJid,
+    canUseViewOnce, viewOnceBlockedMessage,
     getGroupLink, setGroupLink, normalizeJid,
     sendMessageSafe, groupMetadataCached, clearGroupMetadataCache,
     canAdminControl,
@@ -2388,6 +2586,9 @@ module.exports = {
     insertDashboardLog, loadDashboardHistory, trimDashboardLogs, countDashboardLogs,
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
     clearDashboardLogs, deleteDashboardLogsByJid, getDashboardLogByMessageId,
+    getMessagesBySender, getMessagesByGroup, getRecentLogs, findPeopleByName,
+    getSenderName, getGroupSubject, getMessagesByPushName, findMessagesByNameLike, getGroupMessages,
+    findActivityName,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,
     insertDashboardVisit, getActiveUsers, getVisitHistory, cleanupDashboardVisits,
     addFeedback, listFeedback, countFeedback, clearFeedback, FEEDBACK_MAX, FEEDBACK_LIMIT,

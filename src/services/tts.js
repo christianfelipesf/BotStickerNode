@@ -53,7 +53,7 @@ async function synthesize(text, modelPath = defaultModel) {
             '--model', modelPath,
             '--output_file', wavPath,
             '--espeak_data', espeakData
-        ], { env });
+        ], { env, windowsHide: true });
 
         if (text.length > 3000) text = text.slice(0, 3000);
         piper.stdin.write(text);

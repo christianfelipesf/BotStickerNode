@@ -112,7 +112,7 @@ async function convertGifToMp4(buffer) {
                 '-an',
                 '-t', '6',
                 outPath
-            ], { stdio: ['ignore', 'ignore', 'ignore'] });
+            ], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
             ff.on('error', (err) => { clearTimeout(to); reject(err); });
             ff.on('close', (code) => { clearTimeout(to); if (killed) return; code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`)); });
         });

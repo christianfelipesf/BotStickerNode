@@ -114,16 +114,36 @@ function _extractContent(data) {
     }
     const text = String(content ?? '').trim();
     const finish = choice?.finish_reason || '';
+    const nativeFinish = choice?.native_finish_reason || '';
     const reasoning = String(msg?.reasoning || msg?.reasoning_content || '').trim();
-    return { text, finish, hasReasoning: reasoning.length > 0 };
+    const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+    return { text, finish, nativeFinish, hasReasoning: reasoning.length > 0, toolCalls };
 }
 
 function _isReasoningModel(modelName) {
-    return /reasoning|thinking|reasoner|deepseek-r1|qwen3|nemotron.*nano/i.test(String(modelName || ''));
+    return /reasoning|thinking|reasoner|deepseek-r1|deepseek-v4|qwen3|nemotron.*nano/i.test(String(modelName || ''));
+}
+
+// Orçamento de raciocínio: DeepSeek V4 Flash pensa MUITO (medido: ~1465
+// tokens de reasoning numa pergunta simples, zerando o content com
+// max_tokens=500). O teto via reasoning.max_tokens (suportado e testado)
+// deixa ~resto para a resposta. Outros reasoning usam effort low.
+const DEEPSEEK_V4_REASONING_BUDGET = 256;
+
+function _reasoningParams(modelName) {
+    if (/deepseek-v4/i.test(String(modelName || ''))) {
+        return { reasoning: { max_tokens: DEEPSEEK_V4_REASONING_BUDGET, exclude: true } };
+    }
+    if (_isReasoningModel(modelName)) {
+        return { reasoning: { effort: 'low', exclude: true } };
+    }
+    return {};
 }
 
 // === API call with retry ===
-async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTokens, temperature, retryCount, signal) {
+// extra (opcional): { messages, tools, toolChoice } — para modo agente.
+// Com messages, ignora systemInstruction/prompt (e o cache).
+async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTokens, temperature, retryCount, signal, extra = {}) {
     const retries = Math.max(0, Math.min(3, Number(retryCount) || 1));
     const backoffs = _buildBackoffs(2000);
     // Reasoning consome o mesmo budget de max_tokens. Com 500 tokens o modelo
@@ -131,6 +151,7 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
     const effectiveMaxTokens = _isReasoningModel(modelName)
         ? Math.max(Number(maxTokens) || 500, 1500)
         : (Number(maxTokens) || 500);
+    const useTools = Array.isArray(extra.tools) && extra.tools.length > 0;
 
     for (let attempt = 0; attempt <= retries; attempt++) {
         if (signal?.aborted) throw Object.assign(new Error('Comando interrompido por timeout'), { code: 'ABORTED' });
@@ -141,11 +162,14 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
                 temperature: temperature,
                 // effort low (~20% p/ reasoning) deixa ~80% p/ resposta.
                 // exclude:true omite o bloco reasoning do payload (economiza banda).
-                ...(_isReasoningModel(modelName) ? { reasoning: { effort: 'low', exclude: true } } : {}),
-                messages: [
-                    { role: 'system', content: systemInstruction },
-                    { role: 'user', content: prompt }
-                ]
+                ..._reasoningParams(modelName),
+                ...(useTools ? { tools: extra.tools, tool_choice: extra.toolChoice || 'auto' } : {}),
+                messages: Array.isArray(extra.messages) && extra.messages.length > 0
+                    ? extra.messages
+                    : [
+                        { role: 'system', content: systemInstruction },
+                        { role: 'user', content: prompt }
+                    ]
             }, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
@@ -157,12 +181,22 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
                 signal
             });
 
-            const { text, finish, hasReasoning } = _extractContent(data);
+            const { text, finish, nativeFinish, hasReasoning, toolCalls } = _extractContent(data);
             const usage = data?.usage || {};
 
+            // Resposta com tool_calls é sucesso mesmo sem texto (modo agente).
+            if (useTools && toolCalls.length > 0) {
+                usageStats.totalRequests++;
+                usageStats.successfulRequests++;
+                usageStats.totalTokensIn += usage.prompt_tokens || 0;
+                usageStats.totalTokensOut += usage.completion_tokens || 0;
+                return { text, toolCalls, finish, tokensIn: usage.prompt_tokens || 0, tokensOut: usage.completion_tokens || 0, model: modelName, cached: false };
+            }
+
             if (!text) {
-                const emptyErr = new Error(`Resposta vazia da IA (finish_reason=${finish || 'desconhecido'}${hasReasoning ? ', com reasoning' : ''})`);
-                console.warn(`⚠️ [IA] Tentativa ${attempt + 1}/${retries + 1}: ${emptyErr.message} | modelo=${modelName} | prompt=${String(prompt).slice(0, 80)}...`);
+                const emptyErr = new Error(`Resposta vazia da IA (finish_reason=${finish || nativeFinish || 'desconhecido'}${hasReasoning ? ', com reasoning' : ''})`);
+                const preview = useTools ? `[modo agente, ${extra.messages.length} msgs]` : String(prompt).slice(0, 80);
+                console.warn(`⚠️ [IA] Tentativa ${attempt + 1}/${retries + 1}: ${emptyErr.message} | modelo=${modelName} | prompt=${preview}...`);
                 throw emptyErr;
             }
 
@@ -251,6 +285,19 @@ function setupAI(config) {
                 model: result.model,
                 cached: result.cached
             };
+        },
+        // Modo agente (!aidono investigar): chat com tools, sem cache.
+        // Retorna { text, toolCalls, finish, ... } — toolCalls vazio = resposta final.
+        chatWithTools: async (messages, tools, opts = {}) => {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                throw new Error('Messages inválidas');
+            }
+            if (!Array.isArray(tools) || tools.length === 0) {
+                throw new Error('Tools inválidas');
+            }
+            return await callWithRetry(apiKey, modelName, '', '', maxTokens, temperature, retryCount, opts?.signal, {
+                messages, tools, toolChoice: opts?.toolChoice || 'auto'
+            });
         }
     };
 
