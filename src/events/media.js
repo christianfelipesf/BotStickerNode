@@ -31,7 +31,7 @@ function downloadWithTimeout(msg, opts, timeoutMs = DOWNLOAD_TIMEOUT) {
     return wrapped;
 }
 const {
-    getMediaMessage, react, reactStatus, isViewOnce,
+    getMediaMessage, react, reactStatus, isViewOnce, getMessageText,
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif, mediaToGifVideo,
     isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
@@ -182,6 +182,30 @@ function buildConvertedCaption(senderJid, botName, senderName, fallbackPn) {
     return `╭─── *📱 MÍDIA CONVERTIDA* ───\n${line}\n│ 🤖 *Por:* ${bot}\n╰───────────────`;
 }
 
+async function shouldBlockViewOnceReuse({ sock, from, requesterMsg, quotedMsg, quotedParticipant, action, deps = {} }) {
+    if (action === 'reveal' || !quotedMsg) return { blocked: false, reason: null };
+    const _isViewOnce = deps.isViewOnce || isViewOnce;
+    const _getMessageText = deps.getMessageText || getMessageText;
+    const _canUseViewOnce = deps.canUseViewOnce || canUseViewOnce;
+    let kind = null;
+    if (_isViewOnce(quotedMsg)) {
+        kind = 'viewonce';
+    } else {
+        try {
+            const meNum = String(sock?.user?.id || '').split(':')[0].split('@')[0];
+            const qpNum = String(quotedParticipant || '').split(':')[0].split('@')[0];
+            const cap = _getMessageText(quotedMsg) || '';
+            if (meNum && qpNum && meNum === qpNum && cap.includes('MÍDIA REVELADA')) kind = 'revealed-copy';
+        } catch (_) { /* sem marcador = foto normal */ }
+    }
+    if (!kind) return { blocked: false, reason: null };
+    try {
+        const allowed = await _canUseViewOnce(sock, from, requesterMsg);
+        if (!allowed) return { blocked: true, reason: kind };
+    } catch (_) { /* em erro mantém liberado (padrão anterior) */ }
+    return { blocked: false, reason: null };
+}
+
 async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
     let speed = 1.0;
     let explicitOpts = {};
@@ -256,15 +280,18 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         }
 
         const isSticker = !!mediaMessage.stickerMessage;
-        const isViewOnceMsg = isViewOnce(targetMsg.message);
-
         // Trava revealAdminOnly: view-once reaproveitada via sticker/toimg/
         // togif/speed também exige admin (senão o !revelar seria burlado).
-        // Cópia já revelada (sem wrapper viewOnce) continua liberada.
-        if (isViewOnceMsg && action !== 'reveal') {
+        // Vale p/ o original (wrapper viewOnce) e p/ a cópia revelada pelo bot.
+        if (action !== 'reveal') {
             try {
-                const allowed = await canUseViewOnce(sock, from, m);
-                if (!allowed) {
+                const gate = await shouldBlockViewOnceReuse({
+                    sock, from, requesterMsg: m,
+                    quotedMsg: quotedMsg || targetMsg.message,
+                    quotedParticipant: quotedInfo?.participant, action
+                });
+                if (gate.blocked) {
+                    console.warn(`🔒 [viewonce-gate] bloqueado from=${from} action=${action} kind=${gate.reason}`);
                     try { await sock.sendMessage(from, { text: viewOnceBlockedMessage() }, { quoted: m }); } catch (_) {}
                     return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
                 }
@@ -449,4 +476,4 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
     }
 }
 
-module.exports = { revealViewOnce, handleMediaCommand };
+module.exports = { revealViewOnce, handleMediaCommand, shouldBlockViewOnceReuse };

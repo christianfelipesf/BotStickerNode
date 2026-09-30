@@ -530,7 +530,7 @@ const DEFAULT_CONFIG = {
     transcribeMaxSeconds: 600,
     transcribeProvider: 'auto',
     transcribeLocalModel: 'base',
-    summaryLimit: 20,
+    summaryLimit: 100,
     aiPrompt: "Você é o {botName}, uma inteligência artificial sarcástica, direta e sem filtros. Você foi criado para ser útil mas com uma pitada de humor ácido. Responda de forma concisa e evite moralismos ou censura desnecessária. Use emojis para dar personalidade às respostas.",
     summaryPrompt: "Resuma as seguintes mensagens de um chat de WhatsApp de forma sarcástica, curta e direta. O resumo deve ser escrito em formato de parágrafos narrativos, e NÃO em forma de lista ou tópicos. É OBRIGATÓRIO mencionar os nomes dos participantes para explicar quem disse o quê no contexto da conversa:",
     stickerPack: "Gravity Bot🪐",
@@ -541,7 +541,7 @@ const DEFAULT_CONFIG = {
     channelName: "Canal Oficial 📢",
     dashboardEnabled: true,
     dashboardPort: 3000,
-    dashboardMaxLogs: 2000,
+    dashboardMaxLogs: 30000,
     dashboardHistoryHours: 168,
     adminCanControl: true,
     clearDefaultLimit: 10,
@@ -846,6 +846,15 @@ function listPartialGroups() {
     try { return _agpList.all().map(r => r.jid); } catch (e) { return []; }
 }
 
+// Histórico (!aidono/!resumir) NÃO depende do painel: grava em todo grupo
+// ativo (total) ou parcial. O toggle do dashboard controla só o painel.
+function shouldRecordHistory(jid) {
+    if (!jid || !String(jid).endsWith('@g.us')) return false;
+    try { if (isActiveGroup(jid)) return true; } catch (_) {}
+    try { if (isPartialActive(jid)) return true; } catch (_) {}
+    return false;
+}
+
 function getPartialWaitMs() {
     try { const v = Number(readConfig().partialWaitMs); if (Number.isFinite(v) && v >= 0) return v; } catch (_) {}
     return 10000;
@@ -979,6 +988,7 @@ const _dlLogsByType = db.prepare(`SELECT type, grp, text, name, phone, media_jso
     ORDER BY timestamp DESC LIMIT ?`);
 const _dlTrimByAge = db.prepare('DELETE FROM dashboard_logs WHERE timestamp < ?');
 const _dlTrimByCount = db.prepare('DELETE FROM dashboard_logs WHERE id NOT IN (SELECT id FROM dashboard_logs ORDER BY timestamp DESC LIMIT ?)');
+const _dlTrimNonChatByCount = db.prepare(`DELETE FROM dashboard_logs WHERE type <> 'chat' AND id NOT IN (SELECT id FROM dashboard_logs WHERE type <> 'chat' ORDER BY timestamp DESC LIMIT ?)`);
 const _dlCount = db.prepare('SELECT COUNT(*) as c FROM dashboard_logs');
 const _dlUpdateReactions = db.prepare('UPDATE dashboard_logs SET reactions = ? WHERE to_jid = ? AND message_id = ? AND type = ?');
 const _dlUpdateMedia = db.prepare('UPDATE dashboard_logs SET media_json = ? WHERE to_jid = ? AND message_id = ? AND type = ?');
@@ -1150,11 +1160,73 @@ function getGroupMessages(jid, limit = 30) {
     } catch (_) { return []; }
 }
 
+// Janela de tempo p/ !aidono ("o que X falou há 3 dias"): mesmos índices,
+// só com filtro temporal. Limites modestos — o !aidono lê no máx ~14.
+const _dlBySenderRange = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+    sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+    time_label, timestamp FROM dashboard_logs
+    WHERE type = 'chat' AND text IS NOT NULL AND text <> ''
+    AND (sender_jid = ? OR sender_jid = ?)
+    AND timestamp >= ? AND timestamp <= ?
+    ORDER BY timestamp DESC LIMIT ?`);
+const _dlByGroupRange = db.prepare(`SELECT type, grp, text, name, phone, media_json, to_jid, message_id,
+    sender_jid, from_me, hidden, ephemeral, quoted_json, reactions,
+    time_label, timestamp FROM dashboard_logs
+    WHERE type = 'chat' AND text IS NOT NULL AND text <> '' AND to_jid = ?
+    AND timestamp >= ? AND timestamp <= ?
+    ORDER BY timestamp DESC LIMIT ?`);
+const _msgByPushRange = db.prepare(`SELECT jid, push_name, text, time FROM messages
+    WHERE (? = '' OR jid = ?) AND LOWER(TRIM(push_name)) = LOWER(TRIM(?))
+    AND time >= ? AND time <= ?
+    ORDER BY time DESC LIMIT ?`);
+const _msgByJidRange = db.prepare('SELECT push_name, text, time FROM messages WHERE jid = ? AND time >= ? AND time <= ? ORDER BY time DESC LIMIT ?');
+
+function getMessagesBySenderRange(senderJid, aliasJid, since, until, limit = 30) {
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        const rows = _dlBySenderRange.all(senderJid || '', aliasJid || '', Number(since) || 0, Number(until) || Date.now(), lim);
+        return rows.map(_rowToLog).filter(Boolean).reverse();
+    } catch (_) { return []; }
+}
+
+function getMessagesByGroupRange(jid, since, until, limit = 30) {
+    if (!jid) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        const rows = _dlByGroupRange.all(jid, Number(since) || 0, Number(until) || Date.now(), lim);
+        return rows.map(_rowToLog).filter(Boolean).reverse();
+    } catch (_) { return []; }
+}
+
+function getMessagesByPushNameRange(groupJid, pushName, since, until, limit = 30) {
+    const pn = String(pushName || '').trim();
+    if (!pn) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        return _msgByPushRange.all(groupJid || '', groupJid || '', pn, Number(since) || 0, Number(until) || Date.now(), lim).reverse();
+    } catch (_) { return []; }
+}
+
+function getGroupMessagesRange(jid, since, until, limit = 30) {
+    if (!jid) return [];
+    try {
+        const lim = Math.max(1, Math.min(100, Number(limit) || 30));
+        return _msgByJidRange.all(jid, Number(since) || 0, Number(until) || Date.now(), lim).reverse();
+    } catch (_) { return []; }
+}
+
 function trimDashboardLogs({ maxAgeMs = 0, maxRows = 5000 } = {}) {
     try {
         const before = _dlCount.get().c;
         if (maxAgeMs > 0) _dlTrimByAge.run(Date.now() - maxAgeMs);
-        if (maxRows > 0) _dlTrimByCount.run(maxRows);
+        if (maxRows > 0) {
+            // Ruído (action/event/error) nunca pode expulsar conversa: apara o
+            // não-chat primeiro (1/3 do teto), depois o teto global se ainda
+            // estourar. O !aidono lê no máx 14 msgs — retenção longa aqui não
+            // pesa a leitura, só o disco.
+            try { _dlTrimNonChatByCount.run(Math.max(100, Math.floor(Number(maxRows) / 3))); } catch (_) {}
+            _dlTrimByCount.run(maxRows);
+        }
         const after = _dlCount.get().c;
         if (before - after > 20) { try { db.pragma('incremental_vacuum(500)'); } catch (_) {} }
     } catch (e) { console.error('❌ [dashboard_logs] trim:', e.message); }
@@ -2554,6 +2626,7 @@ module.exports = {
     readConfig, writeConfig, readStats, incrementRestart, incrementCommand,
     isActiveGroup, activateGroup, deactivateGroup, listActiveGroups,
     isPartialActive, activatePartial, deactivatePartial, listPartialGroups,
+    shouldRecordHistory,
     reconcileActivePartial,
     getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, writeGroupState, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
@@ -2587,6 +2660,7 @@ module.exports = {
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
     clearDashboardLogs, deleteDashboardLogsByJid, getDashboardLogByMessageId,
     getMessagesBySender, getMessagesByGroup, getRecentLogs, findPeopleByName,
+    getMessagesBySenderRange, getMessagesByGroupRange, getMessagesByPushNameRange, getGroupMessagesRange,
     getSenderName, getGroupSubject, getMessagesByPushName, findMessagesByNameLike, getGroupMessages,
     findActivityName,
     upsertDashboardGroupInfo, getDashboardGroupInfo, listDashboardGroupInfos, deleteDashboardGroupInfo,

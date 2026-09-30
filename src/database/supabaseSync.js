@@ -54,7 +54,7 @@ const CONFLICT_TARGET = {
 };
 
 // Tabelas com volume alto: limita o pull/push aos N mais recentes.
-const CAPPED_TABLES = { messages: 2000, dashboard_logs: 2000, dashboard_visits: 500, group_modlog: 2000 };
+const CAPPED_TABLES = { messages: 30000, dashboard_logs: 30000, dashboard_visits: 500, group_modlog: 2000 };
 // Coluna de ordem para as tabelas com cap (Postgres não tem rowid).
 const ORDER_COL = { messages: 'id', dashboard_logs: 'id', dashboard_visits: 'id', group_modlog: 'id' };
 

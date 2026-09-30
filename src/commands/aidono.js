@@ -1,4 +1,4 @@
-const { resolveTargets, buildEvidence, matchFactual, wantsLogs, evidenceIsEmpty } = require('../services/ownerEvidence');
+const { resolveTargets, buildEvidence, buildComparisonEvidence, matchFactual, wantsLogs, evidenceIsEmpty, extractTimeRange, rangesForComparison } = require('../services/ownerEvidence');
 
 // Confirmações pendentes do modo investigar: chave `${from}::${sender}`.
 // Evita rodar investigação cara (multi-chamadas de IA) sem querer.
@@ -54,6 +54,8 @@ function usage(prefix) {
         `Pergunte sobre pessoas ou grupos citando dados reais:\n` +
         `• \`${prefix}aidono @fulano o que acha dele?\`\n` +
         `• \`${prefix}aidono @a @b quem fala mais? (várias menções ok)\`\n` +
+        `• \`${prefix}aidono @fulano o que falou há 3 dias? / ontem? / nessa semana?\`\n` +
+        `• \`${prefix}aidono @fulano o que falou ontem tem a ver com hoje?\`\n` +
         `• \`${prefix}aidono quantas adv tem @fulano?\` (resposta direta, sem IA)\n` +
         `• \`${prefix}aidono grupo Amigos como está o clima?\`\n` +
         `• \`${prefix}aidono quais erros deram hoje?\` / \`${prefix}aidono quais comandos rodaram?\`\n` +
@@ -144,18 +146,33 @@ module.exports = {
 
             const maxPromptLength = Number(config?.aiMaxPromptLength) || 2000;
             const qShort = question.slice(0, 500);
+            // Janela de tempo ("há 3 dias", "ontem"): responde com as falas da
+            // janela, direto do histórico de 7 dias (fast-path, sem IA).
+            // Comparação ("ontem tem a ver com hoje?"): duas janelas curtas
+            // fundidas p/ a IA julgar (fast-path nunca julga).
+            const cmpRanges = rangesForComparison(question);
+            const timeRange = cmpRanges ? cmpRanges[0] : extractTimeRange(question);
             // Encolhe evidência até caber no teto (mantém as msgs mais novas).
-            // Começa folgado (14): teste A/B mostrou resposta mais rica por ~$0,00003.
+            // Comparação usa janelas curtas (6→2); normal começa folgado (14).
             let evidence = null;
-            for (const lim of [14, 10, 6, 3]) {
-                evidence = await buildEvidence(sock, targets, { from, isGroup, utils, msgLimit: lim, question });
-                const total = OWNER_SYSTEM.length + evidence.text.length + qShort.length + 60;
-                if (total <= maxPromptLength || lim === 3) break;
+            if (cmpRanges && (targets.people.length > 0 || targets.groups.length > 0)) {
+                for (const lim of [6, 4, 2]) {
+                    evidence = await buildComparisonEvidence(sock, targets, { from, isGroup, utils, question, ranges: cmpRanges, msgLimit: lim });
+                    const total = OWNER_SYSTEM.length + evidence.text.length + qShort.length + 60;
+                    if (total <= maxPromptLength || lim === 2) break;
+                }
+            } else {
+                for (const lim of [14, 10, 6, 3]) {
+                    evidence = await buildEvidence(sock, targets, { from, isGroup, utils, msgLimit: lim, question, timeRange });
+                    const total = OWNER_SYSTEM.length + evidence.text.length + qShort.length + 60;
+                    if (total <= maxPromptLength || lim === 3) break;
+                }
             }
             if (!evidence.text || evidenceIsEmpty(evidence.stats)) {
                 const who = (evidence.stats?.people || []).map((p) => p.label).filter(Boolean).join(', ');
+                const win = cmpRanges ? ` ${cmpRanges[0].label} × ${cmpRanges[1].label}` : (timeRange ? ` ${timeRange.label}` : '');
                 await sock.sendMessage(from, {
-                    text: `❌ Sem dados${who ? ` sobre ${who}` : ''} no histórico.\n\n` +
+                    text: `❌ Sem dados${who ? ` sobre ${who}` : ''}${win} no histórico.\n\n` +
                         `💡 Verifiquei: nome nos logs, mensagens (painel + geral), atividade, advertências e logs do bot.\n` +
                         `• Isso acontece quando a pessoa nunca falou em grupo com o bot ativo, ou só antes do bot chegar.\n` +
                         `• Para registrar daqui pra frente: ative o bot (e o painel) nos grupos dela.`

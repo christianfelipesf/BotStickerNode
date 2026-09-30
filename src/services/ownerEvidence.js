@@ -161,9 +161,124 @@ function wantsLogs(question) {
     return /log|erro|falha|bug|travou|parou|quebrou|comando\s+(rodou|execut|usou|foi)|quais comandos|últimos? erros?|erros? recentes?/i.test(String(question || ''));
 }
 
-async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, msgLimit = 15, msgChars = 150, groupMsgChars = 130, question = '' }) {
+// Janela de tempo em PT-BR p/ !aidono ("o que X falou há 3 dias/ontem").
+// Tudo em America/Sao_Paulo (UTC-3 fixo, sem horário de verão desde 2019).
+// Retorna { since, until, label } em ms ou null.
+const SP_OFFSET_MS = 3 * 3600 * 1000;
+function _spDayStart(nowMs, daysAgo) {
+    // SP = UTC-3: subtrai p/ ler os campos do calendário paulista em UTC.
+    const sp = new Date(Number(nowMs) - SP_OFFSET_MS);
+    const dayUtc = Date.UTC(sp.getUTCFullYear(), sp.getUTCMonth(), sp.getUTCDate());
+    return dayUtc + SP_OFFSET_MS - daysAgo * 24 * 3600 * 1000;
+}
+function _fmtDay(ms) {
+    try {
+        return new Date(Number(ms)).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+    } catch (_) { return ''; }
+}
+function extractAllTimeRanges(question, nowMs) {
+    const now = Number(nowMs) || Date.now();
+    const t = String(question || '').toLowerCase();
+    if (!t) return [];
+    const dayMs = 24 * 3600 * 1000;
+    const narrowHour = /ess[ae] hor|nesse hor|por volta|esse hor|neste hor/.test(t);
+    const applyHour = (since, until) => {
+        if (!narrowHour) return { since, until, hourNote: '' };
+        const tod = (now - _spDayStart(now, 0)) % dayMs; // hora atual no dia (ms)
+        const center = since + tod;
+        const s = Math.max(since, center - 3 * 3600 * 1000);
+        const u = Math.min(until, center + 3 * 3600 * 1000);
+        return { since: s, until: u, hourNote: ' por volta deste horário' };
+    };
+    const out = [];
+    const push = (r) => {
+        if (!r) return;
+        const k = `${r.since}-${r.until}`;
+        if (!out.some((o) => `${o.since}-${o.until}` === k)) out.push(r);
+    };
+    const yearNow = new Date(now - SP_OFFSET_MS).getUTCFullYear();
+
+    // dia DD/MM[/AAAA] — mesma prioridade de antes, todas as ocorrências
+    for (const m of t.matchAll(/\b(?:dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g)) {
+        if (Number(m[1]) > 31 || Number(m[2]) > 12) continue;
+        const dd = Number(m[1]);
+        const mm = Number(m[2]);
+        let yyyy = yearNow;
+        if (m[3]) yyyy = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]);
+        let since = Date.UTC(yyyy, mm - 1, dd) + SP_OFFSET_MS;
+        if (since > now) since = Date.UTC(yyyy - 1, mm - 1, dd) + SP_OFFSET_MS;
+        const r = applyHour(since, since + dayMs - 1);
+        push({ since: r.since, until: Math.min(r.until, now), label: `no dia ${_fmtDay(since)}${r.hourNote}` });
+    }
+    // há N dias / N dias atrás (dia cheio N dias atrás)
+    for (const m of t.matchAll(/\bh[aá]\s+(\d{1,2})\s+dias?\b/g)) {
+        const n = Math.max(1, Math.min(30, Number(m[1])));
+        const since = _spDayStart(now, n);
+        const r = applyHour(since, since + dayMs - 1);
+        push({ since: r.since, until: Math.min(r.until, now), label: n === 1 ? `ontem (${_fmtDay(since)})${r.hourNote}` : `há ${n} dias (${_fmtDay(since)})${r.hourNote}` });
+    }
+    for (const m of t.matchAll(/\b(\d{1,2})\s+dias?\s+atr[aá]s\b/g)) {
+        const n = Math.max(1, Math.min(30, Number(m[1])));
+        const since = _spDayStart(now, n);
+        const r = applyHour(since, since + dayMs - 1);
+        push({ since: r.since, until: Math.min(r.until, now), label: n === 1 ? `ontem (${_fmtDay(since)})${r.hourNote}` : `há ${n} dias (${_fmtDay(since)})${r.hourNote}` });
+    }
+    // últimos N dias (sem \b antes do ú: \b não casa antes de letra acentuada)
+    for (const m of t.matchAll(/(?:^|\s)[úu]ltimos?\s+(\d{1,2})\s+dias?\b/g)) {
+        const n = Math.max(1, Math.min(30, Number(m[1])));
+        push({ since: _spDayStart(now, n - 1), until: now, label: `nos últimos ${n} dias` });
+    }
+    if (/\banteontem\b/.test(t)) {
+        const since = _spDayStart(now, 2);
+        const r = applyHour(since, since + dayMs - 1);
+        push({ since: r.since, until: r.until, label: `anteontem (${_fmtDay(since)})${r.hourNote}` });
+    }
+    if (/\bontem\b/.test(t)) {
+        const since = _spDayStart(now, 1);
+        const r = applyHour(since, since + dayMs - 1);
+        push({ since: r.since, until: r.until, label: `ontem (${_fmtDay(since)})${r.hourNote}` });
+    }
+    if (/\bsemana passada\b/.test(t)) {
+        push({ since: _spDayStart(now, 13), until: _spDayStart(now, 7) + dayMs - 1, label: 'na semana passada' });
+    }
+    if (/ess[ae] semana|esta semana|[úu]ltima semana/.test(t)) {
+        push({ since: _spDayStart(now, 6), until: now, label: 'nesta semana' });
+    }
+    if (/\bhoje\b/.test(t)) {
+        push({ since: _spDayStart(now, 0), until: now, label: `hoje (${_fmtDay(now)})` });
+    }
+    return out.slice(0, 3);
+}
+function extractTimeRange(question, nowMs) {
+    const all = extractAllTimeRanges(question, nowMs);
+    return all.length ? all[0] : null;
+}
+
+// Pergunta comparativa entre janelas ("ontem tem a ver com hoje?", "mudou?").
+// Julgamento vai para a IA com as duas evidências — nunca no fast-path.
+function isComparison(question) {
+    const t = String(question || '').toLowerCase();
+    return /(t[eê]m|tenha|teria).{0,15}(a ver|haver)|compar|diferen|mudou|mudan|evolu|relac|antes.{0,25}(agora|hoje|depois)|ontem.{0,25}hoje|hoje.{0,25}ontem/.test(t);
+}
+// Janelas p/ comparação: as 2 explícitas, ou a explícita + hoje
+// ("mudou desde ontem?" compara ontem × hoje). Null = não é comparação.
+function rangesForComparison(question, nowMs) {
+    if (!isComparison(question)) return null;
+    const now = Number(nowMs) || Date.now();
+    const all = extractAllTimeRanges(question, now);
+    if (!all.length) return null;
+    if (all.length >= 2) return [all[0], all[1]];
+    const today = { since: _spDayStart(now, 0), until: now, label: `hoje (${_fmtDay(now)})` };
+    if (today.since === all[0].since && today.until === all[0].until) return null;
+    return [all[0], today];
+}
+
+async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, msgLimit = 15, msgChars = 150, groupMsgChars = 130, question = '', timeRange = null }) {
     const lines = [];
-    const stats = { people: [], groups: [], logs: null };
+    const stats = { people: [], groups: [], logs: null, timeRange: timeRange ? timeRange.label : null };
+    const tr = timeRange || null;
+    // Janela com mais folga no fetch (até 30), mas a exibição continua curta
+    // (~12) p/ caber no prompt — riqueza sem pesar.
 
     // Nome de grupo com proveniência: metadados ao vivo > nome nos logs > infos > jid curto.
     // Nomes genéricos ('Grupo', 'PV' etc.) contam como MISS e caem para a próxima fonte.
@@ -232,7 +347,9 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
     };
 
     for (const [pi, p] of people.entries()) {
-        let msgs = utils?.getMessagesBySender?.(p.jid, p.alias, msgLimit) || [];
+        let msgs = (tr && utils?.getMessagesBySenderRange)
+            ? (utils.getMessagesBySenderRange(p.jid, p.alias, tr.since, tr.until, 30) || [])
+            : (utils?.getMessagesBySender?.(p.jid, p.alias, msgLimit) || []);
         let approx = false;
         const rawLabel = p.nameHint || displayName(msgs[msgs.length - 1] || {}, p.jid);
         let label = safePersonLabel(rawLabel, personTag(pi, people.length));
@@ -249,6 +366,7 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         // Fallback: sem log do painel, busca pelo nome no histórico geral
         // (tabela messages — atribuição aproximada por push_name).
         // AGREGA TODOS OS GRUPOS: a pessoa pode falar em vários.
+        let poolTotal = null;
         if (msgs.length === 0) {
             try {
                 let pname = (label && !/^(pessoa mencionada|pessoa [A-Z])$/.test(label)) ? label : null;
@@ -258,22 +376,34 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
                     const scope = groupJids.length > 0 ? [...groupJids, null] : [null];
                     const collected = [];
                     const likeFn = utils?.findMessagesByNameLike || utils?.getMessagesByPushName;
+                    const rangeFn = tr && utils?.getMessagesByPushNameRange ? utils.getMessagesByPushNameRange.bind(utils) : null;
                     for (const gj of scope) {
-                        const extra = likeFn?.call(utils, gj, pname, msgLimit) || [];
-                        // usa o jid real da linha (o escopo nulo mistura grupos)
-                        for (const r of extra) collected.push({ gj: r.jid || gj, r });
-                        if (collected.length >= msgLimit * 2) break;
+                        if (rangeFn) {
+                            // Busca exata por nome COM janela de tempo (SQL).
+                            const extra = rangeFn(gj, pname, tr.since, tr.until, 30) || [];
+                            for (const r of extra) collected.push({ gj: r.jid || gj, r });
+                        } else {
+                            const extra = likeFn?.call(utils, gj, pname, msgLimit) || [];
+                            // usa o jid real da linha (o escopo nulo mistura grupos)
+                            for (const r of extra) collected.push({ gj: r.jid || gj, r });
+                        }
+                        if (collected.length >= msgLimit * 2 && !tr) break;
+                        if (tr && collected.length >= 60) break;
                     }
-                    if (collected.length > 0) {
-                        collected.sort((a, b) => (a.r.time || 0) - (b.r.time || 0));
-                        for (const c of collected) c.gname = await groupName(c.gj);
-                        const distinctGroups = [...new Set(collected.map((c) => c.gj || ''))].filter(Boolean);
+                    // Filtro temporal p/ o caminho aproximado (LIKE sem SQL de data).
+                    let pool = collected;
+                    if (tr && !rangeFn) pool = collected.filter((c) => (c.r.time || 0) >= tr.since && (c.r.time || 0) <= tr.until);
+                    if (pool.length > 0) {
+                        if (tr) poolTotal = pool.length;
+                        pool.sort((a, b) => (a.r.time || 0) - (b.r.time || 0));
+                        for (const c of pool) c.gname = await groupName(c.gj);
+                        const distinctGroups = [...new Set(pool.map((c) => c.gj || ''))].filter(Boolean);
                         const multi = distinctGroups.length > 1;
                         for (const gj of distinctGroups) {
                             const gname = await groupName(gj);
                             if (!msgGroups.includes(gname)) msgGroups.push(gname);
                         }
-                        msgs = collected.slice(-msgLimit).map(({ gj, r, gname }) => {
+                        msgs = pool.slice(-msgLimit).map(({ gj, r, gname }) => {
                             const gtag = multi ? `(${clean(gname || 'grupo', 25)}) ` : '';
                             return { text: `${gtag}${r.text}`, name: r.push_name, timestamp: r.time };
                         });
@@ -293,38 +423,58 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         const presenceNote = (msgs.length === 0 && presence && presence.total > 0)
             ? ` — aparece em ${presence.groups.length} grupo(s), ${presence.total} msgs contadas (sem conteúdo salvo)`
             : '';
-        lines.push(`Pessoa: ${clean(label, 30)} — advs: ${advParts.length ? advParts.join(', ') : 'nenhuma'} — ${msgs.length} msgs recentes${where}${approx ? ' (aproximado por nome)' : ''}${presenceNote}:`);
-        for (const ml of msgs.slice(-msgLimit)) {
+        // Com janela de tempo: conta a janela toda, exibe só o necessário.
+        const windowTotal = tr ? (poolTotal != null ? poolTotal : msgs.length) : msgs.length;
+        const showLim = tr ? Math.min(msgLimit, 12) : msgLimit;
+        const shown = tr ? msgs.slice(-showLim) : msgs.slice(-msgLimit);
+        const winTag = tr ? ` ${tr.label}` : ' recentes';
+        const cutNote = (tr && windowTotal > shown.length) ? ` (mostrando as ${shown.length} mais recentes)` : '';
+        lines.push(`Pessoa: ${clean(label, 30)} — advs: ${advParts.length ? advParts.join(', ') : 'nenhuma'} — ${windowTotal} msgs${winTag}${approx ? ' (aproximado por nome)' : ''}${cutNote}${presenceNote}:`);
+        for (const ml of shown) {
             const txt = clean(ml.text, msgChars);
             if (txt) lines.push(`  [${fmtWhen(ml.timestamp)}] ${txt}`);
         }
-        stats.people.push({ jid: p.jid, label, advs: advParts, msgCount: msgs.length, approx, groups: msgGroups, presence });
+        stats.people.push({ jid: p.jid, label, advs: advParts, msgCount: shown.length, windowTotal, approx, groups: msgGroups, presence, windowMsgs: tr ? shown.map((x) => ({ text: clean(x.text, 150), timestamp: x.timestamp, name: clean(x.name || '', 25) })) : undefined });
         resoParts.push(isTagLabel(label) ? `${label} (nome não confirmado)` : `${label} (identidade confirmada pelo bot)`);
     }
 
     for (const g of groups) {
-        let msgs = utils?.getMessagesByGroup?.(g.jid, 20) || [];
+        let msgs = (tr && utils?.getMessagesByGroupRange)
+            ? (utils.getMessagesByGroupRange(g.jid, tr.since, tr.until, 30) || [])
+            : (utils?.getMessagesByGroup?.(g.jid, 20) || []);
         let approx = false;
         // Fallback: histórico geral do grupo (autores por push_name).
         if (msgs.length === 0) {
             try {
-                const extra = utils?.getGroupMessages?.(g.jid, 20) || [];
-                if (extra.length > 0) {
-                    msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                    approx = true;
+                if (tr && utils?.getGroupMessagesRange) {
+                    const extra = utils.getGroupMessagesRange(g.jid, tr.since, tr.until, 30) || [];
+                    if (extra.length > 0) {
+                        msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
+                        approx = true;
+                    }
+                } else {
+                    const extra = utils?.getGroupMessages?.(g.jid, 20) || [];
+                    if (extra.length > 0) {
+                        const pool = tr ? extra.filter((r) => (r.time || 0) >= tr.since && (r.time || 0) <= tr.until) : extra;
+                        msgs = pool.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
+                        approx = true;
+                    }
                 }
             } catch (_) {}
         }
         const gname = clean(await groupName(g.jid) || g.subject, 50);
-        lines.push(`Grupo: ${gname} — ${msgs.length} msgs recentes${approx ? ' (autores por nome)' : ''}:`);
-        for (const ml of msgs.slice(-20)) {
+        const winTag = tr ? ` ${tr.label}` : ' recentes';
+        const gShow = tr ? msgs.slice(-15) : msgs.slice(-20);
+        const gCut = (tr && msgs.length > gShow.length) ? ` (mostrando as ${gShow.length} mais recentes)` : '';
+        lines.push(`Grupo: ${gname} — ${msgs.length} msgs${winTag}${approx ? ' (autores por nome)' : ''}${gCut}:`);
+        for (const ml of gShow) {
             const txt = clean(ml.text, groupMsgChars);
             if (txt) lines.push(`  [${fmtWhen(ml.timestamp)}] ${authorLabel(ml)}: ${txt}`);
         }
         let top = null;
         try { top = utils?.getTopMember?.(g.jid) || null; } catch (_) {}
         if (top && !/nenhum registro/i.test(String(top))) lines.push(`  Top do grupo hoje: ${clean(top, 30)}`);
-        stats.groups.push({ jid: g.jid, subject: gname, msgCount: msgs.length, top, approx });
+        stats.groups.push({ jid: g.jid, subject: gname, msgCount: msgs.length, windowTotal: msgs.length, top, approx, windowMsgs: tr ? gShow.map((x) => ({ text: clean(x.text, 130), timestamp: x.timestamp, name: clean(x.name || '', 25) })) : undefined });
     }
 
     // Logs do próprio bot (só quando a pergunta é sobre isso).
@@ -360,9 +510,49 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
     if (resoParts.length > 0) {
         lines.unshift(`Alvos da pergunta (resolvidos pelo bot): ${resoParts.join('; ')}.`);
     }
+    if (tr) {
+        lines.unshift(`Janela da pergunta: ${tr.label} (histórico de até 7 dias).`);
+    }
 
     const text = lines.join('\n').slice(0, 2800);
     return { text, stats };
+}
+
+// Comparação entre 2 janelas ("ontem × hoje"): roda a evidência de cada uma
+// (curta, p/ caber no prompt) e funde. O julgamento vai para a IA.
+async function buildComparisonEvidence(sock, targets, { from, isGroup, utils, question = '', ranges, msgLimit = 6 }) {
+    const [r1, r2] = ranges;
+    const e1 = await buildEvidence(sock, targets, { from, isGroup, utils, msgLimit, msgChars: 120, groupMsgChars: 100, question, timeRange: r1 });
+    const e2 = await buildEvidence(sock, targets, { from, isGroup, utils, msgLimit, msgChars: 120, groupMsgChars: 100, question, timeRange: r2 });
+    const text = `=== JANELA 1: ${r1.label} ===\n${e1.text}\n\n=== JANELA 2: ${r2.label} ===\n${e2.text}`;
+    const mergePeople = new Map();
+    for (const p of [...(e1.stats.people || []), ...(e2.stats.people || [])]) {
+        const cur = mergePeople.get(p.jid) || { ...p, msgCount: 0, windowTotal: 0, windowMsgs: [], groups: [] };
+        cur.msgCount += p.msgCount || 0;
+        cur.windowTotal += p.windowTotal || p.msgCount || 0;
+        cur.windowMsgs = [...(cur.windowMsgs || []), ...((p.windowMsgs || []).map((x) => ({ ...x })))].slice(-12);
+        for (const g of (p.groups || [])) if (!cur.groups.includes(g)) cur.groups.push(g);
+        if ((!cur.label || /^pessoa (mencionada|[A-Z])$/.test(cur.label)) && p.label) cur.label = p.label;
+        mergePeople.set(p.jid, cur);
+    }
+    const mergeGroups = new Map();
+    for (const g of [...(e1.stats.groups || []), ...(e2.stats.groups || [])]) {
+        const cur = mergeGroups.get(g.jid) || { ...g, msgCount: 0, windowTotal: 0, windowMsgs: [] };
+        cur.msgCount += g.msgCount || 0;
+        cur.windowTotal += g.windowTotal || g.msgCount || 0;
+        cur.windowMsgs = [...(cur.windowMsgs || []), ...((g.windowMsgs || []).map((x) => ({ ...x })))].slice(-15);
+        mergeGroups.set(g.jid, cur);
+    }
+    return {
+        text,
+        stats: {
+            people: [...mergePeople.values()],
+            groups: [...mergeGroups.values()],
+            logs: null,
+            timeRange: `${r1.label} × ${r2.label}`,
+            comparison: true
+        }
+    };
 }
 
 // Evidência vazia de verdade: ninguém com msg/adv, nenhum grupo com msg,
@@ -374,6 +564,14 @@ function evidenceIsEmpty(stats) {
     const logsEmpty = !stats.logs || (((stats.logs.errors || []).length === 0) && ((stats.logs.commands || []).length === 0));
     const hasTargets = (stats.people || []).length > 0 || (stats.groups || []).length > 0;
     return hasTargets ? (peopleEmpty && groupsEmpty && logsEmpty) : logsEmpty;
+}
+
+// Pergunta factual sobre falas ("o que X falou ontem") x opinião ("o que acha").
+// Opinião continua indo para a IA; fala com janela vai no fast-path (R$0).
+function wantsSpoken(question) {
+    const q = String(question || '').toLowerCase();
+    return /(falou|falou|disse|disseram|mandou|mandaram|comentou|postou|escreveu|quais mensagens|mostr\w*(\s+[a-zà-ú]{1,4})?\s+mensagens)/.test(q)
+        && !/(acha|acham|opini|pensa|sentimento|clima|resume|resumo|quem [ée]|top\b|quantas?\s+mensagen)/.test(q);
 }
 
 // Fast-path determinístico (sem IA). Retorna string ou null.
@@ -414,6 +612,42 @@ function matchFactual(question, evidence, { isGroup, from, utils } = {}) {
             } catch (_) {}
         }
     }
+    // "O que X falou há 3 dias/ontem": resposta direta com as mensagens da
+    // janela (R$0, sem IA). Só quando há janela de tempo explícita — opinião
+    // ("o que acha") continua indo para a IA.
+    const spoken = wantsSpoken(question);
+    // Comparação ("tem a ver", "mudou") nunca vai no fast-path: o julgamento
+    // precisa da IA com as duas janelas.
+    if (evidence.stats.timeRange && spoken && !isComparison(q)) {
+        const win = evidence.stats.timeRange;
+        const fmtLine = (x, withName) => {
+            const when = fmtWhen(x.timestamp);
+            const who = withName && x.name ? ` ${clean(x.name, 25)}:` : '';
+            return `• [${when}]${who} ${clean(x.text, 140)}`;
+        };
+        if (evidence.stats.people.length > 0) {
+            const parts = [];
+            for (const p of evidence.stats.people) {
+                const list = (p.windowMsgs || []).filter((x) => x.text);
+                if (!list.length) {
+                    parts.push(`• ${p.label}: nada ${win} no histórico.`);
+                    continue;
+                }
+                const extra = (p.windowTotal || list.length) > list.length ? `\n(+${(p.windowTotal || list.length) - list.length} na janela)` : '';
+                parts.push(`*${p.label}* ${win} (${p.windowTotal || list.length} msgs):\n${list.map((x) => fmtLine(x, (evidence.stats.people.length > 1))).join('\n')}${extra}`);
+            }
+            return `💬 *O que falaram*\n${parts.join('\n\n')}`.slice(0, 3500);
+        }
+        if (evidence.stats.groups.length > 0 && (evidence.stats.groups[0].windowTotal || 0) > 0) {
+            const gs = evidence.stats.groups[0];
+            const list = (gs.windowMsgs || []).filter((x) => x.text);
+            const extra = (gs.windowTotal || list.length) > list.length ? `\n(+${(gs.windowTotal || list.length) - list.length} na janela)` : '';
+            return `💬 *${clean(gs.subject, 40)}* ${win} (${gs.windowTotal || list.length} msgs):\n${list.map((x) => fmtLine(x, true)).join('\n')}${extra}`.slice(0, 3500);
+        }
+        if (evidence.stats.groups.length > 0) {
+            return `💬 Nada no grupo ${clean(evidence.stats.groups[0].subject, 40)} ${win} no histórico.`;
+        }
+    }
     // Logs: erros e comandos recentes (R$0, direto do banco).
     if (evidence.stats.logs) {
         if (/erro|falha|bug|travou|parou|quebrou/i.test(q)) {
@@ -430,4 +664,4 @@ function matchFactual(question, evidence, { isGroup, from, utils } = {}) {
     return null;
 }
 
-module.exports = { resolveTargets, buildEvidence, matchFactual, clean, warningsOf, wantsLogs, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };
+module.exports = { resolveTargets, buildEvidence, buildComparisonEvidence, matchFactual, clean, warningsOf, wantsLogs, wantsSpoken, isComparison, extractTimeRange, extractAllTimeRanges, rangesForComparison, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };

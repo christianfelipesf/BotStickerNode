@@ -2,7 +2,7 @@
 // O modelo decide o que buscar em até MAX_ROUNDS rodadas; o executor roda
 // tudo local (SQLite, R$0 por busca). Só leitura — nenhuma tool altera nada.
 
-const { warningsOf, clean, safePersonLabel, jidFromDigits } = require('./ownerEvidence');
+const { warningsOf, clean, safePersonLabel, jidFromDigits, extractTimeRange } = require('./ownerEvidence');
 
 const MAX_ROUNDS = 4;
 const MAX_CALLS_PER_ROUND = 3;
@@ -23,12 +23,13 @@ const OWNER_TOOLS = [
         type: 'function',
         function: {
             name: 'buscar_mensagens_pessoa',
-            description: 'Últimas mensagens de uma pessoa (nome, telefone ou jid). Use para saber o que ela anda falando.',
+            description: 'Mensagens de uma pessoa (nome, telefone ou jid). Sem período = últimas; com período ("há 3 dias", "ontem", "última semana") = só da janela.',
             parameters: {
                 type: 'object',
                 properties: {
                     pessoa: { type: 'string', description: 'Nome, telefone ou jid da pessoa' },
-                    limite: { type: 'integer', description: 'Quantas mensagens (1-20, padrão 12)' }
+                    limite: { type: 'integer', description: 'Quantas mensagens (1-20, padrão 12)' },
+                    periodo: { type: 'string', description: 'Janela de tempo: "há 3 dias", "ontem", "últimos 5 dias", "dia 20/09" (opcional)' }
                 },
                 required: ['pessoa']
             }
@@ -38,12 +39,13 @@ const OWNER_TOOLS = [
         type: 'function',
         function: {
             name: 'buscar_mensagens_grupo',
-            description: 'Últimas mensagens de um grupo (nome ou jid). Use "atual" para o grupo onde a pergunta foi feita.',
+            description: 'Mensagens de um grupo (nome ou jid). Use "atual" para o grupo onde a pergunta foi feita. Sem período = últimas; com período = só da janela.',
             parameters: {
                 type: 'object',
                 properties: {
                     grupo: { type: 'string', description: 'Nome do grupo, jid ou "atual"' },
-                    limite: { type: 'integer', description: 'Quantas mensagens (1-20, padrão 15)' }
+                    limite: { type: 'integer', description: 'Quantas mensagens (1-20, padrão 15)' },
+                    periodo: { type: 'string', description: 'Janela de tempo: "ontem", "há 3 dias", "última semana" (opcional)' }
                 },
                 required: ['grupo']
             }
@@ -195,7 +197,12 @@ async function executeTool(name, args, ctx) {
                 const personName = safePersonLabel(p.label, 'pessoa mencionada');
                 let out = `Pessoa: ${personName}`;
                 if (p.alternatives?.length) out += ` (também achei: ${p.alternatives.map((x, i) => safePersonLabel(x.name || x.senderJid, `pessoa ${String.fromCharCode(66 + (i % 25))}`)).join(', ')})`;
-                let msgs = utils?.getMessagesBySender?.(p.jid, p.alias, clampLim(a.limite, 12)) || [];
+                const tr = a.periodo ? extractTimeRange(String(a.periodo)) : null;
+                const winTag = tr ? ` ${tr.label}` : '';
+                const lim = clampLim(a.limite, 12);
+                let msgs = (tr && utils?.getMessagesBySenderRange)
+                    ? (utils.getMessagesBySenderRange(p.jid, p.alias, tr.since, tr.until, 20) || [])
+                    : (utils?.getMessagesBySender?.(p.jid, p.alias, lim) || []);
                 let approx = false;
                 let where = '';
                 if (!msgs.length) {
@@ -211,39 +218,63 @@ async function executeTool(name, args, ctx) {
                         if (!scopes.length) scopes = [null];
                         const collected = [];
                         const likeFn = utils?.findMessagesByNameLike || utils?.getMessagesByPushName;
+                        const rangeFn = tr && utils?.getMessagesByPushNameRange ? utils.getMessagesByPushNameRange.bind(utils) : null;
                         for (const gj of [...scopes, null]) {
-                            const extra = likeFn?.call(utils, gj, pname, clampLim(a.limite, 12)) || [];
-                            for (const r of extra) collected.push({ gj: r.jid || gj, r });
-                            if (collected.length >= 24) break;
+                            if (rangeFn) {
+                                const extra = rangeFn(gj, pname, tr.since, tr.until, 20) || [];
+                                for (const r of extra) collected.push({ gj: r.jid || gj, r });
+                                if (collected.length >= 40) break;
+                            } else {
+                                const extra = likeFn?.call(utils, gj, pname, lim) || [];
+                                for (const r of extra) collected.push({ gj: r.jid || gj, r });
+                                if (collected.length >= 24) break;
+                            }
                         }
-                        if (collected.length) {
-                            collected.sort((x, y) => (x.r.time || 0) - (y.r.time || 0));
-                            const distinct = [...new Set(collected.map((c) => c.gj || ''))].filter(Boolean);
+                        let pool = collected;
+                        if (tr && !rangeFn) pool = collected.filter((c) => (c.r.time || 0) >= tr.since && (c.r.time || 0) <= tr.until);
+                        if (pool.length) {
+                            pool.sort((x, y) => (x.r.time || 0) - (y.r.time || 0));
+                            const distinct = [...new Set(pool.map((c) => c.gj || ''))].filter(Boolean);
                             if (distinct.length > 1) where = ` em ${distinct.length} grupos`;
-                            msgs = collected.slice(-clampLim(a.limite, 12)).map(({ gj, r }) => ({
+                            msgs = pool.slice(-lim).map(({ gj, r }) => ({
                                 text: r.text, name: r.push_name, timestamp: r.time
                             }));
                             approx = true;
                         }
                     }
                 }
-                if (!msgs.length) return `${out}\nSem mensagens no histórico.`;
-                return `${out} — ${msgs.length} msgs${where}${approx ? ' (aproximado por nome)' : ''}:\n` + msgLines(msgs, 150).join('\n');
+                if (!msgs.length) return `${out}\nSem mensagens${winTag} no histórico.`;
+                return `${out} — ${msgs.length} msgs${winTag}${where}${approx ? ' (aproximado por nome)' : ''}:\n` + msgLines(msgs, 150).join('\n');
             }
             case 'buscar_mensagens_grupo': {
                 const g = await findGroup(sock, a.grupo, ctx);
                 if (!g) return `Grupo "${clean(a.grupo, 40)}" não encontrado. Use listar_grupos para ver os nomes.`;
-                let msgs = utils?.getMessagesByGroup?.(g.jid, clampLim(a.limite, 15)) || [];
+                const gtr = a.periodo ? extractTimeRange(String(a.periodo)) : null;
+                const gWin = gtr ? ` ${gtr.label}` : '';
+                const glim = clampLim(a.limite, 15);
+                let msgs = (gtr && utils?.getMessagesByGroupRange)
+                    ? (utils.getMessagesByGroupRange(g.jid, gtr.since, gtr.until, 20) || [])
+                    : (utils?.getMessagesByGroup?.(g.jid, glim) || []);
                 let approx = false;
                 if (!msgs.length) {
-                    const extra = utils?.getGroupMessages?.(g.jid, clampLim(a.limite, 15)) || [];
-                    if (extra.length) {
-                        msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                        approx = true;
+                    if (gtr && utils?.getGroupMessagesRange) {
+                        const extra = utils.getGroupMessagesRange(g.jid, gtr.since, gtr.until, 20) || [];
+                        if (extra.length) {
+                            msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
+                            approx = true;
+                        }
+                    } else {
+                        const extra = utils?.getGroupMessages?.(g.jid, glim) || [];
+                        let pool = extra;
+                        if (gtr) pool = extra.filter((r) => (r.time || 0) >= gtr.since && (r.time || 0) <= gtr.until);
+                        if (pool.length) {
+                            msgs = pool.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
+                            approx = true;
+                        }
                     }
                 }
-                if (!msgs.length) return `Grupo ${clean(g.subject, 40)}: sem mensagens no histórico.`;
-                return `Grupo ${clean(g.subject, 40)} — ${msgs.length} msgs${approx ? ' (autores por nome)' : ''}:\n` + msgLines(msgs, 130).join('\n');
+                if (!msgs.length) return `Grupo ${clean(g.subject, 40)}: sem mensagens${gWin} no histórico.`;
+                return `Grupo ${clean(g.subject, 40)} — ${msgs.length} msgs${gWin}${approx ? ' (autores por nome)' : ''}:\n` + msgLines(msgs, 130).join('\n');
             }
             case 'ver_advs': {
                 const p = await findPerson(sock, a.pessoa, ctx);

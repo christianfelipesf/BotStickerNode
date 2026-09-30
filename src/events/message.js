@@ -12,6 +12,7 @@ const {
     readConfig, saveMessage,
     getBotName, react, getMessageText,
     isDashboardEnabled, groupMetadataCached, updateMemberActivity, recordGroupMessage,
+    shouldRecordHistory,
     readStats, getPrefixForJid, getGroupData, setGroupData
 } = require('../database/utils');
 
@@ -227,7 +228,9 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (await handleProtocolMessage(sock, m, from, sender, senderName)) return;
 
             const botActive = !isGroup || isActiveGroup(from);
-            const dashOn = isDashboardEnabled(from);
+            // Histórico (!aidono/!resumir) independe do painel: grava em todo
+            // grupo ativo ou parcial. PV mantém a regra antiga (painel).
+            const historyOn = isGroup ? shouldRecordHistory(from) : isDashboardEnabled(from);
 
             // === Mute & Antilink & Antiflood enforcement ===
             if (isGroup && botActive) {
@@ -235,16 +238,16 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                 if (enforcement === 'muted' || enforcement === 'antilink' || enforcement === 'antiflood') return;
             }
 
-            // === Dashboard logging (mídia baixada em background via fila) ===
-            if (dashOn) {
+            // === Histórico p/ !aidono e !resumir (ativo + parcial, sem painel) ===
+            if (historyOn) {
                 const groupMetadata = isGroup
                     ? await groupMetadataCached(sock, from).catch(() => ({ subject: 'Grupo' }))
                     : { subject: senderName || 'Privado', participants: [] };
                 await handleDashboardLog(sock, m, from, sender, senderName, text, groupMetadata);
             }
 
-            // === Save message for !resumir ===
-            if (isGroup && botActive && text && !text.startsWith(effectivePrefix)) {
+            // === Save message for !resumir (ativo + parcial, sem painel) ===
+            if (isGroup && historyOn && text && !text.startsWith(effectivePrefix)) {
                 saveMessage(from, m.pushName || senderName, text);
             }
 
