@@ -112,6 +112,48 @@ describe('!aidono — comparação entre janelas', () => {
     });
 });
 
+describe('!aidono — fusão exato+aproximado (mergeMsgLists)', () => {
+    const T0 = spMid(8, 30);
+    it('dedupe dobra gravação (mesmo texto a 2s)', () => {
+        const out = ev.mergeMsgLists(
+            [{ text: 'oi', timestamp: T0 }],
+            [{ text: 'oi', timestamp: T0 + 2000 }]
+        );
+        assert.strictEqual(out.length, 1);
+    });
+    it('preserva repetição real espaçada', () => {
+        const out = ev.mergeMsgLists(
+            [{ text: 'Chad.', timestamp: T0 }],
+            [{ text: 'Chad.', timestamp: T0 + 60000 }, { text: 'Chad.', timestamp: T0 + 120000 }]
+        );
+        assert.strictEqual(out.length, 3);
+    });
+    it('ordena e descarta vazio', () => {
+        const out = ev.mergeMsgLists(
+            [{ text: 'b', timestamp: T0 + 10 }],
+            [{ text: '  ', timestamp: T0 + 5 }, { text: 'a', timestamp: T0 }]
+        );
+        assert.deepStrictEqual(out.map((x) => x.text), ['a', 'b']);
+    });
+    it('buildEvidence soma fonte fina + fallback rico', async () => {
+        const stub = {
+            normalizeJid: (j) => String(j || '').toLowerCase(),
+            getGroupData: () => ({ warnings: {} }),
+            getMessagesBySender: () => [{ text: 'fala exata', name: 'Mel', timestamp: T0 }],
+            getMessagesByPushName: (_gj, _pn) => [
+                { jid: 'outro@g.us', push_name: 'Mel', text: 'fala antiga 1', time: T0 - 3600000 },
+                { jid: 'outro@g.us', push_name: 'Mel', text: 'fala antiga 2', time: T0 - 1800000 }
+            ],
+        };
+        const { text, stats } = await ev.buildEvidence({}, { people: [{ jid: '111@s.whatsapp.net', alias: null }], groups: [] },
+            { from: 'g1@g.us', isGroup: true, utils: stub, msgLimit: 14, question: 'o que a Mel falou?' });
+        assert.strictEqual(stats.people[0].windowTotal, 3);
+        assert.ok(text.includes('fala antiga 1'));
+        assert.ok(text.includes('fala exata'));
+        assert.strictEqual(stats.people[0].approx, true);
+    });
+});
+
 describe('!aidono — wantsSpoken separa fala de opinião', () => {
     it('fala vai no fast-path', () => {
         assert.ok(ev.wantsSpoken('o que a Ana falou ontem?'));

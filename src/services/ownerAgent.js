@@ -2,7 +2,7 @@
 // O modelo decide o que buscar em até MAX_ROUNDS rodadas; o executor roda
 // tudo local (SQLite, R$0 por busca). Só leitura — nenhuma tool altera nada.
 
-const { warningsOf, clean, safePersonLabel, jidFromDigits, extractTimeRange } = require('./ownerEvidence');
+const { warningsOf, clean, safePersonLabel, jidFromDigits, extractTimeRange, mergeMsgLists } = require('./ownerEvidence');
 
 const MAX_ROUNDS = 4;
 const MAX_CALLS_PER_ROUND = 3;
@@ -218,9 +218,9 @@ async function executeTool(name, args, ctx) {
                     : (utils?.getMessagesBySender?.(p.jid, p.alias, lim) || []);
                 let approx = false;
                 let where = '';
-                if (!msgs.length) {
-                    // Fallback: histórico geral por push_name (aproximado),
-                    // AGREGANDO TODOS OS GRUPOS (a pessoa pode falar em vários).
+                // Fallback por nome SEMPRE (funde com dedupe): cobre grupos que
+                // a busca exata não viu.
+                {
                     const pname = p.label.includes('@') ? (utils?.getSenderName?.(p.jid) || null) : p.label;
                     if (pname && !pname.includes('@')) {
                         let scopes = [];
@@ -248,11 +248,13 @@ async function executeTool(name, args, ctx) {
                         if (pool.length) {
                             pool.sort((x, y) => (x.r.time || 0) - (y.r.time || 0));
                             const distinct = [...new Set(pool.map((c) => c.gj || ''))].filter(Boolean);
-                            if (distinct.length > 1) where = ` em ${distinct.length} grupos`;
-                            msgs = pool.slice(-lim).map(({ gj, r }) => ({
-                                text: r.text, name: r.push_name, timestamp: r.time
-                            }));
-                            approx = true;
+                            const directGroups = [...new Set(msgs.map((x) => x.toJid).filter(Boolean))];
+                            const allGroups = [...new Set([...distinct, ...directGroups])];
+                            if (allGroups.length > 1) where = ` em ${allGroups.length} grupos`;
+                            const fbRows = pool.map(({ r }) => ({ text: r.text, name: r.push_name, timestamp: r.time, fb: true }));
+                            const merged = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows);
+                            if (merged.some((x) => x.fb)) approx = true;
+                            msgs = merged.slice(-lim);
                         }
                     }
                 }
@@ -268,24 +270,23 @@ async function executeTool(name, args, ctx) {
                 let msgs = (gtr && utils?.getMessagesByGroupRange)
                     ? (utils.getMessagesByGroupRange(g.jid, gtr.since, gtr.until, 20) || [])
                     : (utils?.getMessagesByGroup?.(g.jid, glim) || []);
-                let approx = false;
-                if (!msgs.length) {
+                // Fallback fundido com dedupe (mesmo motivo da pessoa).
+                try {
+                    let extra = [];
                     if (gtr && utils?.getGroupMessagesRange) {
-                        const extra = utils.getGroupMessagesRange(g.jid, gtr.since, gtr.until, 20) || [];
-                        if (extra.length) {
-                            msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                            approx = true;
-                        }
+                        extra = utils.getGroupMessagesRange(g.jid, gtr.since, gtr.until, 20) || [];
                     } else {
-                        const extra = utils?.getGroupMessages?.(g.jid, glim) || [];
-                        let pool = extra;
-                        if (gtr) pool = extra.filter((r) => (r.time || 0) >= gtr.since && (r.time || 0) <= gtr.until);
-                        if (pool.length) {
-                            msgs = pool.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                            approx = true;
-                        }
+                        const all = utils?.getGroupMessages?.(g.jid, glim) || [];
+                        extra = gtr ? all.filter((r) => (r.time || 0) >= gtr.since && (r.time || 0) <= gtr.until) : all;
                     }
-                }
+                    if (extra.length) {
+                        const fbRows = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time, fb: true }));
+                        msgs = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows).slice(-glim);
+                    } else {
+                        msgs = msgs.slice(-glim);
+                    }
+                } catch (_) {}
+                let approx = msgs.some((x) => x.fb);
                 if (!msgs.length) return `Grupo ${clean(g.subject, 40)}: sem mensagens${gWin} no histórico.`;
                 return `Grupo ${clean(g.subject, 40)} — ${msgs.length} msgs${gWin}${approx ? ' (autores por nome)' : ''}:\n` + msgLines(msgs, 130).join('\n');
             }

@@ -47,6 +47,35 @@ function personTag(index, total) {
     return 'pessoa mencionada';
 }
 
+// Número puro (@5511..., LID solto) NÃO é identidade confirmada — é só a
+// falta de nome. Trata como desconhecido p/ presença e busca por nome.
+function isNumericLabel(l) {
+    return /^@?\d{8,15}$/.test(String(l || '').trim());
+}
+
+// Funde lista exata (por jid) + aproximada (por nome): cada fonte cobre
+// grupos/épocas que a outra não viu. Dedupe por texto+tempo (±5s) p/ não
+// dobrar o que está nas duas (toda msg gravada vai p/ ambas as tabelas).
+// Repetição real espaçada ("Chad." 3x) é preservada.
+function mergeKey(text, ts) {
+    const n = String(text == null ? '' : text).replace(/[\x00-\x1F\x7F]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 80);
+    return `${n}|${Math.floor((Number(ts) || 0) / 5000)}`;
+}
+function mergeMsgLists(primary, secondary) {
+    const seen = new Set();
+    const out = [];
+    for (const r of [...(primary || []), ...(secondary || [])]) {
+        const txt = r && r.text != null ? String(r.text).trim() : '';
+        if (!txt) continue;
+        const k = mergeKey(txt, r.timestamp);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(r);
+    }
+    out.sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0));
+    return out;
+}
+
 // Dígitos de LID nunca são exibidos (parecem telefone mas não são).
 function isLidJid(jid) {
     return typeof jid === 'string' && jid.toLowerCase().endsWith('@lid');
@@ -352,9 +381,11 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
     };
 
     for (const [pi, p] of people.entries()) {
+        // Fetch folgado e fixo (independe do msgLimit de exibição): conta
+        // honesta + dedupe bom; a exibição continua curta (msgLimit/~12).
         let msgs = (tr && utils?.getMessagesBySenderRange)
-            ? (utils.getMessagesBySenderRange(p.jid, p.alias, tr.since, tr.until, 30) || [])
-            : (utils?.getMessagesBySender?.(p.jid, p.alias, msgLimit) || []);
+            ? (utils.getMessagesBySenderRange(p.jid, p.alias, tr.since, tr.until, 50) || [])
+            : (utils?.getMessagesBySender?.(p.jid, p.alias, 30) || []);
         let approx = false;
         const rawLabel = p.nameHint || displayName(msgs[msgs.length - 1] || {}, p.jid);
         let label = safePersonLabel(rawLabel, personTag(pi, people.length));
@@ -365,59 +396,70 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         try {
             presence = utils?.findActivityName?.(p.jid, p.alias) || null;
         } catch (_) {}
-        if ((!label || /^(pessoa mencionada|pessoa [A-Z])$/.test(label)) && presence?.name) {
+        if ((!label || isTagLabel(label) || isNumericLabel(label)) && presence?.name) {
             label = safePersonLabel(presence.name, personTag(pi, people.length));
         }
-        // Fallback: sem log do painel, busca pelo nome no histórico geral
-        // (tabela messages — atribuição aproximada por push_name).
-        // AGREGA TODOS OS GRUPOS: a pessoa pode falar em vários.
-        let poolTotal = null;
-        if (msgs.length === 0) {
-            try {
-                let pname = (label && !/^(pessoa mencionada|pessoa [A-Z])$/.test(label)) ? label : null;
-                if (!pname) pname = utils?.getSenderName?.(p.jid) || utils?.getSenderName?.(p.alias) || null;
-                if (!pname && presence?.name) pname = presence.name;
-                if (pname) {
-                    const scope = groupJids.length > 0 ? [...groupJids, null] : [null];
-                    const collected = [];
-                    const likeFn = utils?.findMessagesByNameLike || utils?.getMessagesByPushName;
-                    const rangeFn = tr && utils?.getMessagesByPushNameRange ? utils.getMessagesByPushNameRange.bind(utils) : null;
-                    for (const gj of scope) {
-                        if (rangeFn) {
-                            // Busca exata por nome COM janela de tempo (SQL).
-                            const extra = rangeFn(gj, pname, tr.since, tr.until, 30) || [];
-                            for (const r of extra) collected.push({ gj: r.jid || gj, r });
-                        } else {
-                            const extra = likeFn?.call(utils, gj, pname, msgLimit) || [];
-                            // usa o jid real da linha (o escopo nulo mistura grupos)
-                            for (const r of extra) collected.push({ gj: r.jid || gj, r });
-                        }
-                        if (collected.length >= msgLimit * 2 && !tr) break;
-                        if (tr && collected.length >= 60) break;
+        // Fallback por nome SEMPRE (mesmo com msgs exatas): cada fonte cobre
+        // grupos/épocas que a outra não viu. Funde com dedupe e ordena.
+        try {
+            let pname = (label && !isTagLabel(label) && !isNumericLabel(label)) ? label : null;
+            if (!pname) pname = utils?.getSenderName?.(p.jid) || utils?.getSenderName?.(p.alias) || null;
+            if (!pname && presence?.name) pname = presence.name;
+            if (pname) {
+                const scope = groupJids.length > 0 ? [...groupJids, null] : [null];
+                const collected = [];
+                const likeFn = utils?.findMessagesByNameLike || utils?.getMessagesByPushName;
+                const rangeFn = tr && utils?.getMessagesByPushNameRange ? utils.getMessagesByPushNameRange.bind(utils) : null;
+                for (const gj of scope) {
+                    if (rangeFn) {
+                        // Busca exata por nome COM janela de tempo (SQL).
+                        const extra = rangeFn(gj, pname, tr.since, tr.until, 100) || [];
+                        for (const r of extra) collected.push({ gj: r.jid || gj, r });
+                    } else {
+                        const extra = likeFn?.call(utils, gj, pname, 100) || [];
+                        // usa o jid real da linha (o escopo nulo mistura grupos)
+                        for (const r of extra) collected.push({ gj: r.jid || gj, r });
                     }
-                    // Filtro temporal p/ o caminho aproximado (LIKE sem SQL de data).
-                    let pool = collected;
-                    if (tr && !rangeFn) pool = collected.filter((c) => (c.r.time || 0) >= tr.since && (c.r.time || 0) <= tr.until);
-                    if (pool.length > 0) {
-                        if (tr) poolTotal = pool.length;
-                        pool.sort((a, b) => (a.r.time || 0) - (b.r.time || 0));
-                        for (const c of pool) c.gname = await groupName(c.gj);
-                        const distinctGroups = [...new Set(pool.map((c) => c.gj || ''))].filter(Boolean);
-                        const multi = distinctGroups.length > 1;
-                        for (const gj of distinctGroups) {
-                            const gname = await groupName(gj);
-                            if (!msgGroups.includes(gname)) msgGroups.push(gname);
-                        }
-                        msgs = pool.slice(-msgLimit).map(({ gj, r, gname }) => {
-                            const gtag = multi ? `(${clean(gname || 'grupo', 25)}) ` : '';
-                            return { text: `${gtag}${r.text}`, name: r.push_name, timestamp: r.time };
-                        });
-                        approx = true;
-                        if (msgs.length > 0) label = safePersonLabel(pname, personTag(pi, people.length));
-                    }
+                    if (collected.length >= 200) break;
                 }
-            } catch (_) {}
+                // Filtro temporal p/ o caminho aproximado (LIKE sem SQL de data).
+                let pool = collected;
+                if (tr && !rangeFn) pool = collected.filter((c) => (c.r.time || 0) >= tr.since && (c.r.time || 0) <= tr.until);
+                if (pool.length > 0) {
+                    pool.sort((a, b) => (a.r.time || 0) - (b.r.time || 0));
+                    for (const c of pool) c.gname = await groupName(c.gj);
+                    const distinctGroups = [...new Set(pool.map((c) => c.gj || ''))].filter(Boolean);
+                    for (const gj of distinctGroups) {
+                        const gname = await groupName(gj);
+                        if (!msgGroups.includes(gname)) msgGroups.push(gname);
+                    }
+                    const fbRows = pool.map(({ r, gname }) => ({ text: r.text, name: r.push_name, timestamp: r.time, fb: true, gname }));
+                    msgs = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows);
+                    if (msgs.length > 0 && (isTagLabel(label) || isNumericLabel(label))) label = safePersonLabel(pname, personTag(pi, people.length));
+                }
+            }
+        } catch (_) {}
+        // Grupos das linhas exatas (só banco, sem rede) p/ tag multi-grupo.
+        try {
+            const tjids = [...new Set(msgs.map((x) => x.toJid).filter(Boolean))].slice(0, 10);
+            for (const tj of tjids) {
+                const sn = utils?.getGroupSubject?.(tj) || null;
+                if (sn) {
+                    const gname = clean(sn, 25);
+                    if (gname && !msgGroups.includes(gname)) msgGroups.push(gname);
+                }
+            }
+        } catch (_) {}
+        // Tag de grupo quando a pessoa fala em vários (vale p/ linhas aprox).
+        if (msgGroups.length > 1) {
+            for (const r of msgs) {
+                if (r.fb && !r.tagged) {
+                    r.tagged = true;
+                    r.text = `(${clean(r.gname || 'grupo', 25)}) ${r.text}`;
+                }
+            }
         }
+        approx = msgs.some((x) => x.fb);
         // advs nos grupos relevantes
         const advParts = [];
         for (const gj of groupJids) {
@@ -429,7 +471,8 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
             ? ` — aparece em ${presence.groups.length} grupo(s), ${presence.total} msgs contadas (sem conteúdo salvo)`
             : '';
         // Com janela de tempo: conta a janela toda, exibe só o necessário.
-        const windowTotal = tr ? (poolTotal != null ? poolTotal : msgs.length) : msgs.length;
+        // msgs já é a fusão exato+aproximado com dedupe.
+        const windowTotal = msgs.length;
         const showLim = tr ? Math.min(msgLimit, 12) : msgLimit;
         const shown = tr ? msgs.slice(-showLim) : msgs.slice(-msgLimit);
         const winTag = tr ? ` ${tr.label}` : ' recentes';
@@ -447,26 +490,21 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         let msgs = (tr && utils?.getMessagesByGroupRange)
             ? (utils.getMessagesByGroupRange(g.jid, tr.since, tr.until, 30) || [])
             : (utils?.getMessagesByGroup?.(g.jid, 20) || []);
-        let approx = false;
-        // Fallback: histórico geral do grupo (autores por push_name).
-        if (msgs.length === 0) {
-            try {
-                if (tr && utils?.getGroupMessagesRange) {
-                    const extra = utils.getGroupMessagesRange(g.jid, tr.since, tr.until, 30) || [];
-                    if (extra.length > 0) {
-                        msgs = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                        approx = true;
-                    }
-                } else {
-                    const extra = utils?.getGroupMessages?.(g.jid, 20) || [];
-                    if (extra.length > 0) {
-                        const pool = tr ? extra.filter((r) => (r.time || 0) >= tr.since && (r.time || 0) <= tr.until) : extra;
-                        msgs = pool.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time }));
-                        approx = true;
-                    }
-                }
-            } catch (_) {}
-        }
+        // Fallback fundido com dedupe (mesmo motivo do loop de pessoas).
+        try {
+            let extra = [];
+            if (tr && utils?.getGroupMessagesRange) {
+                extra = utils.getGroupMessagesRange(g.jid, tr.since, tr.until, 100) || [];
+            } else {
+                const all = utils?.getGroupMessages?.(g.jid, 50) || [];
+                extra = tr ? all.filter((r) => (r.time || 0) >= tr.since && (r.time || 0) <= tr.until) : all;
+            }
+            if (extra.length > 0) {
+                const fbRows = extra.map((r) => ({ text: r.text, name: r.push_name, senderJid: null, timestamp: r.time, fb: true }));
+                msgs = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows);
+            }
+        } catch (_) {}
+        let approx = msgs.some((x) => x.fb);
         const gname = clean(await groupName(g.jid) || g.subject, 50);
         const winTag = tr ? ` ${tr.label}` : ' recentes';
         const gShow = tr ? msgs.slice(-15) : msgs.slice(-20);
@@ -605,8 +643,8 @@ function matchFactual(question, evidence, { isGroup, from, utils } = {}) {
         } catch (_) { return null; }
     }
     if (wantsCount && evidence.stats.people.length > 0) {
-        const parts = evidence.stats.people.map((p) => `• ${p.label}: ${p.msgCount} mensagens recentes`);
-        return `💬 *Mensagens (janela do histórico)*\n${parts.join('\n')}`;
+        const parts = evidence.stats.people.map((p) => `• ${p.label}: ${p.windowTotal ?? p.msgCount} mensagens`);
+        return `💬 *Mensagens (histórico)*\n${parts.join('\n')}`;
     }
     if (wantsTop) {
         const gj = evidence.stats.groups[0]?.jid || (isGroup ? from : null);
@@ -669,4 +707,4 @@ function matchFactual(question, evidence, { isGroup, from, utils } = {}) {
     return null;
 }
 
-module.exports = { resolveTargets, resolveAlias, buildEvidence, buildComparisonEvidence, matchFactual, clean, warningsOf, wantsLogs, wantsSpoken, isComparison, extractTimeRange, extractAllTimeRanges, rangesForComparison, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };
+module.exports = { resolveTargets, resolveAlias, buildEvidence, buildComparisonEvidence, matchFactual, clean, warningsOf, wantsLogs, wantsSpoken, isComparison, extractTimeRange, extractAllTimeRanges, rangesForComparison, mergeMsgLists, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };
