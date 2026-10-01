@@ -148,6 +148,7 @@ module.exports = {
     getMessagesBySenderRange: utils.getMessagesBySenderRange,
     getMessagesByGroupRange: utils.getMessagesByGroupRange,
     getRecentLogs: utils.getRecentLogs,
+    countMediaOnlyBySender: utils.countMediaOnlyBySender,
     getMessagesByPushName: utils.getMessagesByPushName,
     findMessagesByNameLike: utils.findMessagesByNameLike,
     getGroupMessages: utils.getGroupMessages,

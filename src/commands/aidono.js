@@ -171,10 +171,14 @@ module.exports = {
             if (!evidence.text || evidenceIsEmpty(evidence.stats)) {
                 const who = (evidence.stats?.people || []).map((p) => p.label).filter(Boolean).join(', ');
                 const win = cmpRanges ? ` ${cmpRanges[0].label} × ${cmpRanges[1].label}` : (timeRange ? ` ${timeRange.label}` : '');
+                const mediaOnly = (evidence.stats?.people || []).filter((p) => (p.mediaOnly || 0) > 0 && (p.windowTotal || 0) === 0);
+                const mediaHint = mediaOnly.length > 0
+                    ? `\n• 📎 ${mediaOnly.map((p) => `${p.label} só tem ${p.mediaOnly} mídia sem texto`).join('; ')} — peça para a pessoa escrever algo.`
+                    : '';
                 await sock.sendMessage(from, {
                     text: `❌ Sem dados${who ? ` sobre ${who}` : ''}${win} no histórico.\n\n` +
                         `💡 Verifiquei: nome nos logs, mensagens (painel + geral), atividade, advertências e logs do bot.\n` +
-                        `• Isso acontece quando a pessoa nunca falou em grupo com o bot ativo, ou só antes do bot chegar.\n` +
+                        `• Isso acontece quando a pessoa nunca falou em grupo com o bot ativo, ou só antes do bot chegar.${mediaHint}\n` +
                         `• Para registrar daqui pra frente: ative o bot (e o painel) nos grupos dela.`
                 }, { quoted: m });
                 return await reactStatus(sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN);

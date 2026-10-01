@@ -1121,6 +1121,13 @@ function findPeopleByName(query, limit = 10) {
     } catch (_) { return []; }
 }
 
+const _dlCountMediaOnly = db.prepare(`SELECT COUNT(*) AS c FROM dashboard_logs
+    WHERE type = 'chat' AND (text IS NULL OR text = '')
+    AND (sender_jid = ? OR sender_jid = ?)`);
+function countMediaOnlyBySender(senderJid, aliasJid) {
+    try { return Number(_dlCountMediaOnly.get(senderJid || '', aliasJid || '').c) || 0; } catch (_) { return 0; }
+}
+
 // Nome mais recente de um remetente (qualquer tipo de log — action tem nome).
 function getSenderName(senderJid) {
     if (!senderJid) return null;
@@ -2684,6 +2691,7 @@ module.exports = {
     updateDashboardLogReactions, updateDashboardLogMedia, selectDashboardLogsWithInlineMedia,
     clearDashboardLogs, deleteDashboardLogsByJid, getDashboardLogByMessageId,
     getMessagesBySender, getMessagesByGroup, getRecentLogs, findPeopleByName,
+    countMediaOnlyBySender,
     getMessagesBySenderRange, getMessagesByGroupRange, getMessagesByPushNameRange, getGroupMessagesRange,
     getSenderName, getGroupSubject, getMessagesByPushName, findMessagesByNameLike, getGroupMessages,
     findActivityName,

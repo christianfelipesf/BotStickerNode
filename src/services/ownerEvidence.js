@@ -391,7 +391,7 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         // O nome delas ainda vale para o rótulo.
         const namedForLabel = msgs;
         const hasText = (x) => String(x?.text ?? '').trim() !== '';
-        const mediaOnly = namedForLabel.filter((x) => !hasText(x)).length;
+        let mediaOnly = namedForLabel.filter((x) => !hasText(x)).length;
         msgs = namedForLabel.filter(hasText);
         let approx = false;
         const rawLabel = p.nameHint || displayName(namedForLabel[namedForLabel.length - 1] || {}, p.jid);
@@ -444,8 +444,19 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
                     msgs = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows);
                     if (msgs.length > 0 && (isTagLabel(label) || isNumericLabel(label))) label = safePersonLabel(pname, personTag(pi, people.length));
                 }
+                // Nome conhecido mas zero mensagens com texto: adota o nome
+                // mesmo assim — "Sem dados sobre Clara" em vez de "pessoa mencionada".
+                if (msgs.length === 0 && (isTagLabel(label) || isNumericLabel(label)) && pname) {
+                    label = safePersonLabel(pname, personTag(pi, people.length));
+                }
             }
         } catch (_) {}
+        // Só mídia sem texto no banco: conta para a dica do "Sem dados".
+        let dbMediaOnly = 0;
+        if (msgs.length === 0) {
+            try { dbMediaOnly = Number(utils?.countMediaOnlyBySender?.(p.jid, p.alias)) || 0; } catch (_) {}
+        }
+        mediaOnly = Math.max(mediaOnly, dbMediaOnly);
         // Grupos das linhas exatas (só banco, sem rede) p/ tag multi-grupo.
         try {
             const tjids = [...new Set(msgs.map((x) => x.toJid).filter(Boolean))].slice(0, 10);
@@ -514,6 +525,8 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
                 msgs = mergeMsgLists(msgs.map((x) => ({ ...x, fb: false })), fbRows);
             }
         } catch (_) {}
+        // Mesmo filtro do loop de pessoas: linha sem texto não é evidência.
+        msgs = (msgs || []).filter((x) => String(x?.text ?? '').trim() !== '');
         let approx = msgs.some((x) => x.fb);
         const gname = clean(await groupName(g.jid) || g.subject, 50);
         const winTag = tr ? ` ${tr.label}` : ' recentes';
