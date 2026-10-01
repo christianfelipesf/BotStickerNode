@@ -6,6 +6,10 @@ let _version = null;
 let _phone = null;
 let _connectedAt = null;
 let _sock = null;
+let _qr = null;
+
+function setQr(qr) { _qr = qr || null; }
+function clearQr() { _qr = null; }
 
 function setSock(sock) { _sock = sock || null; }
 function getSock() { return _sock; }
@@ -17,6 +21,7 @@ function setConnected(meta = {}) {
     _version = meta.version || _version;
     _phone = meta.phone || _phone;
     _connectedAt = _connectedAt || new Date();
+    _qr = null;
     if (!wasConnected) emitter.emit('connected', getState());
 }
 
@@ -28,8 +33,10 @@ function setDisconnected() {
 function getState() {
     return {
         connected: _connected,
+        status: _connected ? 'connected' : 'disconnected',
         version: _version,
         phone: _phone,
+        qr: _qr,
         connectedAt: _connectedAt
     };
 }
@@ -56,6 +63,8 @@ function getVersion() { return _version; }
 module.exports = {
     setConnected,
     setDisconnected,
+    setQr,
+    clearQr,
     getState,
     waitForConnection,
     isConnected,

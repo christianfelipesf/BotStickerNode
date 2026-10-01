@@ -141,9 +141,10 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
         if (dashboardOn) {
             const dataBase64 = buffer.toString('base64');
             const mime = isAudio ? 'audio/mp4' : (isVideo ? 'video/mp4' : 'image/jpeg');
+            const store = require('../history/store');
             let mediaInfo;
             try {
-                mediaInfo = require('../dashboard/dashboard').mediaForLogReceived(
+                mediaInfo = store.persistReceivedMedia(
                     { type: mediaType, url: `data:${mime};base64,${dataBase64}` },
                     m.key?.id
                 );
@@ -152,7 +153,7 @@ async function revealViewOnce(sock, from, m, lastBotResponse, GLOBAL_COOLDOWN, e
             }
 
             const phoneReveal = resolveDisplayNum(sender, fallbackPnReveal) || null;
-            require('../dashboard/dashboard').log('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, phoneReveal, mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
+            store.writeLog('action', groupMetadata.subject, `Mídia Revelada (${mediaType})`, senderName, phoneReveal, mediaInfo, { toJid: from, messageId: m.key?.id, senderJid: sender, fromMe: !!m.key?.fromMe, hidden: true });
         }
 
         if (isAudio) await sock.sendMessage(from, withChannelContext({ audio: buffer, mimetype: 'audio/mp4', ptt: true, mentions: [sender] }, revealConfig), opts);
@@ -471,7 +472,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     } catch (error) {
         console.error(`❌ [handleMediaCommand:${action}] erro: ${error.message} | stack=${error.stack?.split('\n')[1]?.trim()||''}`);
-        try { require('../dashboard/dashboard').log('error', 'MÍDIA', `❌ ${action} falhou: ${error.message.slice(0,180)}`, 'Sistema', '—'); } catch (_) {}
+        try { require('../history/store').writeLog('error', 'MÍDIA', `❌ ${action} falhou: ${error.message.slice(0,180)}`, 'Sistema', '—'); } catch (_) {}
         return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }
 }

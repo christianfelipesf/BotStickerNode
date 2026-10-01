@@ -272,7 +272,7 @@ async function handleUpdate(update) {
     if (lower === '/status' || lower.startsWith('/status ')) {
         try {
             const wd = require('./watchdog').getState();
-            const dash = (() => { try { return require('../dashboard/dashboard').getConnectionState(); } catch (_) { return null; } })();
+            const dash = (() => { try { return require('./principalState').getState(); } catch (_) { return null; } })();
             const utils = require('../database/utils');
             const stats = utils.readStats();
             const ag = utils.listActiveGroups().length;
@@ -326,11 +326,12 @@ async function handleUpdate(update) {
 
     if (lower === '/qr' || lower.startsWith('/qr ')) {
         try {
-            const dash = require('../dashboard/dashboard').getConnectionState();
+            const dash = require('./principalState').getState();
             const qrCtrl = global.__qrControl;
             const attempts = qrCtrl ? `${qrCtrl.getAttempts()}/${qrCtrl.getMaxAttempts()}` : '?';
-            let txt = `*📱 QR STATUS*\nStatus: \`${dash.status}\`\nPhone: \`${dash.phone||'-'}\`\nTentativas: \`${attempts}\``;
-            if (dash.qr) txt += `\n\nQR disponível no dashboard. Use http://localhost:3000 ou painel admin.`;
+            const status = dash.qr ? 'qr' : (dash.status || '?');
+            let txt = `*📱 QR STATUS*\nStatus: \`${status}\`\nPhone: \`${dash.phone||'-'}\`\nTentativas: \`${attempts}\``;
+            if (dash.qr) txt += `\n\nQR gerado — veja no terminal do servidor.`;
             await send(chatId, txt);
         } catch (e) { await send(chatId, `❌ Erro qr: ${e.message}`); }
         return;

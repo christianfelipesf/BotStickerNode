@@ -205,7 +205,7 @@ console.log(`🤖  ${config.botName.toUpperCase()} • v${require('./src/databas
 console.log('═'.repeat(60));
 console.log(`  📦 comandos     carregando em background...`);
 console.log(`  💾 database     logs • bot.db OK`);
-console.log(`  🌐 dashboard    ${_dashOk ? '✓ módulo ok' : '✗ falhou'} na porta ${config.dashboardPort}`);
+console.log(`  🌐 dashboard    ${config.dashboardEnabled === false ? '✗ desativado (histórico segue normal)' : (_dashOk ? '✓ módulo ok' : '✗ falhou')} na porta ${config.dashboardPort}`);
     console.log(`  🤖 IA OpenRouter ${_aiOk ? '✓ ativa (' + (config.aiModel || 'default') + ')' : '✗ sem API key'}`);
 console.log(`  📰 news         ${config.newsEnabled !== false ? '✓ ativo' : '✗ desativado'}`);
 console.log(`  🎬 ffmpeg       ${_ffmpegChecked ? (_ffmpegFound ? '✓' : 'não encontrado') : '?'}`);
@@ -313,6 +313,7 @@ async function startBot() {
                 console.log(`\n⚡ --- QR CODE #${_qrAttempts}/${MAX_QR_ATTEMPTS} (attemptId=${_restartNumber}-${_qrAttempts}) --- ⚡`);
                 qrcode.generate(u.qr, { small: true });
                 try { dashboard.setConnectionState({ status: 'qr', qr: u.qr, phone: null }); } catch (_) {}
+                try { require('./src/services/principalState').setQr(u.qr); } catch (_) {}
                 try { telegram.notifyQr({ botName: config.botName, attempt: _qrAttempts }).catch(()=>{}); } catch (_) {}
                 if (_qrAttempts >= MAX_QR_ATTEMPTS) {
                     console.log(`⛔ Limite de ${MAX_QR_ATTEMPTS} QR codes atingido. Pare o bot e apague a pasta session/ manualmente ou use o painel admin.`);

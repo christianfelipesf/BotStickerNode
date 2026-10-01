@@ -386,8 +386,15 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         let msgs = (tr && utils?.getMessagesBySenderRange)
             ? (utils.getMessagesBySenderRange(p.jid, p.alias, tr.since, tr.until, 50) || [])
             : (utils?.getMessagesBySender?.(p.jid, p.alias, 30) || []);
+        // Linhas sem texto (mídia sem legenda) não viram evidência: a IA
+        // receberia "1 msgs" sem nenhuma linha e responderia no vazio.
+        // O nome delas ainda vale para o rótulo.
+        const namedForLabel = msgs;
+        const hasText = (x) => String(x?.text ?? '').trim() !== '';
+        const mediaOnly = namedForLabel.filter((x) => !hasText(x)).length;
+        msgs = namedForLabel.filter(hasText);
         let approx = false;
-        const rawLabel = p.nameHint || displayName(msgs[msgs.length - 1] || {}, p.jid);
+        const rawLabel = p.nameHint || displayName(namedForLabel[namedForLabel.length - 1] || {}, p.jid);
         let label = safePersonLabel(rawLabel, personTag(pi, people.length));
         const msgGroups = [];
         // Presença na atividade (quem fala mas nunca usou comando): dá o nome
@@ -477,12 +484,15 @@ async function buildEvidence(sock, { people, groups }, { from, isGroup, utils, m
         const shown = tr ? msgs.slice(-showLim) : msgs.slice(-msgLimit);
         const winTag = tr ? ` ${tr.label}` : ' recentes';
         const cutNote = (tr && windowTotal > shown.length) ? ` (mostrando as ${shown.length} mais recentes)` : '';
-        lines.push(`Pessoa: ${clean(label, 30)} — advs: ${advParts.length ? advParts.join(', ') : 'nenhuma'} — ${windowTotal} msgs${winTag}${approx ? ' (aproximado por nome)' : ''}${cutNote}${presenceNote}:`);
+        const mediaNote = (msgs.length === 0 && mediaOnly > 0)
+            ? ` (só ${mediaOnly} mídia sem texto)`
+            : '';
+        lines.push(`Pessoa: ${clean(label, 30)} — advs: ${advParts.length ? advParts.join(', ') : 'nenhuma'} — ${windowTotal} msgs${winTag}${approx ? ' (aproximado por nome)' : ''}${cutNote}${presenceNote}${mediaNote}:`);
         for (const ml of shown) {
             const txt = clean(ml.text, msgChars);
             if (txt) lines.push(`  [${fmtWhen(ml.timestamp)}] ${txt}`);
         }
-        stats.people.push({ jid: p.jid, label, advs: advParts, msgCount: shown.length, windowTotal, approx, groups: msgGroups, presence, windowMsgs: tr ? shown.map((x) => ({ text: clean(x.text, 150), timestamp: x.timestamp, name: clean(x.name || '', 25) })) : undefined });
+        stats.people.push({ jid: p.jid, label, advs: advParts, msgCount: shown.length, windowTotal, mediaOnly, approx, groups: msgGroups, presence, windowMsgs: tr ? shown.map((x) => ({ text: clean(x.text, 150), timestamp: x.timestamp, name: clean(x.name || '', 25) })) : undefined });
         resoParts.push(isTagLabel(label) ? `${label} (nome não confirmado)` : `${label} (identidade confirmada pelo bot)`);
     }
 

@@ -2,7 +2,7 @@ const { getModel } = require('../services/ai');
 const { resolveCommand } = require('../commands/loader');
 const cooldown = require('../services/cooldown');
 const trace = require('../services/trace');
-const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('./dashboard-handler');
+const { handleDashboardLog, handleProtocolMessage, handleReaction, safeDashboardLog, safeDashboardRememberGroup } = require('../history/handler');
 const { enforceMuteAndAntilink } = require('./enforcement');
 const { agentCommand } = require('../services/agentLog');
 

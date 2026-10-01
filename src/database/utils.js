@@ -563,7 +563,7 @@ const DEFAULT_CONFIG = {
     channelLink: "https://whatsapp.com/channel/0029VbDbHSTI1rcrp0Ybo10i",
     channelJid: "0029VbDbHSTI1rcrp0Ybo10i@newsletter",
     channelName: "Canal Oficial 📢",
-    dashboardEnabled: true,
+    dashboardEnabled: false,
     dashboardPort: 3000,
     dashboardMaxLogs: 30000,
     dashboardHistoryHours: 168,

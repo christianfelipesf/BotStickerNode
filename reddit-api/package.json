@@ -1,0 +1,20 @@
+{
+  "name": "reddit-api",
+  "version": "1.0.0",
+  "description": "API standalone da parte Reddit do BotStickerNode (RSS + JSON + embed HLS) — Bot Gravity, Por christian Felipe (98) 989138217",
+  "author": "christian Felipe (98) 989138217 — Bot Gravity",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}

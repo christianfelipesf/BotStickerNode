@@ -1,10 +1,10 @@
 const { isDashboardEnabled, getDashboardGroupInfo, upsertDashboardGroupInfo, groupMetadataCached, clearGroupMetadataCache, isBlacklisted, botIsAdmin, recordModEvent, getGroupData, getThemeForJid } = require('../database/utils');
 const { getTheme } = require('../services/themes');
 const { generateWelcomeImage, getUserAvatarBuffer, getGroupAvatarBuffer, resolveDisplayJid, displayNameForEvent } = require('../services/welcomeImage');
-const dashboard = require('../dashboard/dashboard');
+const store = require('../history/store');
 
-const safeDashboardLog = (...args) => { try { dashboard.log(...args); } catch (_) {} };
-const safeRemember = (...args) => { try { dashboard.rememberGroupInfo(...args); } catch (_) {} };
+const safeDashboardLog = (...args) => { try { store.writeLog(...args); } catch (_) {} };
+const safeRemember = (...args) => { try { store.rememberGroup(...args); } catch (_) {} };
 
 // Último título/descrição conhecidos por grupo — anti-spam do groups.update,
 // que costuma repetir subject/desc mesmo sem mudança real.

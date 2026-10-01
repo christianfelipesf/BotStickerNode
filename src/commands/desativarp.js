@@ -1,4 +1,4 @@
-const safeDashboardLog = (...args) => { try { require('../dashboard/dashboard').log(...args); } catch (_) {} };
+const safeDashboardLog = (...args) => { try { require('../history/store').writeLog(...args); } catch (_) {} };
 
 module.exports = {
     name: 'desativarp',

@@ -1017,6 +1017,23 @@ function init(config) {
 
     try {
         httpServer = server;
+        // Espelho do histórico: a camada src/history/store.js é a escritora
+        // oficial; o painel só recebe eventos em tempo real (leitura).
+        // Direção da dependência: dashboard -> history (nunca o inverso).
+        try {
+            require('../history/store').setMirror((payload) => {
+                if (!ioServer) return;
+                try {
+                    if (payload && payload.kind === 'msg' && payload.log && shouldEmit(payload.log)) {
+                        ioServer.emit('msg', payload.log);
+                    } else if (payload && payload.kind === 'media:update') {
+                        ioServer.emit('media:update', { toJid: payload.toJid, messageId: payload.messageId, type: payload.type, media: payload.media });
+                    } else if (payload && payload.kind === 'reaction') {
+                        ioServer.emit('reaction', { targetId: payload.messageId, targetJid: payload.toJid, targetType: payload.type, emoji: payload.emoji, senderJid: payload.senderJid, senderName: payload.senderName, reactions: payload.reactions });
+                    }
+                } catch (_) {}
+            });
+        } catch (_) {}
         const publicUrl = String(config?.dashboardUrl || '').replace(/\/+$/, '');
         ensureMediaDir();
         try { migrateInlineMedia(); } catch (_) {}
@@ -1713,6 +1730,7 @@ function resetDashboard() {
 }
 
 function stop() {
+    try { require('../history/store').setMirror(null); } catch (_) {}
     return new Promise((resolve) => {
         let pending = 0;
         if (ioServer) {
