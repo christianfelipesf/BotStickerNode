@@ -58,7 +58,10 @@ async function sendDocument(chatId, buffer, filename, caption, opts = {}) {
         form.append('document', new Blob([buffer], { type: 'application/zip' }), filename || 'dump.zip');
         if (caption) {
             form.append('caption', String(caption).slice(0, 1024));
-            form.append('parse_mode', opts.parseMode || 'Markdown');
+            // parseMode null = texto puro (padrão Markdown quebra com
+            // underscores em "logs/agent_2026-09-30.jsonl").
+            const pm = opts.parseMode === undefined ? 'Markdown' : opts.parseMode;
+            if (pm) form.append('parse_mode', pm);
         }
         const res = await api.post('/sendDocument', form);
         return { ok: !!res.data?.ok };
@@ -392,7 +395,9 @@ async function handleUpdate(update) {
             try {
                 const buf = fs.readFileSync(zipPath);
                 const caption = `📦 Backup OK\n${includedNames.map(n => `• ${n}`).join('\n')}\n💾 ${sizeKb} KB\n⚠️ Contém .env com API keys — mantenha em local seguro.`;
-                const r = await sendDocument(chatId, buf, zipName, caption);
+                // parseMode null: nomes como logs/agent_2026-09-30.jsonl têm
+                // underscores que quebram o Markdown ("can't parse entities").
+                const r = await sendDocument(chatId, buf, zipName, caption, { parseMode: null });
                 if (!r.ok) await send(chatId, `❌ Falha ao enviar dump: ${r.error}`, { parseMode: null });
             } finally {
                 cleanupDumpZip(zipPath);

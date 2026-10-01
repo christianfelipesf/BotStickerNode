@@ -44,8 +44,10 @@ async function sendDailyDump({ reason = 'auto' } = {}) {
             return { ok: false, reason: 'too-large', sizeKb };
         }
         const buf = fs.readFileSync(zipPath);
-        const caption = `📦 *Backup automático diário*\n${includedNames.map(n => `• ${n}`).join('\n')}\n💾 ${sizeKb} KB\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}\n⚠️ Contém .env com API keys — mantenha em local seguro.`;
-        const r = await tg.sendDocument(null, buf, zipName, caption);
+        // parseMode null (plain): underscores em logs/agent_2026-09-30.jsonl
+        // quebram o Markdown ("can't parse entities") — sem *negrito* aqui.
+        const caption = `📦 Backup automático diário\n${includedNames.map(n => `• ${n}`).join('\n')}\n💾 ${sizeKb} KB\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}\n⚠️ Contém .env com API keys — mantenha em local seguro.`;
+        const r = await tg.sendDocument(null, buf, zipName, caption, { parseMode: null });
         if (r.ok) console.log(`📦 [dailyDump] enviado (${sizeKb} KB, motivo=${reason})`);
         else console.error(`❌ [dailyDump] falha ao enviar: ${r.error}`);
         return { ok: r.ok, sizeKb, error: r.error };
