@@ -373,6 +373,30 @@ async function resolveLidPhoneInGroup(sock, lidUser, groupJid) {
     return null;
 }
 
+// Reverso: telefone -> LID via metadata do grupo. Cobre o caso em que a
+// pergunta cita o número mas o histórico está sob o @lid (!aidono achava
+// "sem dados" mesmo com dezenas de mensagens). Retorna jid ou null.
+async function resolvePhoneLidInGroup(sock, phoneUser, groupJid) {
+    if (!sock || !phoneUser || !groupJid) return null;
+    const phone = String(phoneUser).split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!/^\d{8,13}$/.test(phone)) return null;
+    let meta = null;
+    try {
+        meta = await sock.groupMetadata(groupJid);
+    } catch (_) { return null; }
+    const parts = meta?.participants || [];
+    for (const p of parts) {
+        try {
+            const cands = [p?.id, p?.jid, p?.lid, p?.phoneNumber, p?.pn].filter(Boolean).map(String);
+            const digits = cands.map((c) => c.split('@')[0].split(':')[0].replace(/\D/g, ''));
+            if (!digits.includes(phone)) continue;
+            const lidC = cands.find((c) => String(c).toLowerCase().endsWith('@lid'));
+            if (lidC) return lidC;
+            return null;
+        } catch (_) {}
+    }
+    return null;
+}
 // Versão async: tenta Pn direto e, se vazio, resolve LID via metadata.
 async function resolveSenderPhonesAsync(sock, m, sender, from) {
     try {
@@ -2651,7 +2675,7 @@ module.exports = {
     normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
     getSenderLoginPhones, isBotOwner, canUseLogin,
     getSubOwners, isSubOwnerPhone, isSubOwnerSender, canConfigureBot, addSubOwner, removeSubOwner,
-    resolveLidPhoneInGroup, resolveSenderPhonesAsync, isSubOwnerSenderAsync, canActivateBotAsync,
+    resolveLidPhoneInGroup, resolvePhoneLidInGroup, resolveSenderPhonesAsync, isSubOwnerSenderAsync, canActivateBotAsync,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,
     isNewsEnabled, setNewsEnabled, listNewsGroups,

@@ -124,8 +124,21 @@ async function findPerson(sock, ident, ctx) {
     const digits = raw.replace(/\D/g, '');
     if (/^\d{8,}$/.test(digits) && !/[a-zA-Z]/.test(raw)) {
         const jid = jidFromDigits(digits);
-        if (jid) return { jid, alias: null, label: digits.length >= 14 ? `LID ${digits.slice(-6)}` : `@${digits}` };
-        return null;
+        if (!jid) return null;
+        // Alias nos dois sentidos (histórico pode estar sob a outra identidade).
+        let alias = null;
+        try {
+            const groupCtx = from && String(from).endsWith('@g.us') ? from : null;
+            if (groupCtx && String(jid).endsWith('@s.whatsapp.net')) {
+                alias = await utils?.resolvePhoneLidInGroup?.(sock, digits, groupCtx) || null;
+                if (alias && typeof alias !== 'string') alias = null;
+            } else if (groupCtx && String(jid).endsWith('@lid')) {
+                const ph = await utils?.resolveLidPhoneInGroup?.(sock, digits, groupCtx) || null;
+                const dd = String(ph || '').replace(/\D/g, '');
+                if (/^\d{8,15}$/.test(dd)) alias = `${dd}@s.whatsapp.net`;
+            }
+        } catch (_) {}
+        return { jid, alias, label: digits.length >= 14 ? `LID ${digits.slice(-6)}` : `@${digits}` };
     }
     if (/@(lid|s\.whatsapp\.net|g\.us)$/i.test(raw)) {
         return { jid: raw, alias: null, label: raw };

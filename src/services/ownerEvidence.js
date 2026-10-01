@@ -65,6 +65,11 @@ async function resolveAlias(sock, jid, groupJid, utils) {
                 if (/^\d{8,15}$/.test(p)) return `${p}@s.whatsapp.net`;
             }
         }
+        // Reverso: número citado, histórico sob LID.
+        if (String(jid).endsWith('@s.whatsapp.net') && groupJid && groupJid.endsWith('@g.us')) {
+            const lid = await utils?.resolvePhoneLidInGroup?.(sock, String(jid).split('@')[0], groupJid);
+            if (lid && typeof lid === 'string' && lid.includes('@')) return lid;
+        }
     } catch (_) {}
     return null;
 }
@@ -664,4 +669,4 @@ function matchFactual(question, evidence, { isGroup, from, utils } = {}) {
     return null;
 }
 
-module.exports = { resolveTargets, buildEvidence, buildComparisonEvidence, matchFactual, clean, warningsOf, wantsLogs, wantsSpoken, isComparison, extractTimeRange, extractAllTimeRanges, rangesForComparison, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };
+module.exports = { resolveTargets, resolveAlias, buildEvidence, buildComparisonEvidence, matchFactual, clean, warningsOf, wantsLogs, wantsSpoken, isComparison, extractTimeRange, extractAllTimeRanges, rangesForComparison, safePersonLabel, personTag, displayName, jidFromDigits, digitsOf, evidenceIsEmpty };
