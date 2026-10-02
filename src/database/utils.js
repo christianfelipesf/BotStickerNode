@@ -1,7 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const sharp = require('sharp');
 
@@ -9,6 +8,18 @@ const { db, tempDir, checkpointWal } = require('./db');
 const { migrateLegacyUnifiedDB, migrateLegacyMessagesJson, migrateLegacyActiveGroups, migrateJsonToSqlite } = require('./migrate');
 const { addMetadata, mediaToSticker, stickerToMedia, changeSpeed, mediaToGif } = require('./sticker');
 const { isViewOnce, getMediaMessage, getContextInfo, getMessageText } = require('./media');
+
+// Quebra parcial: funções puras extraídas (mesmos nomes em escopo,
+// exports inalterados — compat com os ~75 importadores).
+const {
+    normalizeJid,
+    normalizeBlacklistJid,
+    normalizePhoneNumber,
+    extractPhoneFromText,
+    parseNumberToJid,
+    normalizeLoginPhone,
+} = require('./permissions/phone');
+const { formatUptime, getVersion } = require('./infra');
 
 // ============================================================
 // Prepared statements (group_state)
@@ -70,11 +81,6 @@ const _blInsert = db.prepare('INSERT OR IGNORE INTO group_blacklist (group_jid, 
 const _blDelete = db.prepare('DELETE FROM group_blacklist WHERE group_jid = ? AND user_jid = ?');
 const _blClear = db.prepare('DELETE FROM group_blacklist WHERE group_jid = ?');
 const _blCount = db.prepare('SELECT COUNT(*) as c FROM group_blacklist WHERE group_jid = ?');
-
-function normalizeBlacklistJid(jid) {
-    if (!jid) return null;
-    try { return normalizeJid(jid); } catch (_) { return null; }
-}
 
 function getBlacklist(groupJid) {
     if (!groupJid) return [];
@@ -141,43 +147,10 @@ function countBlacklist(groupJid) {
     try { const row = _blCount.get(groupJid); return row ? row.c : 0; } catch (_) { return 0; }
 }
 
-function normalizePhoneNumber(raw, { min = 8 } = {}) {
-    // Aceita qualquer formatação: "+55 13 93631-2912", "(13) 93631-2912",
-    // "13 93631-2912", "5513936312912". Extrai só dígitos do texto inteiro
-    // (não quebra em pedaços) e completa o DDI 55 quando for número BR
-    // com DDD mas sem país (10 ou 11 dígitos).
-    if (raw == null) return null;
-    let digits = String(raw).replace(/\D/g, '');
-    if (!digits) return null;
-    // Prefixo internacional "00" (ex: 0055...) -> remove
-    if (digits.length > 11 && digits.startsWith('00')) digits = digits.slice(2);
-    // BR sem DDI: 10 dígitos (DDD + 8) ou 11 (DDD + 9) -> prepende 55.
-    // 12/13 dígitos com 55 na frente já estão completos; demais tamanhos
-    // (estrangeiros) são mantidos como estão.
-    if (digits.length === 10 || digits.length === 11) digits = '55' + digits;
-    if (digits.length < min || digits.length > 15) return null;
-    return digits;
-}
-
-function extractPhoneFromText(text, opts) {
-    // Wrapper p/ comandos: extrai o número do texto completo já com a
-    // normalização BR (evita o bug de match(/\d{8,15}/g) que quebra
-    // "+55 13 93631-2912" em ["13","93631","2912"]).
-    return normalizePhoneNumber(text, opts);
-}
-
-function parseNumberToJid(raw) {
-    const digits = normalizePhoneNumber(raw);
-    if (!digits) return null;
-    return `${digits}@s.whatsapp.net`;
-}
-
 // ============================================================
 // Login permitido (!addlogin / !login) — números autorizados pelo dono
+// (normalização em ./permissions/phone.js)
 // ============================================================
-function normalizeLoginPhone(raw) {
-    return normalizePhoneNumber(raw);
-}
 
 const _loginStmts = (() => {
     try {
@@ -2578,19 +2551,6 @@ async function saveFichaPhoto(buffer, nomeNorm) {
 // ============================================================
 // Helper functions
 // ============================================================
-function formatUptime(seconds) {
-    const d = Math.floor(seconds / (3600 * 24));
-    const h = Math.floor((seconds % (3600 * 24)) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const parts = [];
-    if (d > 0) parts.push(`${d}d`);
-    if (h > 0) parts.push(`${h}h`);
-    if (m > 0) parts.push(`${m}m`);
-    if (s > 0 || parts.length === 0) parts.push(`${s}s`);
-    return parts.join(' ');
-}
-
 function getBotName(from, config) {
     if (from.endsWith('@g.us')) {
         const groupData = getGroupData(from);
@@ -2613,22 +2573,8 @@ async function reactStatus(sock, m, from, isOk, okEmoji, errEmoji, lastBotRespon
     return await react(sock, m, emoji, lastBotResponse, GLOBAL_COOLDOWN);
 }
 
-function normalizeJid(jid) {
-    if (!jid) return jid;
-    const [rawUser, domain] = jid.split('@');
-    const [user] = rawUser.split(':');
-    return `${user}@${domain || 's.whatsapp.net'}`;
-}
-
 function canAdminControl() {
     try { const cfg = readConfig(); return cfg && cfg.adminCanControl === true; } catch (_) { return false; }
-}
-
-let _cachedVersion = null;
-function getVersion() {
-    if (_cachedVersion) return _cachedVersion;
-    try { _cachedVersion = execFileSync('git', ['log', '-1', '--format=%h %s'], { windowsHide: true }).toString().trim() || 'v1.0.0'; } catch (_) { _cachedVersion = 'v1.0.0'; }
-    return _cachedVersion;
 }
 
 function flushNow() { flushMessagesSync(); if (_activityFlushTimer) { clearTimeout(_activityFlushTimer); _activityFlushTimer = null; } _flushActivity(); try { require('./supabaseSync').schedulePush(5000); } catch (_) {} }
