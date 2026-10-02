@@ -208,19 +208,20 @@ const THEMES = {
     },
     dark: {
         id: 'dark',
-        label: 'Dark 🖤',
-        header: '🖤💀',
+        label: 'Dark 🌑',
+        header: '🌑💀',
         bullet: '⬛',
-        ok: '🖤',
+        ok: '🌑',
         err: '☠️',
-        react: '🖤',
+        react: '🌑',
         rankReact: '💀',
         tagline: 'modo dark — trevas absolutas',
         menuTitle: 'MENU DARK',
         rankTitle: 'RANK DARK — TOP 10 SOMBRAS',
         rankIcon: '💀',
         rankEmpty: 'Nenhuma sombra se moveu este mês. Desperte! 🌑',
-        botSuffix: '🖤💀',
+        botSuffix: '🌑💀',
+        legacySuffixes: ['🖤💀'],
         menuImageCandidates: ['dark.jpg', 'dark.png', 'dark.webp', 'trevas.jpg', 'dark.jpeg'],
         colors: {
             bg0: '#050505',
@@ -236,8 +237,8 @@ const THEMES = {
             sub: '#71717a'
         },
         phrases: {
-            activated: '🖤💀 MODO DARK ativado! As trevas tomaram conta! ☠️🌑',
-            already: '🖤 Este grupo já está nas trevas.'
+            activated: '🌑💀 MODO DARK ativado! As trevas tomaram conta! ☠️🌑',
+            already: '🌑 Este grupo já está nas trevas.'
         }
     },
     espacial: {
@@ -307,6 +308,40 @@ const THEMES = {
             activated: '💚🍀 MODO VERDE ativado! Energia natural! 🌱🌿',
             already: '💚 Este grupo já está verdejante.'
         }
+    },
+    halloween: {
+        id: 'halloween',
+        label: 'Halloween 🎃',
+        header: '🎃👻',
+        bullet: '🎃',
+        ok: '🍬',
+        err: '💀',
+        react: '🎃',
+        rankReact: '👻',
+        tagline: 'clima de halloween — doces ou travessuras',
+        menuTitle: 'MENU DE HALLOWEEN',
+        rankTitle: 'RANK DE HALLOWEEN — TOP 10 ASSOMBRADOS',
+        rankIcon: '👻',
+        rankEmpty: 'Nenhuma alma assombrada este mês. Saia da tumba e fale! 🎃',
+        botSuffix: '🎃👻',
+        menuImageCandidates: ['halloween.jpg', 'halloween.png', 'halloween.webp', 'haloween.jpg', 'bruxas.jpg'],
+        colors: {
+            bg0: '#120802',
+            bg1: '#1f0e04',
+            headerBg: '#2b1406',
+            accent: '#f97316',
+            gold: '#fbbf24',
+            silver: '#e7c88a',
+            bronze: '#7c2d12',
+            row: '#1d1007',
+            rowAlt: '#160c05',
+            text: '#fff3e6',
+            sub: '#e8a04c'
+        },
+        phrases: {
+            activated: '🎃👻 HALLOWEEN tomou conta deste grupo! Doces ou travessuras! 🍬🦇',
+            already: '🎃 Este grupo já está assombrado.'
+        }
     }
 };
 
@@ -324,7 +359,9 @@ const THEME_ALIASES = {
     green: 'verde',
     inferno: 'hell',
     party: 'festa',
-    kawaii: 'fofo'
+    kawaii: 'fofo',
+    haloween: 'halloween',
+    bruxas: 'halloween'
 };
 
 function normalizeThemeId(v) {

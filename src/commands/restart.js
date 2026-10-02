@@ -1,4 +1,5 @@
 const { exec } = require('child_process');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 function isOwner(sock, m, utils) {
     try {
@@ -48,7 +49,7 @@ module.exports = {
         const ok = r.ok;
         const txt = ok
             ? `✅ Reiniciado!\n🌿 ${info.branch} • 🔖 ${info.short}`
-            : `❌ Falha no pm2 restart\n\n${r.err || r.out || 'erro'}`;
+            : `❌ Falha no pm2 restart\n\n${sanitizeUserText(r.err || r.out || 'erro')}`;
         await sock.sendMessage(from, { text: txt }, { quoted: m });
         return await react(sock, m, ok ? '✅' : '❌', lastBotResponse, GLOBAL_COOLDOWN);
     }

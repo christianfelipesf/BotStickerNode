@@ -1,3 +1,5 @@
+const { isSensitiveKey, maskSecret, reportSensitive } = require('../services/safeDebug');
+
 module.exports = {
     name: 'set',
     category: 'config',
@@ -63,7 +65,7 @@ module.exports = {
                 return typeof val;
             };
 
-            const allKeys = Object.keys(defaults).filter(k => k !== 'subOwners').sort();
+            const allKeys = Object.keys(defaults).filter(k => k !== 'subOwners' && k !== 'guardioes').sort();
             const lines = [`⚙️ *Configurações editáveis (${allKeys.length})*`, ''];
             for (const k of allKeys) {
                 const def = defaults[k];
@@ -73,8 +75,11 @@ module.exports = {
                 else if (t === 'booleano') extra = ' (true/false)';
                 else if (t === 'array') extra = ' (valores separados por vírgula ou espaço)';
                 else if (k === 'dashboardUrl') extra = ' (http(s)://...)';
-                lines.push(`• *${k}* — _${t}_${extra}`);
+                const lock = isSensitiveKey(k) ? '🔒 ' : '';
+                lines.push(`${lock}• *${k}* — _${t}_${extra}`);
             }
+            lines.push('');
+            lines.push('🔒 = sensível: valor nunca exibido no chat (vai p/ Telegram/terminal)');
             lines.push('');
             lines.push(`Uso: \`${config.prefix}set <parâmetro> <valor>\``);
             lines.push(`Ex.: \`${config.prefix}set botName Gravity Bot🪐\``);
@@ -83,16 +88,22 @@ module.exports = {
             return lastBotResponse;
         }
 
-        // subOwners NÃO é editável via !set (evita escalação por sub-dono).
-        // Use !addsubdono / !remsubdono / !listsubdonos (só o dono real).
-        if (p === 'subOwners' || String(p || '').toLowerCase() === 'subowners') {
-            await sock.sendMessage(from, { text: `👑 *Sub-donos* só pelo dono via:\n➕ \`${config.prefix}addsubdono <numero>\`\n➖ \`${config.prefix}remsubdono <numero>\`\n📋 \`${config.prefix}listsubdonos\`` }, { quoted: m });
+        // subOwners e guardioes NÃO são editáveis via !set (evita escalação).
+        // Use !addsubdono / !remsubdono / !addguardiao / !remguardiao.
+        if (p === 'subOwners' || p === 'guardioes' || ['subowners', 'guardioes', 'guardiao', 'guardian'].includes(String(p || '').toLowerCase())) {
+            await sock.sendMessage(from, { text: `👑 *Sub-donos* só pelo dono via:\n➕ \`${config.prefix}addsubdono <numero>\`\n➖ \`${config.prefix}remsubdono <numero>\`\n📋 \`${config.prefix}listsubdonos\`\n\n🛡️ *Guardiões* pelo dono/subdono via:\n➕ \`${config.prefix}addguardiao <numero>\`\n➖ \`${config.prefix}remguardiao <numero>\`\n📋 \`${config.prefix}listguardioes\`` }, { quoted: m });
             return lastBotResponse;
         }
 
         if (config[p] !== undefined || p === 'prefix') {
             if (!v) {
-                await sock.sendMessage(from, { text: `📝 *${p}* atual: ${config[p]}` }, { quoted: m });
+                // Chave sensível: valor real NUNCA vai ao chat — só Telegram/terminal.
+                if (isSensitiveKey(p)) {
+                    reportSensitive({ title: `Leitura de ${p}`, detail: `${p} = ${config[p]}`, key: `set-read:${p}` });
+                    await sock.sendMessage(from, { text: `📝 *${p}* atual: ${maskSecret(config[p])}\n🔒 _Valor real enviado ao Telegram/terminal._` }, { quoted: m });
+                } else {
+                    await sock.sendMessage(from, { text: `📝 *${p}* atual: ${config[p]}` }, { quoted: m });
+                }
                 return lastBotResponse;
             }
             
@@ -171,6 +182,10 @@ module.exports = {
             // Refresh local config and AI
             const newConfig = readConfig();
             setupAI(newConfig);
+            // Troca de segredo: registra valor real só no Telegram/terminal.
+            if (isSensitiveKey(p)) {
+                reportSensitive({ title: `Alteração de ${p}`, detail: `${p} = ${v}`, key: `set-write:${p}` });
+            }
 
             // Controle runtime do news (start/stop sem reiniciar o bot).
             // Aplica em mudanças de newsEnabled OU newsPollIntervalMinutes OU newsSubreddits.

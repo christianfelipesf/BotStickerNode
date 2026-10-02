@@ -743,19 +743,12 @@ function coerceMime(mime, family, fallback) {
     return fallback;
 }
 
-function buildCaption(post, sub, showMeta) {
+function buildCaption(post) {
     const title = (post.title || '').trim();
     const selftext = (post.selftext || '').trim();
 
-    if (showMeta) {
-        const parts = [];
-        if (title) parts.push(`*${title}*`);
-        if (selftext) parts.push(selftext);
-        const permalink = post.permalink || post.url || '';
-        if (permalink) parts.push(permalink);
-        return parts.join('\n\n');
-    }
-
+    // Sem fontes/links para o usuário final: só título + texto.
+    // (permalink/subreddit nunca são expostos no caption.)
     // Post só-texto: título + duas linhas + conteúdo.
     if (title && selftext) return `*${title}*\n\n${selftext}`;
     if (title) return `*${title}*`;

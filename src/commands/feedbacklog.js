@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 module.exports = {
     name: 'feedbacklog',
@@ -102,7 +103,7 @@ module.exports = {
             }, { quoted: m });
             current = await react(sock, m, '✅', current, GLOBAL_COOLDOWN);
         } catch (err) {
-            await sock.sendMessage(from, { text: `❌ Falha ao enviar TXT: ${err.message || err}` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Falha ao enviar TXT: ${sanitizeUserText(err.message || err)}` }, { quoted: m });
             current = await react(sock, m, '❌', current, GLOBAL_COOLDOWN);
         } finally {
             try { fs.unlinkSync(filePath); } catch (_) {}

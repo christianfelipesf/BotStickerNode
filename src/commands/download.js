@@ -19,6 +19,7 @@ const { runYtDlp: _coreRunYtDlp, buildYtDlpArgs: _coreBuildYtDlpArgs } = require
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 const { withChannelContext } = require('../services/channelPromo');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 function hasCookies() { return fs.existsSync(cookiesPath); }
@@ -596,7 +597,7 @@ module.exports = {
             try { await safeReactStatus(reactStatus, sock, m, from, false, '✅', '❌', currentBotResponse, GLOBAL_COOLDOWN); } catch (_) {}
             try {
                 await safeSend(sock, from, {
-                    text: `❌ *Falha no Download!*\n\n💬 *Motivo:* ${e.message}\n\n💡 Tente novamente ou use um link diferente.`
+                    text: `❌ *Falha no Download!*\n\n💬 *Motivo:* ${sanitizeUserText(e.message || e)}\n\n💡 Tente novamente ou use um link diferente.`
                 }, m);
             } catch (_) {}
             return currentBotResponse;

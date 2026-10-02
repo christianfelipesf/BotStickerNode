@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { parseAccessLog, buildReport, ACCESS_LOG } = require('../services/dashboardAccess');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 module.exports = {
     name: 'dashlist',
@@ -15,6 +16,11 @@ module.exports = {
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
         if (!isBotOwner) {
             return await sock.sendMessage(from, { text: '❌ Apenas o dono do bot pode usar este comando.' }, { quoted: m });
+        }
+
+        // A lista contém IPs: NUNCA em grupo, só no PV do dono.
+        if (from && String(from).endsWith('@g.us')) {
+            return await sock.sendMessage(from, { text: '🔒 Por segurança, use este comando no *PV* do bot (a lista contém IPs).' }, { quoted: m });
         }
 
         let currentBotResponse = await react(sock, m, '📡', lastBotResponse, GLOBAL_COOLDOWN);
@@ -45,7 +51,7 @@ module.exports = {
             }, { quoted: m });
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (err) {
-            await sock.sendMessage(from, { text: `❌ Falha ao enviar lista: ${err.message || err}` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Falha ao enviar lista: ${sanitizeUserText(err.message || err)}` }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         } finally {
             try { fs.unlinkSync(filePath); } catch (_) {}

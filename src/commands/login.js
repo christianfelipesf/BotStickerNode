@@ -1,5 +1,6 @@
 const subSessions = require('../services/subSessions');
 const principalState = require('../services/principalState');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 function normalizePhone(input) {
     if (!input) return null;
@@ -158,7 +159,7 @@ module.exports = {
             if (String(e?.message || '').includes('login-cancelado')) {
                 return currentBotResponse;
             }
-            await sock.sendMessage(from, { text: `❌ Falha ao iniciar sub-sessão: ${e.message || e}` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Falha ao iniciar sub-sessão: ${sanitizeUserText(e.message || e)}` }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         }
 

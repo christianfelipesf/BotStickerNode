@@ -35,8 +35,9 @@ const {
     stickerToMedia, getBotName, mediaToSticker,
     changeSpeed, mediaToGif, mediaToGifVideo,
     isDashboardEnabled, groupMetadataCached, getGroupParticipantName,
-    getGroupData, canUseViewOnce, viewOnceBlockedMessage
+    getGroupData, canUseViewOnce, viewOnceBlockedMessage, getThemeForJid
 } = require('../database/utils');
+const { getTheme } = require('../services/themes');
 const stickerLog = (()=>{ try{ return require('../services/stickerLog'); }catch(_){ return null; } })();
 const { withChannelContext } = require('../services/channelPromo');
 
@@ -210,6 +211,13 @@ async function shouldBlockViewOnceReuse({ sock, from, requesterMsg, quotedMsg, q
 async function handleMediaCommand(sock, from, m, action, config, lastBotResponse, GLOBAL_COOLDOWN, speedOrOpts = 1.0) {
     let speed = 1.0;
     let explicitOpts = {};
+    // Reações seguem o tema do grupo (global > padrão): ex. 🎃 no halloween.
+    let okEmoji = '✅', errEmoji = '❌';
+    try {
+        const theme = getTheme(typeof getThemeForJid === 'function' ? getThemeForJid(from) : 'default');
+        okEmoji = theme.ok || okEmoji;
+        errEmoji = theme.err || errEmoji;
+    } catch (_) {}
     if (typeof speedOrOpts === 'object' && speedOrOpts !== null) {
         explicitOpts = speedOrOpts;
         speed = explicitOpts.speed ?? 1.0;
@@ -277,7 +285,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
         }
 
         if (!mediaMessage || !targetMsg) {
-            return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+            return await reactStatus(sock, m, from, false, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
         }
 
         const isSticker = !!mediaMessage.stickerMessage;
@@ -294,7 +302,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                 if (gate.blocked) {
                     console.warn(`🔒 [viewonce-gate] bloqueado from=${from} action=${action} kind=${gate.reason}`);
                     try { await sock.sendMessage(from, { text: viewOnceBlockedMessage() }, { quoted: m }); } catch (_) {}
-                    return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                    return await reactStatus(sock, m, from, false, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
                 }
             } catch (_) { /* em erro mantém liberado (padrão) */ }
         }
@@ -414,7 +422,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
                         throw new Error('Sticker gerado inválido');
                     }
                     await sock.sendMessage(from, withChannelContext({ sticker: stickerBuffer }, config), { quoted: m });
-                    return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                    return await reactStatus(sock, m, from, true, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
                 } catch (stickerErr) {
                     _stickerError = stickerErr.message;
                     _stickerSuccess = false;
@@ -443,7 +451,7 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             try { if (isSticker && buffer && buffer.includes(Buffer.from('ANIM'))) isAnimatedSticker = true; } catch (_) {}
             if (isSticker && !isAnimatedSticker) {
                 await sock.sendMessage(from, { text: '❌ Esse sticker é estático. Use *!toimg* para converter estáticos e *!togif* apenas em stickers animados/vídeos.' }, { quoted: m });
-                return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+                return await reactStatus(sock, m, from, false, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
             }
             const mimeType = isSticker ? 'sticker/webp' : (mediaMessage.videoMessage?.mimetype || 'video/mp4');
             let gifVideo;
@@ -469,11 +477,11 @@ async function handleMediaCommand(sock, from, m, action, config, lastBotResponse
             else await sock.sendMessage(from, withChannelContext({ audio: processed, mimetype: 'audio/ogg; codecs=opus', ptt: true }, config), { quoted: m });
         }
 
-        return await reactStatus(sock, m, from, true, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        return await reactStatus(sock, m, from, true, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
     } catch (error) {
         console.error(`❌ [handleMediaCommand:${action}] erro: ${error.message} | stack=${error.stack?.split('\n')[1]?.trim()||''}`);
         try { require('../history/store').writeLog('error', 'MÍDIA', `❌ ${action} falhou: ${error.message.slice(0,180)}`, 'Sistema', '—'); } catch (_) {}
-        return await reactStatus(sock, m, from, false, '✅', '❌', lastBotResponse, GLOBAL_COOLDOWN);
+        return await reactStatus(sock, m, from, false, okEmoji, errEmoji, lastBotResponse, GLOBAL_COOLDOWN);
     }
 }
 

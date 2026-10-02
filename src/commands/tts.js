@@ -1,6 +1,7 @@
 const { synthesize } = require('../services/tts');
 const fs = require('fs');
 const { withChannelContext } = require('../services/channelPromo');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 module.exports = {
     name: 'tts',
@@ -63,7 +64,7 @@ module.exports = {
             fs.unlinkSync(audioPath);
         } catch (error) {
             console.error('Erro no TTS:', error);
-            await sock.sendMessage(from, { text: `❌ Erro ao gerar áudio: ${error.message}` }, { quoted: m });
+            await sock.sendMessage(from, { text: `❌ Erro ao gerar áudio: ${sanitizeUserText(error.message || error)}` }, { quoted: m });
         }
 
         return currentBotResponse;

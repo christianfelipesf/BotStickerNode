@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const terminalLog = require('../services/terminalLog');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 module.exports = {
     name: 'log',
@@ -30,16 +31,18 @@ module.exports = {
         const filePath = path.join(tempDir, fileName);
 
         const lines = terminalLog.getLast(15);
+        // Sem caminhos absolutos no arquivo que vai ao chat: só o nome base.
+        const dailyBase = `terminal_${stamp.toISOString().slice(0,10)}.log`;
         const header = [
-            `# Gravity Bot🪐 — últimos ${lines.length} logs do terminal`,
+            `# Gravity Bot — últimos ${lines.length} logs`,
             `# Gerado em: ${stamp.toLocaleString('pt-BR')}`,
             `# Buffer: ${terminalLog.getBufferSize()}/${terminalLog.getRingMax()} (mais recentes)`,
-            `# Arquivo diário: ${path.join(terminalLog.getLogsDir(), `terminal_${stamp.toISOString().slice(0,10)}.log`)}`,
+            `# Arquivo diário: ${dailyBase}`,
             ''
         ].join('\n');
 
         const body = lines.length
-            ? lines.map(l => `[${l.time}] [${l.level.toUpperCase()}] ${l.text}`).join('\n')
+            ? lines.map(l => sanitizeUserText(`[${l.time}] [${l.level.toUpperCase()}] ${l.text}`)).join('\n')
             : '(buffer vazio — nenhum log capturado ainda)';
 
         fs.writeFileSync(filePath, header + body + '\n', 'utf8');
@@ -59,8 +62,9 @@ module.exports = {
 
             currentBotResponse = await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
         } catch (err) {
+            console.error('❌ [log] falha ao enviar logs:', err?.message || err);
             await sock.sendMessage(from, {
-                text: `❌ Falha ao enviar logs: ${err.message || err}`
+                text: '❌ Falha ao enviar logs. Detalhe no terminal.'
             }, { quoted: m });
             currentBotResponse = await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         } finally {

@@ -12,6 +12,7 @@ const cookiesPath = path.join(process.cwd(), 'cookies.txt');
 
 const { normalizeLang, parseLangFromQuery } = require('../services/downloaderCore');
 const { withChannelContext } = require('../services/channelPromo');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 function parseDurationToSeconds(d) {
     if (typeof d === 'number' && Number.isFinite(d)) return d;
@@ -345,7 +346,7 @@ module.exports = {
             const hint = is403
                 ? '\n\n💡 *YouTube bloqueou seu IP (403 Forbidden).* Soluções:\n1. Crie `cookies.txt` na raiz (extensão "Get cookies.txt" logado no YouTube)\n2. Ou use `!dl <link>` que já tem fallback automático'
                 : '';
-            try { await live().sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${e.message.slice(0, 200)}\`` }, { quoted: m }); } catch (sendErr) {
+            try { await live().sendMessage(from, { text: `❌ Falha ao baixar áudio.${hint}\n\n\`${sanitizeUserText(String(e.message || e).slice(0, 200))}\`` }, { quoted: m }); } catch (sendErr) {
                 pwarn(`texto de erro não enviado (socket instável?): ${sendErr?.message || sendErr}`);
                 if (sendErr?.output?.statusCode !== 428 && !String(sendErr?.message || '').includes('Connection Closed')) throw sendErr;
             }

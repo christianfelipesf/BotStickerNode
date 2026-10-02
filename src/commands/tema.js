@@ -6,7 +6,7 @@ module.exports = {
     category: 'admin',
     description: 'Altera o tema do bot neste grupo (admin). Ex: !tema hell, !tema reset',
     async execute(sock, m, { from, isGroup, sender, fullArgsText, config, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, getAdmins, isUserAdmin, getGroupData, setGroupData, getBotName } = utils;
+        const { react, getAdmins, isUserAdmin, getGroupData, setGroupData, getBotName, getGlobalTheme, getThemeForJid } = utils;
 
         if (!isGroup) {
             await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
@@ -28,10 +28,19 @@ module.exports = {
         const currentId = String(groupData.theme || 'default').toLowerCase();
         const current = getTheme(currentId);
         const available = listThemes().map(t => `• *${t.id}* — ${t.label}`).join('\n');
+        let globalLine = '';
+        try {
+            const gid = typeof getGlobalTheme === 'function' ? getGlobalTheme() : 'default';
+            if (gid && gid !== 'default') globalLine = `\n🌍 _Tema global ativo: ${getTheme(gid).label} (vale p/ grupos sem tema próprio)_\n`;
+        } catch (_) {}
+        let effectiveLabel = current.label;
+        try {
+            if (typeof getThemeForJid === 'function') effectiveLabel = getTheme(getThemeForJid(from)).label;
+        } catch (_) {}
 
         if (!arg || arg === 'list' || arg === 'lista' || arg === 'help') {
             await sock.sendMessage(from, {
-                text: `*${getBotName(from, config)} — Temas* 🎨\n_tema atual: ${current.label}_\n\n${available}\n• *reset* — volta ao padrão\n\nUso: *${config.prefix}tema <nome|reset>*`
+                text: `*${getBotName(from, config)} — Temas* 🎨\n_tema em uso: ${effectiveLabel}_${globalLine}\n${available}\n• *reset* — volta ao padrão\n\nUso: *${config.prefix}tema <nome|reset>*`
             }, { quoted: m });
             return lastBotResponse;
         }
@@ -51,6 +60,7 @@ module.exports = {
                 let cleaned = prevName;
                 for (const t of Object.values(require('../services/themes').THEMES)) {
                     if (t.botSuffix) cleaned = cleaned.split(t.botSuffix).join('').trim();
+                    for (const leg of (t.legacySuffixes || [])) cleaned = cleaned.split(leg).join('').trim();
                 }
                 data.botName = cleaned || null;
             }
@@ -72,6 +82,7 @@ module.exports = {
                 let c = base;
                 for (const t of Object.values(require('../services/themes').THEMES)) {
                     if (t.botSuffix) c = c.split(t.botSuffix).join('').trim();
+                    for (const leg of (t.legacySuffixes || [])) c = c.split(leg).join('').trim();
                 }
                 return c;
             })();

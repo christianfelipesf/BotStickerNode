@@ -5,14 +5,14 @@ module.exports = {
     category: 'grupos',
     description: 'Liga o bot no grupo em modo parcial (mídia + interação + tts; espera 10s antes de responder)',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, activatePartial, getPartialWaitMs, normalizeJid, canActivateBotAsync, canConfigureBot } = utils;
+        const { react, activatePartial, getPartialWaitMs, normalizeJid, canActivateBotAsync, canConfigureBot, canGuardianActAsync } = utils;
         if (!isGroup) return await react(sock, m, '⚠️', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
         const senderNorm = normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
-        // SÓ dono da sessão ou sub-dono pode ativar. Admin de grupo NÃO ativa.
+        // Dono, sub-dono ou guardião pode ativar. Admin de grupo NÃO ativa.
         let allowed = isBotOwner;
         if (!allowed) {
             try {
@@ -21,11 +21,14 @@ module.exports = {
                 } else if (typeof canConfigureBot === 'function') {
                     if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
                 }
+                if (!allowed && typeof canGuardianActAsync === 'function') {
+                    if ((await canGuardianActAsync(sock, m, sender, from)).ok) allowed = true;
+                }
             } catch (_) {}
         }
 
         if (!allowed) {
-            const msg = '❌ Apenas o dono ou sub-donos podem ativar o bot neste grupo.';
+            const msg = '❌ Apenas o dono, sub-donos ou guardiões podem ativar o bot neste grupo.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 

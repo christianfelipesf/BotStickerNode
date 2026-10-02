@@ -1,4 +1,5 @@
 const { exec } = require('child_process');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 function isOwner(sock, m, utils) {
     try {
@@ -68,7 +69,7 @@ module.exports = {
         const head = '✅ Atualizado!';
         let txt = ok
             ? `${head}\n🌿 ${after.branch}\n${commitLine}\n🔁 Reiniciando via pm2...`
-            : `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${r.err || r.out || 'erro'}`;
+            : `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${sanitizeUserText(r.err || r.out || 'erro')}`;
 
         if (ok) {
             try {

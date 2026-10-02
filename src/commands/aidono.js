@@ -61,22 +61,28 @@ function usage(prefix) {
         `• \`${prefix}aidono quais erros deram hoje?\` / \`${prefix}aidono quais comandos rodaram?\`\n` +
         `• Responda a mensagem de alguém com \`${prefix}aidono resume essa pessoa\`\n` +
         `• \`${prefix}aidono investigar quem está causando briga no grupo?\` (pede confirmação antes)\n\n` +
-        `👑 Só dono/subdono. Somente leitura — nunca pune nem executa ações.`;
+        `👑 Só dono/subdono/guardião. Somente leitura — nunca pune nem executa ações.`;
 }
 
 module.exports = {
     name: 'aidono',
     aliases: ['iadono'],
     category: 'ai',
-    description: 'IA do dono: pergunta sobre pessoas/grupos com base nas mensagens (dono/subdono)',
+    description: 'IA do dono: pergunta sobre pessoas/grupos com base nas mensagens (dono/subdono/guardião)',
     async execute(sock, m, { from, isGroup, sender, fullArgsText, config, utils, model, lastBotResponse, GLOBAL_COOLDOWN, abortSignal, log }) {
         const { react, reactStatus } = utils;
 
-        const access = typeof utils.canConfigureBot === 'function'
+        let access = typeof utils.canConfigureBot === 'function'
             ? utils.canConfigureBot(sock, m, sender, from)
             : { ok: false };
+        if (!access.ok && typeof utils.canGuardianActAsync === 'function') {
+            try {
+                const g = await utils.canGuardianActAsync(sock, m, sender, from);
+                if (g && g.ok) access = { ok: true, guardiao: true };
+            } catch (_) {}
+        }
         if (!access.ok) {
-            return await sock.sendMessage(from, { text: '❌ Apenas o dono ou sub-donos podem usar este comando.' }, { quoted: m });
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono, sub-donos ou guardiões podem usar este comando.' }, { quoted: m });
         }
 
         const prefix = config.prefix || '!';
@@ -86,7 +92,8 @@ module.exports = {
             return lastBotResponse;
         }
         if (!model) {
-            await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
+            try { require('../services/safeDebug').reportSensitive({ title: 'IA sem chave', detail: 'Comando !aidono chamado sem modelo configurado (OPENROUTER_API_KEY ausente).', key: 'ia-sem-chave', cooldownMs: 60 * 60 * 1000 }); } catch (_) {}
+            await sock.sendMessage(from, { text: '❌ IA indisponível no momento. Fale com o dono do bot.' }, { quoted: m });
             return lastBotResponse;
         }
 

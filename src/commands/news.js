@@ -34,9 +34,9 @@ module.exports = {
     name: 'news',
     aliases: ['noticias', 'feed'],
     category: 'grupos',
-    description: 'Ativa/desativa o feed automático de notícias do Reddit no grupo',
+    description: 'Ativa/desativa o feed automático de notícias no grupo',
     async execute(sock, m, { from, isGroup, sender, config, utils, fullArgsText, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, setNewsEnabled, isNewsEnabled, listNewsGroups, readConfig, normalizeJid, getAdmins, isUserAdmin, canAdminControl, canActivateBotAsync, canConfigureBot } = utils;
+        const { react, setNewsEnabled, isNewsEnabled, listNewsGroups, readConfig, normalizeJid, getAdmins, isUserAdmin, canAdminControl, canActivateBotAsync, canConfigureBot, canGuardianActAsync } = utils;
 
         if (!isGroup) {
             await sock.sendMessage(from, { text: '❌ Este comando só funciona em grupos.' }, { quoted: m });
@@ -51,13 +51,16 @@ module.exports = {
             const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
             let allowed = isBotOwner;
-            // Sub-dono pode ativar (com fallback LID->telefone).
+            // Sub-dono ou guardião pode ativar (com fallback LID->telefone).
             if (!allowed) {
                 try {
                     if (typeof canActivateBotAsync === 'function') {
                         if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
                     } else if (typeof canConfigureBot === 'function') {
                         if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                    }
+                    if (!allowed && typeof canGuardianActAsync === 'function') {
+                        if ((await canGuardianActAsync(sock, m, sender, from)).ok) allowed = true;
                     }
                 } catch (_) {}
             }
@@ -70,21 +73,17 @@ module.exports = {
 
             if (!allowed) {
                 const msg = canAdminControl()
-                    ? '❌ Apenas o dono do bot, sub-donos ou admins do grupo podem ativar o feed de notícias.'
-                    : '❌ Apenas o dono do bot ou sub-donos podem ativar o feed de notícias neste grupo.';
+                    ? '❌ Apenas o dono do bot, sub-donos, guardiões ou admins do grupo podem ativar o feed de notícias.'
+                    : '❌ Apenas o dono do bot, sub-donos ou guardiões podem ativar o feed de notícias neste grupo.';
                 await sock.sendMessage(from, { text: msg }, { quoted: m });
                 return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             }
 
             const cfg = readConfig();
-            const subs = Array.isArray(cfg.newsSubreddits) && cfg.newsSubreddits.length > 0
-                ? cfg.newsSubreddits
-                : ['ShitpostBR'];
 
             setNewsEnabled(from, true);
-            const subsText = subs.map(s => `r/${s}`).join(', ');
             await sock.sendMessage(from, {
-                text: `📰 *Feed de notícias ativado!*\n\n📡 Subreddits: ${subsText}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n\nUse *${config.prefix}news desativar* para parar.`
+                text: `📰 *Feed de notícias ativado!*\n\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n\nUse *${config.prefix}news desativar* para parar.`
             }, { quoted: m });
             return await react(sock, m, '🟢', lastBotResponse, GLOBAL_COOLDOWN);
         }
@@ -95,13 +94,16 @@ module.exports = {
             const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
             let allowed = isBotOwner;
-            // Sub-dono pode desativar (com fallback LID->telefone).
+            // Sub-dono ou guardião pode desativar (com fallback LID->telefone).
             if (!allowed) {
                 try {
                     if (typeof canActivateBotAsync === 'function') {
                         if ((await canActivateBotAsync(sock, m, sender, from)).ok) allowed = true;
                     } else if (typeof canConfigureBot === 'function') {
                         if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
+                    }
+                    if (!allowed && typeof canGuardianActAsync === 'function') {
+                        if ((await canGuardianActAsync(sock, m, sender, from)).ok) allowed = true;
                     }
                 } catch (_) {}
             }
@@ -114,8 +116,8 @@ module.exports = {
 
             if (!allowed) {
                 const msg = canAdminControl()
-                    ? '❌ Apenas o dono do bot, sub-donos ou admins do grupo podem desativar o feed de notícias.'
-                    : '❌ Apenas o dono do bot ou sub-donos podem desativar o feed de notícias neste grupo.';
+                    ? '❌ Apenas o dono do bot, sub-donos, guardiões ou admins do grupo podem desativar o feed de notícias.'
+                    : '❌ Apenas o dono do bot, sub-donos ou guardiões podem desativar o feed de notícias neste grupo.';
                 await sock.sendMessage(from, { text: msg }, { quoted: m });
                 return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
             }
@@ -127,25 +129,19 @@ module.exports = {
 
         if (sub === 'status') {
             const cfg = readConfig();
-            const subs = Array.isArray(cfg.newsSubreddits) && cfg.newsSubreddits.length > 0
-                ? cfg.newsSubreddits
-                : ['ShitpostBR'];
             const enabled = isNewsEnabled(from);
             const totalGroups = listNewsGroups().length;
             await sock.sendMessage(from, {
-                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
+                text: `📰 *Status do Feed de Notícias*\n\n📡 Estado neste grupo: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n⏱️ Intervalo: ${formatInterval(cfg.newsPollIntervalMinutes ?? 15)}\n👥 Grupos com feed: ${totalGroups}\n\nUse *${config.prefix}news ativar* ou *${config.prefix}news desativar*.`
             }, { quoted: m });
             return await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
         }
 
         const cfg = readConfig();
-        const subs = Array.isArray(cfg.newsSubreddits) && cfg.newsSubreddits.length > 0
-            ? cfg.newsSubreddits
-            : ['ShitpostBR'];
         const enabled = isNewsEnabled(from);
 
         await sock.sendMessage(from, {
-            text: `📰 *Feed de Notícias*\n\n📡 Estado: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n📚 Subreddits: ${subs.map(s => `r/${s}`).join(', ')}\n\nComandos:\n│ 🟢 *${config.prefix}news ativar*\n│ 🔴 *${config.prefix}news desativar*\n│ ℹ️ *${config.prefix}news status*\n\nNovos posts são publicados automaticamente no grupo, com imagem(ns), vídeo e legenda.`
+            text: `📰 *Feed de Notícias*\n\n📡 Estado: ${enabled ? '🟢 Ativado' : '🔴 Desativado'}\n\nComandos:\n│ 🟢 *${config.prefix}news ativar*\n│ 🔴 *${config.prefix}news desativar*\n│ ℹ️ *${config.prefix}news status*\n\nNovos posts são publicados automaticamente no grupo, com imagem(ns), vídeo e legenda.`
         }, { quoted: m });
         return await react(sock, m, '📰', lastBotResponse, GLOBAL_COOLDOWN);
     }

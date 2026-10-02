@@ -13,7 +13,7 @@ const {
     getBotName, react, getMessageText,
     isDashboardEnabled, groupMetadataCached, updateMemberActivity, recordGroupMessage,
     shouldRecordHistory,
-    readStats, getPrefixForJid, getGroupData, setGroupData
+    readStats, getPrefixForJid, getAllPrefixesForJid, matchPrefixForJid, getGroupData, setGroupData
 } = require('../database/utils');
 
 // ============================================================
@@ -197,6 +197,17 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             if (!from) return;
             const isGroup = from.endsWith('@g.us');
             const effectivePrefix = isGroup ? getPrefixForJid(from) : config.prefix;
+            // Multiprefixo: lista efetiva por grupo (principal + global + extras).
+            let effectivePrefixes = [effectivePrefix];
+            let matchedPrefix = '';
+            try {
+                if (isGroup && typeof getAllPrefixesForJid === 'function') {
+                    effectivePrefixes = getAllPrefixesForJid(from);
+                    if (!Array.isArray(effectivePrefixes) || !effectivePrefixes.length) effectivePrefixes = [effectivePrefix];
+                }
+                if (typeof matchPrefixForJid === 'function') matchedPrefix = matchPrefixForJid((getMessageText(m.message) || '').trim(), from) || '';
+                else matchedPrefix = String(getMessageText(m.message) || '').trim().startsWith(effectivePrefix) ? effectivePrefix : '';
+            } catch (_) { matchedPrefix = ''; }
             if (isGroup) trackRecentMessage(from, m.key);
 
             const sender = m.key.fromMe
@@ -247,16 +258,16 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             }
 
             // === Save message for !resumir (ativo + parcial, sem painel) ===
-            if (isGroup && historyOn && text && !text.startsWith(effectivePrefix)) {
+            if (isGroup && historyOn && text && !matchedPrefix) {
                 saveMessage(from, m.pushName || senderName, text);
             }
 
             // === Activity tracking (bufferizado em memória, flush periódico) ===
-            // Comandos (prefixo) NÃO contam como atividade — senão o próprio !rank
+            // Comandos (qualquer prefixo válido) NÃO contam como atividade — senão o próprio !rank
             // somaria +1 a quem chamou e o resultado mudaria a cada chamada.
             // Mensagens do próprio bot (fromMe) também NÃO contam — senão o bot
             // apareceria no próprio rank e inflaria os totais.
-            const isCommandMsg = !!text && text.startsWith(effectivePrefix);
+            const isCommandMsg = !!text && !!matchedPrefix;
             if (botActive && isGroup && !isCommandMsg && !m.key.fromMe) {
                 updateMemberActivity(from, activitySender, senderName);
                 try { recordGroupMessage(from, Date.now()); } catch (_) {}
@@ -285,19 +296,26 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
             }
             if ((text.toLowerCase() === 'prefixo' || text.toLowerCase() === 'prefix') && botActive) {
                 const botName = getBotName(from, config);
+                let prefixLine = `│ ⌨️ *Prefixo:* ${effectivePrefix}\n`;
+                try {
+                    if (isGroup && Array.isArray(effectivePrefixes) && effectivePrefixes.length > 1) {
+                        prefixLine = `│ ⌨️ *Prefixos:* ${effectivePrefixes.map((p) => `*${p}*`).join(' ')}\n`;
+                    }
+                } catch (_) {}
                 const prefixText = `*${botName} — Prefixo* ⌨️\n_prefixo atual_\n\n` +
                     `╭─── *PREFIXO* ───\n` +
-                    `│ ⌨️ *Prefixo:* ${effectivePrefix}\n` +
+                    prefixLine +
                     `│ 💡 *Alterar:* ${effectivePrefix}setprefix <símbolo>\n` +
+                    `│ 🔀 *Vários:* ${effectivePrefix}multiprefixo on / ${effectivePrefix}multiprefixo set ! . /\n` +
                     `│ 🔄 *Resetar:* ${effectivePrefix}setprefix reset\n` +
                     `╰───────────────`;
                 lastBotResponse = await react(sock, m, 'ℹ️', lastBotResponse, GLOBAL_COOLDOWN);
                 return await sock.sendMessage(from, { text: prefixText }, { quoted: m });
             }
 
-            // === Command detection ===
-            if (!text.startsWith(effectivePrefix)) return;
-            const args = text.slice(effectivePrefix.length).trim().split(/ +/);
+            // === Command detection (multiprefixo: aceita qualquer prefixo válido) ===
+            if (!matchedPrefix) return;
+            const args = text.slice(matchedPrefix.length).trim().split(/ +/);
             const commandName = args.shift().toLowerCase();
             const fullArgsText = args.join(' ');
 

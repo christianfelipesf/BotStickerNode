@@ -3,14 +3,14 @@ module.exports = {
     category: 'grupos',
     description: 'Liga o bot no grupo',
     async execute(sock, m, { from, isGroup, sender, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
-        const { react, reactStatus, activateGroup, normalizeJid, canActivateBotAsync, canConfigureBot } = utils;
+        const { react, reactStatus, activateGroup, normalizeJid, canActivateBotAsync, canConfigureBot, canGuardianActAsync } = utils;
         if (!isGroup) return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
 
         const meId = normalizeJid(sock.user.id);
         const senderNorm = normalizeJid(sender);
         const isBotOwner = m.key.fromMe === true || sender === meId || senderNorm === meId;
 
-        // SÓ dono da sessão ou sub-dono pode ativar. Admin de grupo NÃO ativa.
+        // Dono, sub-dono ou guardião pode ativar. Admin de grupo NÃO ativa.
         let allowed = isBotOwner;
         if (!allowed) {
             try {
@@ -19,11 +19,14 @@ module.exports = {
                 } else if (typeof canConfigureBot === 'function') {
                     if (canConfigureBot(sock, m, sender, from).ok) allowed = true;
                 }
+                if (!allowed && typeof canGuardianActAsync === 'function') {
+                    if ((await canGuardianActAsync(sock, m, sender, from)).ok) allowed = true;
+                }
             } catch (_) {}
         }
 
         if (!allowed) {
-            const msg = '❌ Apenas o dono ou sub-donos podem usar este comando.';
+            const msg = '❌ Apenas o dono, sub-donos ou guardiões podem usar este comando.';
             return await sock.sendMessage(from, { text: msg }, { quoted: m });
         }
 

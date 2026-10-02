@@ -1,4 +1,5 @@
 const { exec } = require('child_process');
+const { sanitizeUserText } = require('../services/safeDebug');
 
 function isOwner(sock, m, utils) {
     try {
@@ -47,7 +48,8 @@ module.exports = {
         const before = await getGitInfo();
         const pull = await run('git pull');
         if (!pull.ok) {
-            await sock.sendMessage(from, { text: `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${pull.err || pull.out || 'erro'}` }, { quoted: m });
+            console.error('❌ [updateres] git pull falhou:', pull.err || pull.out);
+            await sock.sendMessage(from, { text: `❌ Falha no git pull\n🌿 ${before.branch} • 🔖 ${before.short}\n\n${sanitizeUserText(pull.err || pull.out || 'erro')}` }, { quoted: m });
             return await react(sock, m, '❌', lastBotResponse, GLOBAL_COOLDOWN);
         }
 

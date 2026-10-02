@@ -78,14 +78,14 @@ describe('news service', () => {
         );
     });
 
-    it('buildCaption inclui permalink só com showMeta', () => {
+    it('buildCaption nunca expõe fonte/link (só título + texto)', () => {
         const post = { title: 'T', selftext: 'texto', permalink: 'https://x/y' };
         const sem = news.buildCaption(post, 'pics', false);
         const com = news.buildCaption(post, 'pics', true);
         assert.strictEqual(sem, '*T*\n\ntexto');
         assert.ok(!sem.includes('https://x/y'));
-        assert.ok(com.includes('https://x/y'));
-        assert.ok(com.includes('*T*\n\ntexto'));
+        assert.strictEqual(com, '*T*\n\ntexto');
+        assert.ok(!com.includes('https://x/y'));
     });
 
     it('buildCaption: só-título vai em negrito, só-texto vai puro', () => {

@@ -6,7 +6,8 @@ module.exports = {
     async execute(sock, m, { from, isGroup, sender, senderName, commandName, fullArgsText, utils, model, config, lastBotResponse, GLOBAL_COOLDOWN, abortSignal }) {
         const { react, reactStatus, getMessageText } = utils;
         if (!model) {
-            await sock.sendMessage(from, { text: '❌ IA não configurada. Defina OPENROUTER_API_KEY no arquivo .env' }, { quoted: m });
+            try { require('../services/safeDebug').reportSensitive({ title: 'IA sem chave', detail: 'Comando !ai chamado sem modelo configurado (OPENROUTER_API_KEY ausente).', key: 'ia-sem-chave', cooldownMs: 60 * 60 * 1000 }); } catch (_) {}
+            await sock.sendMessage(from, { text: '❌ IA indisponível no momento. Fale com o dono do bot.' }, { quoted: m });
             return lastBotResponse;
         }
         

@@ -25,11 +25,17 @@ module.exports = {
             `│ 🔧 *${p}set* <param> <valor> — variáveis do bot\n` +
             `│ ⚙️ *${p}config* — ver configs\n` +
             `│ ⌨️ *${p}setprefix* <prefix> — prefixo global\n` +
+            `│ 🌍 *${p}temaglobal* <nome|off> — tema global (sobrescreve o padrão)\n` +
             `╰───────────────\n\n` +
             `╭─── *SUB-DONOS (só dono)* ───\n` +
             `│ ➕ *${p}addsubdono* <numero> — autoriza sub-dono\n` +
             `│ ➖ *${p}remsubdono* <numero|all> — remove sub-dono\n` +
             `│ 📋 *${p}listsubdonos* — lista sub-donos\n` +
+            `╰───────────────\n\n` +
+            `╭─── *GUARDIÕES (dono + sub-dono)* ───\n` +
+            `│ 🛡️ *${p}addguardiao* <numero> — autoriza guardião (só ativar/desativar, news e aidono)\n` +
+            `│ ➖ *${p}remguardiao* <numero|all> — remove guardião\n` +
+            `│ 📋 *${p}listguardioes* — lista guardiões\n` +
             `╰───────────────\n\n` +
             `╭─── *ATIVAÇÃO* ───\n` +
             `│ ✅ *${p}ativar* / *${p}desativar* — liga/desliga bot no grupo\n` +

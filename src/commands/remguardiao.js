@@ -1,0 +1,47 @@
+module.exports = {
+    name: 'remguardiao',
+    aliases: ['remguardian', 'removerguardiao', 'delguardiao', 'removeguardian'],
+    category: 'admin',
+    description: 'Remove um guardião. Dono e sub-donos.',
+    async execute(sock, m, { from, sender, args, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
+        const { react } = utils;
+
+        const access = typeof utils.canConfigureBot === 'function'
+            ? utils.canConfigureBot(sock, m, sender, from)
+            : { ok: false };
+        if (!access.ok) {
+            return await sock.sendMessage(from, { text: '❌ Apenas o dono ou sub-donos podem remover guardiões.' }, { quoted: m });
+        }
+
+        let candidate = null;
+        try {
+            const ctx = m.message?.extendedTextMessage?.contextInfo || utils.getContextInfo?.(m.message) || {};
+            if (Array.isArray(ctx.mentionedJid) && ctx.mentionedJid.length > 0) {
+                candidate = ctx.mentionedJid[0];
+            } else if (ctx.participant) {
+                candidate = ctx.participant;
+            }
+        } catch (_) {}
+        const rawText = String(fullArgsText || (Array.isArray(args) ? args.join(' ') : '') || '').trim();
+        if (!candidate && rawText) candidate = rawText;
+
+        if (!candidate) {
+            return await sock.sendMessage(from, { text: '❌ Use: !remguardiao 5598989138217 (ou !remguardiao all para limpar todos)' }, { quoted: m });
+        }
+
+        let currentBotResponse = await react(sock, m, '🧹', lastBotResponse, GLOBAL_COOLDOWN);
+
+        const res = utils.removeGuardiao(String(candidate).split('@')[0] || candidate);
+        if (!res.ok) {
+            await sock.sendMessage(from, { text: `❌ Falha ao remover: ${res.error}` }, { quoted: m });
+            return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
+        }
+
+        if (res.phone === 'all') {
+            await sock.sendMessage(from, { text: `🧹 *${res.removed || 0} guardião(ões) removido(s)!*` }, { quoted: m });
+        } else {
+            await sock.sendMessage(from, { text: `🧹 Número *${res.phone}* não é mais guardião!` }, { quoted: m });
+        }
+        return await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
+    }
+};

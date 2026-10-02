@@ -476,6 +476,110 @@ function removeSubOwner(phoneOrJid) {
 }
 
 // ============================================================
+// Guardiões (!addguardiao / !remguardiao) — papel LIMITADO:
+// só !ativar/!desativar/!ativarp/!desativarp, !news ativar/desativar
+// e !aidono. NUNCA !set/!config/chaves API (não passam em
+// canConfigureBot de propósito). Armazenado em config.guardioes.
+// Gerenciados pelo dono real E por sub-donos.
+// ============================================================
+function getGuardioes() {
+    try {
+        const cfg = readConfig();
+        const arr = cfg.guardioes;
+        if (!Array.isArray(arr)) return [];
+        const out = [];
+        for (const raw of arr) {
+            const d = normalizePhoneNumber(String(raw || '').split('@')[0] || raw);
+            if (d && !out.includes(d)) out.push(d);
+        }
+        return out;
+    } catch (_) { return []; }
+}
+
+function isGuardiaoPhone(phoneOrJid) {
+    const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return false;
+    try { return getGuardioes().includes(phone); } catch (_) { return false; }
+}
+
+// Checa remetente (com suporte a @lid via senderPn/participantPn).
+function isGuardiaoSender(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: false, owner: true, guardiao: false };
+        const phones = getSenderLoginPhones(m, sender, from);
+        const list = getGuardioes();
+        for (const p of phones) {
+            if (list.includes(p)) return { ok: true, owner: false, guardiao: true, phone: p };
+        }
+        return { ok: false, owner: false, guardiao: false };
+    } catch (_) { return { ok: false, owner: false, guardiao: false }; }
+}
+
+async function isGuardiaoSenderAsync(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: false, owner: true, guardiao: false };
+        let phones = [];
+        try { phones = getSenderLoginPhones(m, sender, from) || []; } catch (_) { phones = []; }
+        if (!phones || phones.length === 0) {
+            try { phones = await resolveSenderPhonesAsync(sock, m, sender, from) || []; } catch (_) { phones = []; }
+        }
+        const list = getGuardioes();
+        for (const p of phones) {
+            if (list.includes(p)) return { ok: true, owner: false, guardiao: true, phone: p };
+        }
+        return { ok: false, owner: false, guardiao: false };
+    } catch (_) { return { ok: false, owner: false, guardiao: false }; }
+}
+
+// Portão do guardião: dono OU sub-dono OU guardião.
+// Usado SÓ em: !ativar/!desativar/!ativarp/!desativarp,
+// !news ativar/desativar e !aidono. Nunca em !set/!config.
+async function canGuardianActAsync(sock, m, sender, from) {
+    try {
+        if (isBotOwner(sock, m, sender)) return { ok: true, owner: true, sub: false, guardiao: false };
+        try {
+            const r = await isSubOwnerSenderAsync(sock, m, sender, from);
+            if (r && r.ok) return { ok: true, owner: false, sub: true, guardiao: false, phone: r.phone };
+        } catch (_) {}
+        try {
+            const g = await isGuardiaoSenderAsync(sock, m, sender, from);
+            if (g && g.ok) return { ok: true, owner: false, sub: false, guardiao: true, phone: g.phone };
+        } catch (_) {}
+        return { ok: false, owner: false, sub: false, guardiao: false };
+    } catch (_) { return { ok: false, owner: false, sub: false, guardiao: false }; }
+}
+
+function addGuardiao(phoneOrJid) {
+    const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+    if (!phone) return { ok: false, error: 'Número inválido. Use: !addguardiao 5598989138217' };
+    try {
+        const cfg = readConfig();
+        const cur = getGuardioes();
+        if (cur.includes(phone)) return { ok: false, error: 'duplicado', phone };
+        cur.push(phone);
+        writeConfig({ ...cfg, guardioes: cur });
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function removeGuardiao(phoneOrJid) {
+    const raw = String(phoneOrJid || '').trim().toLowerCase();
+    try {
+        const cfg = readConfig();
+        const cur = getGuardioes();
+        if (raw === 'all' || raw === 'todos' || raw === 'tudo') {
+            writeConfig({ ...cfg, guardioes: [] });
+            return { ok: true, phone: 'all', removed: cur.length };
+        }
+        const phone = normalizePhoneNumber(String(phoneOrJid || '').split('@')[0] || phoneOrJid);
+        if (!phone) return { ok: false, error: 'Número inválido. Use: !remguardiao 5598989138217' };
+        if (!cur.includes(phone)) return { ok: false, error: 'não encontrado', phone };
+        writeConfig({ ...cfg, guardioes: cur.filter(p => p !== phone) });
+        return { ok: true, phone };
+    } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// ============================================================
 // Antiflood helpers (por grupo)
 // ============================================================
 const _afGet = db.prepare('SELECT enabled, include_admins, max_msgs, window_secs FROM antiflood_config WHERE jid = ?');
@@ -540,6 +644,14 @@ const DEFAULT_CONFIG = {
     // Sub-donos: podem configurar variáveis do bot (!set, !config, etc),
     // mas NÃO gerenciam sub-donos (só o dono real). Números com DDI+DDD.
     subOwners: ['5598989138217'],
+    // Guardiões: papel limitado (só !ativar/!desativar/!ativarp/!desativarp,
+    // !news ativar/desativar e !aidono). Gerenciados pelo dono E por sub-donos
+    // via !addguardiao/!remguardiao (nunca via !set).
+    guardioes: [],
+    // Tema global (!temaglobal, dono+subdono): quando ativado, substitui
+    // o tema 'default' em todos os grupos sem tema próprio. Grupos com
+    // !tema próprio mantêm o deles. 'default' = desativado.
+    temaGlobal: 'default',
     newsEnabled: false,
     dashboardUrl: "https://botantigravity.duckdns.org",
     showLogoInMenu: true,
@@ -1428,7 +1540,7 @@ function setGroupData(jid, data) {
     const cur = ensureGroupState(jid);
     const curParsed = parseGroupState(cur);
     const merged = { ...curParsed };
-    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly', 'inactiveNoticed']);
+    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly', 'inactiveNoticed', 'multiprefixEnabled', 'multiprefixes']);
     merged.extra = { ...(curParsed.extra || {}) };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;
@@ -1473,8 +1585,11 @@ function setGroupData(jid, data) {
 }
 
 // ============================================================
-// Theme helpers (por grupo)
+// Theme helpers (por grupo + global)
 // ============================================================
+// Ordem de resolução: tema do grupo > tema global > 'default'.
+// O tema global (!temaglobal) sobrescreve o PADRÃO quando ativado,
+// mas nunca tira o tema próprio de um grupo.
 function getThemeForJid(jid) {
     if (jid && jid.endsWith('@g.us')) {
         try {
@@ -1483,7 +1598,34 @@ function getThemeForJid(jid) {
             if (t && t !== 'default') return t;
         } catch (_) {}
     }
+    try {
+        const g = getGlobalTheme();
+        if (g && g !== 'default') return g;
+    } catch (_) {}
     return 'default';
+}
+
+function getGlobalTheme() {
+    try {
+        const raw = String((readConfig() || {}).temaGlobal || 'default').trim().toLowerCase();
+        const { normalizeThemeId } = require('../services/themes');
+        return normalizeThemeId(raw) || 'default';
+    } catch (_) { return 'default'; }
+}
+
+function setGlobalTheme(themeId) {
+    const { normalizeThemeId } = require('../services/themes');
+    const nid = normalizeThemeId(themeId);
+    if (!nid) return false;
+    const cfg = readConfig();
+    writeConfig({ ...cfg, temaGlobal: nid });
+    return nid;
+}
+
+function clearGlobalTheme() {
+    const cfg = readConfig();
+    writeConfig({ ...cfg, temaGlobal: 'default' });
+    return true;
 }
 
 function setGroupTheme(jid, themeId) {
@@ -1524,6 +1666,98 @@ function clearGroupPrefix(jid) {
     if (!jid || !jid.endsWith('@g.us')) return false;
     setGroupData(jid, { prefix: null });
     return true;
+}
+
+// ============================================================
+// Multiprefixo (por grupo): vários prefixos simultâneos
+// ============================================================
+// Armazenado em group_state.extra:
+//   multiprefixEnabled: true/false
+//   multiprefixes: [ '!', '.', '/', ... ] (1 char cada, máx 10)
+// Quando desativado ou vazio, vale só o prefixo principal
+// (getPrefixForJid). Quando ativado, valem: principal + global +
+// extras (deduplicados).
+const MULTIPREFIX_MAX = 32;
+
+function _sanitizePrefixList(arr) {
+    const out = [];
+    const seen = new Set();
+    for (const raw of (arr || [])) {
+        const p = String(raw || '').trim()[0];
+        if (!p || /\s/.test(p) || seen.has(p)) continue;
+        seen.add(p);
+        out.push(p);
+        if (out.length >= MULTIPREFIX_MAX) break;
+    }
+    return out;
+}
+
+function getMultiprefixes(jid) {
+    try {
+        if (!jid || !jid.endsWith('@g.us')) return [];
+        const gd = getGroupData(jid) || {};
+        const raw = gd.multiprefixes ?? gd?.extra?.multiprefixes ?? [];
+        const list = Array.isArray(raw) ? raw : String(raw || '').split('');
+        return _sanitizePrefixList(list);
+    } catch (_) { return []; }
+}
+
+function isMultiprefixEnabled(jid) {
+    try {
+        if (!jid || !jid.endsWith('@g.us')) return false;
+        const gd = getGroupData(jid) || {};
+        const v = gd.multiprefixEnabled ?? gd?.extra?.multiprefixEnabled ?? false;
+        return v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
+    } catch (_) { return false; }
+}
+
+function setMultiprefixEnabled(jid, enabled) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    setGroupData(jid, { multiprefixEnabled: !!enabled });
+    return true;
+}
+
+function setMultiprefixes(jid, arr) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    const clean = _sanitizePrefixList(arr);
+    setGroupData(jid, { multiprefixes: clean });
+    return true;
+}
+
+function clearMultiprefixes(jid) {
+    if (!jid || !jid.endsWith('@g.us')) return false;
+    setGroupData(jid, { multiprefixes: [] });
+    return true;
+}
+
+// Lista efetiva de prefixos aceitos no grupo (ordem: principal primeiro).
+function getAllPrefixesForJid(jid) {
+    const primary = getPrefixForJid(jid);
+    if (!jid || !jid.endsWith('@g.us')) return [primary].filter(Boolean);
+    if (!isMultiprefixEnabled(jid)) return [primary].filter(Boolean);
+    let globalPrefix = null;
+    try { globalPrefix = String(readConfig().prefix || primary)[0] || null; } catch (_) {}
+    const extras = getMultiprefixes(jid);
+    const out = [];
+    const seen = new Set();
+    for (const p of [primary, globalPrefix, ...extras]) {
+        if (!p || seen.has(p)) continue;
+        seen.add(p);
+        out.push(p);
+    }
+    return out.length ? out : [primary].filter(Boolean);
+}
+
+// Qual prefixo da lista casa com o texto? Retorna o prefixo ou ''.
+// Ordena por tamanho desc para suportar prefixos multi-char no futuro.
+function matchPrefixForJid(text, jid) {
+    const t = String(text || '');
+    if (!t) return '';
+    const list = getAllPrefixesForJid(jid).slice().sort((a, b) => b.length - a.length);
+    for (const p of list) {
+        if (p && t.startsWith(p)) return p;
+    }
+    return '';
 }
 
 // ============================================================
@@ -2661,7 +2895,8 @@ module.exports = {
     reconcileActivePartial,
     getPartialWaitMs, setPartialWaitMs,
     getGroupData, setGroupData, writeGroupState, saveGroupMenuImage, getPrefixForJid, setGroupPrefix, clearGroupPrefix,
-    getThemeForJid, setGroupTheme, clearGroupTheme,
+    getAllPrefixesForJid, matchPrefixForJid, getMultiprefixes, isMultiprefixEnabled, setMultiprefixEnabled, setMultiprefixes, clearMultiprefixes,
+    getThemeForJid, setGroupTheme, clearGroupTheme, getGlobalTheme, setGlobalTheme, clearGlobalTheme,
     getStickerPackForJid, getStickerAuthorForJid, setStickerPackForJid, clearStickerPackForJid,
     isViewOnce, getMediaMessage, getContextInfo, getMessageText,
     mediaToSticker, stickerToMedia, changeSpeed, addMetadata, mediaToGif,
@@ -2682,6 +2917,7 @@ module.exports = {
     normalizeLoginPhone, isLoginAllowed, listLoginAllowed, addLoginAllowed, removeLoginAllowed, clearLoginAllowed,
     getSenderLoginPhones, isBotOwner, canUseLogin,
     getSubOwners, isSubOwnerPhone, isSubOwnerSender, canConfigureBot, addSubOwner, removeSubOwner,
+    getGuardioes, isGuardiaoPhone, isGuardiaoSender, isGuardiaoSenderAsync, canGuardianActAsync, addGuardiao, removeGuardiao,
     resolveLidPhoneInGroup, resolvePhoneLidInGroup, resolveSenderPhonesAsync, isSubOwnerSenderAsync, canActivateBotAsync,
     getAntifloodConfig, setAntifloodConfig, toggleAntiflood, toggleAntifloodAdmin,
     isDashboardEnabled, setDashboardEnabled, listDashboardGroups, getDashboardPreference,

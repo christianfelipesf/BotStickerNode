@@ -12,7 +12,7 @@ const PARTIAL_ALLOWED_CATEGORIES = new Set(['mídia', 'midia', 'interação', 'i
 const PARTIAL_ALLOWED_COMMANDS = new Set(['tts', 'falar', 'voz', 'fala', 'speak']);
 const PARTIAL_BLOCKED_COMMANDS = new Set([
     'ban', 'add', 'mute', 'desmute', 'antilink', 'limpar', 'clear', 'purge', 'delete', 'apagar', 'del', 'clearchat',
-    'divulgar', 'mencionar', 'set', 'setprefix', 'setlink', 'dashreset', 'newsreset',
+    'divulgar', 'mencionar', 'set', 'setprefix', 'multiprefixo', 'multiprefix', 'prefixos', 'addguardiao', 'addguardian', 'remguardiao', 'remguardian', 'delguardiao', 'listguardioes', 'listguardians', 'guardioes', 'guardians', 'temaglobal', 'globaltema', 'temaglob', 'setlink', 'dashreset', 'newsreset',
     'dashboardativar', 'dashboarddesativar', 'newsativar', 'newsdesativar', 'dump', 'config', 'nome', 'tema', 'theme',
     'log', 'logs', 'logsterminal', 'terminallog',
     'menu', 'help', 'comandos', 'prefixo', 'prefix', 'resumir', 'grupos', 'perfil', 'ai',
