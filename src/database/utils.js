@@ -1540,7 +1540,7 @@ function setGroupData(jid, data) {
     const cur = ensureGroupState(jid);
     const curParsed = parseGroupState(cur);
     const merged = { ...curParsed };
-    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly', 'inactiveNoticed', 'multiprefixEnabled', 'multiprefixes']);
+    const EXTRA_KEYS = new Set(['regras', 'welcomeOn', 'welcomeMsg', 'goodbyeOn', 'goodbyeMsg', 'promoteOn', 'promoteMsg', 'demoteOn', 'demoteMsg', 'groupChangeOn', 'groupChangeMsg', 'revealAdminOnly', 'inactiveNoticed', 'multiprefixEnabled', 'multiprefixes', 'autoresponder', 'autoresponderCount', 'autoresponderLimit', 'topicSummary']);
     merged.extra = { ...(curParsed.extra || {}) };
     let botName = cur.bot_name;
     let menuImage = cur.menu_image;

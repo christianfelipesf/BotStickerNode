@@ -163,6 +163,8 @@ async function callWithRetry(apiKey, modelName, systemInstruction, prompt, maxTo
                 // effort low (~20% p/ reasoning) deixa ~80% p/ resposta.
                 // exclude:true omite o bloco reasoning do payload (economiza banda).
                 ..._reasoningParams(modelName),
+                ...(extra.frequencyPenalty !== undefined ? { frequency_penalty: Number(extra.frequencyPenalty) } : {}),
+                ...(extra.presencePenalty !== undefined ? { presence_penalty: Number(extra.presencePenalty) } : {}),
                 ...(useTools ? { tools: extra.tools, tool_choice: extra.toolChoice || 'auto' } : {}),
                 messages: Array.isArray(extra.messages) && extra.messages.length > 0
                     ? extra.messages
@@ -297,6 +299,21 @@ function setupAI(config) {
             }
             return await callWithRetry(apiKey, modelName, '', '', maxTokens, temperature, retryCount, opts?.signal, {
                 messages, tools, toolChoice: opts?.toolChoice || 'auto'
+            });
+        },
+        // Chat multi-mensagem (!autoresponder): system + histórico em tiers.
+        // Sem cache (cada grupo tem contexto próprio). Retorna { text, ... }.
+        generateChat: async (messages, opts = {}) => {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                throw new Error('Messages inválidas');
+            }
+            const t = opts?.temperature !== undefined ? Number(opts.temperature) : temperature;
+            const mt = opts?.maxTokens !== undefined ? Number(opts.maxTokens) : maxTokens;
+            const rc = opts?.retryCount !== undefined ? Number(opts.retryCount) : retryCount;
+            return await callWithRetry(apiKey, modelName, '', '', mt, t, rc, opts?.signal, {
+                messages,
+                frequencyPenalty: opts?.frequencyPenalty,
+                presencePenalty: opts?.presencePenalty
             });
         }
     };

@@ -313,6 +313,18 @@ async function _handleSingleMessage(sock, m, { commands, config, startTime }) {
                 return await sock.sendMessage(from, { text: prefixText }, { quoted: m });
             }
 
+            // === Autoresponder (chat automático, personalidade automática por grupo) ===
+            // Só texto sem prefixo, em grupo ativo, exceto mensagens do próprio bot.
+            // Fire-and-forget p/ não atrasar comandos nem o handler.
+            if (!matchedPrefix && isGroup && botActive && !m.key.fromMe && text) {
+                try {
+                    const auto = require('../services/autoResponder');
+                    if (auto.isEnabled(from)) {
+                        auto.maybeAutoReply(sock, m, { from, sender, senderName, text, config }).catch(() => {});
+                    }
+                } catch (_) {}
+            }
+
             // === Command detection (multiprefixo: aceita qualquer prefixo válido) ===
             if (!matchedPrefix) return;
             const args = text.slice(matchedPrefix.length).trim().split(/ +/);

@@ -67,6 +67,7 @@ module.exports = {
             `│ 🖼️ *${p}imagem* (responda imagem) — imagem do menu\n` +
             `│ 🔗 *${p}linkgp* — pega link do grupo (bot precisa ser admin)\n` +
             `│ 🔗 *${p}setlink* <link> — define link p/ !divulgar\n` +
+            `│ 🤖 *${p}autoresponder* on|off — chat automático (tom do grupo, sem moderar)\n` +
             `╰───────────────\n\n` +
             `_Use ${p}menudono para comandos do dono do bot._`;
 
