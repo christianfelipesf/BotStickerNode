@@ -232,7 +232,7 @@ function buildCaption(curiosidade, prefix, botName, opts = {}) {
     // No parcial o !menu é bloqueado — sugere !statusp (bypass do parcial).
     const parcial = !!opts.parcial;
     const lines = [
-        parcial ? '🟡 *MODO PARCIAL — VOCÊ SABIA?*' : '💡 *VOCÊ SABIA?*',
+        parcial ? '🟡 *MODO PARCIAL — você sabia?* 💛' : '💡 *Você sabia?* ✨',
         '',
         `_${curiosidade}_`,
         '',

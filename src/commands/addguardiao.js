@@ -2,7 +2,7 @@ module.exports = {
     name: 'addguardiao',
     aliases: ['addguardian', 'adicionarguardiao', 'setguardiao'],
     category: 'admin',
-    description: 'Autoriza um número como guardião (só !ativar/!desativar/!ativarp/!desativarp, !news e !aidono). Dono e sub-donos.',
+    description: 'Dá poder de guardião: ativar/desativar, modo parcial, news e aidono. Dono e sub-donos.',
     async execute(sock, m, { from, sender, args, fullArgsText, utils, lastBotResponse, GLOBAL_COOLDOWN }) {
         const { react } = utils;
 
@@ -64,7 +64,7 @@ module.exports = {
             return await react(sock, m, '❌', currentBotResponse, GLOBAL_COOLDOWN);
         }
 
-        await sock.sendMessage(from, { text: `✅ Número *${res.phone}* agora é *guardião*! 🛡️\n\nEle pode: *!ativar*, *!desativar*, *!ativarp*, *!desativarp*, *!news ativar/desativar* e *!aidono*.\n⛔ NÃO pode mexer em configs, chaves API nem gerenciar sub-donos/gardiões.\n💡 Veja a lista com *!listguardioes* • remova com *!remguardiao ${res.phone}*` }, { quoted: m });
+        await sock.sendMessage(from, { text: `✅ *${res.phone}* agora é *guardião* do bot! 🛡️💛\n\nCom essa confiança ele vai poder:\n✅ Ligar e desligar o bot nos grupos (*!ativar* / *!desativar*)\n✅ Usar o modo parcial (*!ativarp* / *!desativarp*)\n✅ Cuidar das notícias (*!news ativar/desativar*)\n✅ Conversar com a IA do dono (*!aidono*)\n\nObrigado por ajudar a cuidar da comunidade! ✨\n💡 Veja a lista com *!listguardioes*` }, { quoted: m });
         return await react(sock, m, '✅', currentBotResponse, GLOBAL_COOLDOWN);
     }
 };

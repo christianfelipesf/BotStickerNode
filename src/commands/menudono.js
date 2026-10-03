@@ -33,7 +33,7 @@ module.exports = {
             `│ 📋 *${p}listsubdonos* — lista sub-donos\n` +
             `╰───────────────\n\n` +
             `╭─── *GUARDIÕES (dono + sub-dono)* ───\n` +
-            `│ 🛡️ *${p}addguardiao* <numero> — autoriza guardião (só ativar/desativar, news e aidono)\n` +
+            `│ 🛡️ *${p}addguardiao* <numero> — dá poder de guardião: ativar, parcial, news e aidono ✨\n` +
             `│ ➖ *${p}remguardiao* <numero|all> — remove guardião\n` +
             `│ 📋 *${p}listguardioes* — lista guardiões\n` +
             `╰───────────────\n\n` +

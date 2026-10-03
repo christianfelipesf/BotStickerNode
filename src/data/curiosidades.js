@@ -8,8 +8,8 @@ const CURIOSIDADES = [
     'Dica: !rename pack/autor personaliza o nome do pack das suas figurinhas.',
     'Dica: !toimg transforma qualquer figurinha de volta em foto ou GIF.',
     'Dica: !stexto escreve qualquer frase e gera uma figurinha só com texto.',
-    'Você sabia? Dá pra criar figurinha até de print de conversa com !s.',
-    'Você sabia? Vídeos curtos viram figurinhas animadas automaticamente.',
+    '💡 Sabia dessa? Até print de conversa vira figurinha com !s — é só responder a imagem. Testa aí! 😄',
+    '💡 Olha que legal: vídeo curtinho vira figurinha animada sozinho, sem precisar editar nada! ✨',
     // --- Mídia revelada ---
     'Mensagens de visualização única sumem depois de abertas — mas o !revelar mostra o conteúdo se você responder a tempo.',
     'Dica: respondeu uma mensagem “ver uma vez”? Use !revelar antes que suma.',
@@ -23,12 +23,12 @@ const CURIOSIDADES = [
     'Dica: !ai <pergunta> conversa com a IA direto no grupo, sem sair do chat.',
     'Dica: !traduzir <texto> traduz qualquer idioma para português.',
     'Dica: !resumir resume as últimas mensagens — perfeito pra quem chegou agora.',
-    'Você sabia? A IA do bot roda via OpenRouter e o modelo pode ser trocado nas configs.',
-    'Você sabia? Respostas repetidas da IA ficam em cache pra responder mais rápido.',
+    '💡 Curiosidade de amigo: a IA do bot é super esperta e o dono pode deixar ela ainda mais afiada nas configs! 🤖✨',
+    '💡 Perguntou a mesma coisa pra IA? Ela responde rapidinho porque já lembra da resposta! ⚡😉',
     // --- Rank e atividade ---
     'Dica: !rank mostra o top 10 membros mais ativos do mês.',
-    'Você sabia? Comandos não contam pontos no rank — só conversa de verdade.',
-    'Você sabia? O próprio bot nunca aparece no próprio ranking.',
+    '💡 Aqui no rank vale conversa de verdade, viu? Comando não conta ponto — então bora bater papo! 💬💛',
+    '💡 O bot é humilde: ele nem entra no próprio ranking pra não roubar o seu lugar! 😅🏆',
     'Dica: !perfil mostra sua foto e suas estatísticas no grupo.',
     'Dica: !inativos revela quem está há mais tempo sem falar nada.',
     'Dica: !infogrupo mostra horários de pico e movimento da semana.',
@@ -40,7 +40,7 @@ const CURIOSIDADES = [
     'Dica: !enquete <pergunta> cria uma votação rápida no grupo.',
     // --- Interação ---
     'Dica: !comandosinteracao lista todos os comandos de interação (beijo, abraço, tapa...).',
-    'Você sabia? Beijar, abraçar, dar tapa, soco, cafuné e cutucar são comandos animados com GIF.',
+    '💡 Quer animar o grupo? !beijo, !abraco, !tapa, !soco, !cafune e !cutucar mandam GIFs pra se divertir junto! 💘😂',
     'Dica: !abraco @pessoa manda um abraço animado no meio da conversa.',
     'Dica: !mencionar marca todos os membros do grupo de uma vez.',
     // --- Segredos (shhh) ---
@@ -57,7 +57,7 @@ const CURIOSIDADES = [
     'Dica (admin): !add <número com DDD> adiciona alguém direto pelo número.',
     'Dica (admin): !fechar trava o grupo só para admins; !abrir libera.',
     'Dica (admin): !limpar apaga as últimas mensagens do bot no chat.',
-    'Você sabia? O bot registra advertências — !veradv mostra o histórico do membro.',
+    '💡 Pra manter o clima bom, o bot anota as advertências com carinho — dá pra ver tudo com !veradv, tá? 🤝',
     // --- Personalização ---
     'Dica: !tema troca as cores do menu e dos cards gerados no grupo.',
     'Dica: !setprefix muda o símbolo dos comandos só neste grupo.',
@@ -65,16 +65,16 @@ const CURIOSIDADES = [
     'Dica: !regras exibe as regras cadastradas do grupo.',
     'Dica: !linkgp mostra o link de convite do grupo na hora.',
     // --- Sistema ---
-    'Você sabia? O bot tem painel web com logs, QR code e estatísticas em tempo real.',
+    '💡 O bot tem um painelzinho web com tudo ao vivo: logs, QR e estatísticas. Chique, né? 📊✨',
     'Dica: !status mostra versão, uptime e saúde do bot.',
     'Dica: !ping mede o tempo de resposta em milissegundos.',
     'Dica: !tutorial ensina o passo a passo dos principais recursos.',
     'Dica: !menu mostra os comandos gerais; !menuadmin, !menudono e !menusecreto mostram os restritos e ocultos.',
     'Dica: !bug <mensagem> reporta um problema direto ao dono do bot.',
     'Dica: !sugestao <ideia> envia sua ideia de melhoria.',
-    'Você sabia? Todo comando tem cooldown anti-spam de alguns segundos.',
-    'Você sabia? Se o bot responder “🔄 conexão instável”, é só tentar de novo em segundos.',
-    'Você sabia? Figurinhas, áudios e imagens passam por fila pra não travar o grupo.',
+    '💡 Entre um comando e outro o bot respira um segundinho — é só pra ninguém floodar e todo mundo curtir numa boa! ⏳💛',
+    '💡 Se aparecer “🔄 conexão instável”, não se preocupa — espera uns segundinhos e tenta de novo que vai! 💪😉',
+    '💡 Figurinhas, áudios e imagens entram numa filinha pra chegar tudo certinho pra você, sem travar nada! 📦💨',
     'Curiosidade: o WhatsApp limita figurinhas a 512x512 — por isso às vezes a imagem é recortada.',
     'Curiosidade: áudios do WhatsApp usam o codec Opus — o bot converte tudo pra esse formato.',
     'Curiosidade: o bot conta mensagens por hora pra descobrir o horário mais ativo do grupo.',
@@ -99,8 +99,8 @@ const CURIOSIDADES_PARCIAL = [
     'Dica: !rename pack/autor personaliza o nome do pack das suas figurinhas.',
     'Dica: !toimg transforma qualquer figurinha de volta em foto ou GIF.',
     'Dica: !stexto escreve qualquer frase e gera uma figurinha só com texto.',
-    'Você sabia? Dá pra criar figurinha até de print de conversa com !s.',
-    'Você sabia? Vídeos curtos viram figurinhas animadas automaticamente.',
+    '💡 Sabia dessa? Até print de conversa vira figurinha com !s — é só responder a imagem. Testa aí! 😄',
+    '💡 Olha que legal: vídeo curtinho vira figurinha animada sozinho, sem precisar editar nada! ✨',
     // --- Mídia revelada / velocidade ---
     'Mensagens de visualização única sumem depois de abertas — mas o !revelar mostra o conteúdo se você responder a tempo.',
     'Dica: respondeu uma mensagem "ver uma vez"? Use !revelar antes que suma.',
@@ -111,14 +111,14 @@ const CURIOSIDADES_PARCIAL = [
     'Dica: !tts <texto> converte qualquer frase em mensagem de voz.',
     // --- Interação ---
     'Dica: !comandosinteracao lista todos os comandos de interação (beijo, abraço, tapa...).',
-    'Você sabia? Beijar, abraçar, dar tapa, soco, cafuné e cutucar são comandos animados com GIF.',
+    '💡 Quer animar o grupo? !beijo, !abraco, !tapa, !soco, !cafune e !cutucar mandam GIFs pra se divertir junto! 💘😂',
     'Dica: !abraco @pessoa manda um abraço animado no meio da conversa.',
     // --- Neutras (valem em qualquer modo) ---
-    'Você sabia? Todo comando tem cooldown anti-spam de alguns segundos.',
-    'Você sabia? Se o bot responder "🔄 conexão instável", é só tentar de novo em segundos.',
-    'Você sabia? Figurinhas, áudios e imagens passam por fila pra não travar o grupo.',
+    '💡 Entre um comando e outro o bot respira um segundinho — é só pra ninguém floodar e todo mundo curtir numa boa! ⏳💛',
+    '💡 Se aparecer "🔄 conexão instável", não se preocupa — espera uns segundinhos e tenta de novo que vai! 💪😉',
+    '💡 Figurinhas, áudios e imagens entram numa filinha pra chegar tudo certinho pra você, sem travar nada! 📦💨',
     'Curiosidade: o WhatsApp limita figurinhas a 512x512 — por isso às vezes a imagem é recortada.',
     'Curiosidade: áudios do WhatsApp usam o codec Opus — o bot converte tudo pra esse formato.'
 ];
 
-module.exports.CURIOSIDADES_PARCIAL = CURIOSIDADES_PARCIAL; 
+module.exports.CURIOSIDADES_PARCIAL = CURIOSIDADES_PARCIAL;

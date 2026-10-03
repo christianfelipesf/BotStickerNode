@@ -19,10 +19,10 @@ module.exports = {
 
         const list = utils.getGuardioes ? utils.getGuardioes() : [];
         if (!list.length) {
-            return await sock.sendMessage(from, { text: '📋 *Guardiões (0)*\n\nNenhum guardião cadastrado.\n➕ *!addguardiao <numero>* (dono ou subdono)' }, { quoted: m });
+            return await sock.sendMessage(from, { text: '📋 *Guardiões (0)* 🛡️\n\nAinda não tem nenhum guardião por aqui.\nQue tal confiar alguém pra ajudar a cuidar do bot? 💛\n➕ *!addguardiao <numero>* (dono ou subdono)' }, { quoted: m });
         }
         const lines = list.map((p, i) => `${i + 1}. +${p}`);
-        const text = `📋 *Guardiões (${list.length})*\n\n${lines.join('\n')}\n\n💡 Podem: *!ativar !desativar !ativarp !desativarp !news !aidono*.\n⛔ Não mexem em configs/chaves API.\n➕ *!addguardiao <numero>* • ➖ *!remguardiao <numero>* (dono ou subdono)`;
+        const text = `📋 *Guardiões (${list.length})* 🛡️💛\n\n${lines.join('\n')}\n\n✨ Eles ajudam cuidando do bot:\n✅ *!ativar / !desativar* — liga e desliga nos grupos\n✅ *!ativarp / !desativarp* — modo parcial\n✅ *!news* — notícias do grupo\n✅ *!aidono* — IA do dono\n\n➕ *!addguardiao <numero>* • ➖ *!remguardiao <numero>* (dono ou subdono)`;
         await sock.sendMessage(from, { text }, { quoted: m });
     }
 };
